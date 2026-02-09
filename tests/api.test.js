@@ -412,43 +412,48 @@ describe('Rate limiting', () => {
     const originalWindow = process.env.RW_RATE_LIMIT_WINDOW_MS;
     const originalMax = process.env.RW_RATE_LIMIT_MAX;
 
-    process.env.RW_RATE_LIMIT_WINDOW_MS = '10000';
-    process.env.RW_RATE_LIMIT_MAX = '5';
+    try {
+      process.env.RW_RATE_LIMIT_WINDOW_MS = '10000';
+      process.env.RW_RATE_LIMIT_MAX = '5';
 
-    // Make a few requests
-    for (let i = 0; i < 3; i++) {
-      const response = await fetch(`${baseUrl}/health`);
-      expect(response.status).toBe(200);
-    }
-
-    // Restore original values
-    if (originalWindow) {
-      process.env.RW_RATE_LIMIT_WINDOW_MS = originalWindow;
-    } else {
-      delete process.env.RW_RATE_LIMIT_WINDOW_MS;
-    }
-    if (originalMax) {
-      process.env.RW_RATE_LIMIT_MAX = originalMax;
-    } else {
-      delete process.env.RW_RATE_LIMIT_MAX;
+      // Make a few requests
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(`${baseUrl}/health`);
+        expect(response.status).toBe(200);
+      }
+    } finally {
+      // Restore original values
+      if (originalWindow) {
+        process.env.RW_RATE_LIMIT_WINDOW_MS = originalWindow;
+      } else {
+        delete process.env.RW_RATE_LIMIT_WINDOW_MS;
+      }
+      if (originalMax) {
+        process.env.RW_RATE_LIMIT_MAX = originalMax;
+      } else {
+        delete process.env.RW_RATE_LIMIT_MAX;
+      }
     }
   });
 
   it('can be disabled with RW_RATE_LIMIT_DISABLED=true', async () => {
     const original = process.env.RW_RATE_LIMIT_DISABLED;
-    process.env.RW_RATE_LIMIT_DISABLED = 'true';
 
-    // Even with many requests, all should succeed
-    for (let i = 0; i < 10; i++) {
-      const response = await fetch(`${baseUrl}/health`);
-      expect(response.status).toBe(200);
-    }
+    try {
+      process.env.RW_RATE_LIMIT_DISABLED = 'true';
 
-    // Restore original value
-    if (original) {
-      process.env.RW_RATE_LIMIT_DISABLED = original;
-    } else {
-      delete process.env.RW_RATE_LIMIT_DISABLED;
+      // Even with many requests, all should succeed
+      for (let i = 0; i < 10; i++) {
+        const response = await fetch(`${baseUrl}/health`);
+        expect(response.status).toBe(200);
+      }
+    } finally {
+      // Restore original value
+      if (original) {
+        process.env.RW_RATE_LIMIT_DISABLED = original;
+      } else {
+        delete process.env.RW_RATE_LIMIT_DISABLED;
+      }
     }
   });
 });
