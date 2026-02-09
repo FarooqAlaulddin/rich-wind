@@ -46,4 +46,4 @@ services:
         fromService:
           type: web
           name: rich-wind-core
-          property: hostport
+          envVarKey: RENDER_EXTERNAL_URL
