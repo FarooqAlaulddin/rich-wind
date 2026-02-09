@@ -1,13 +1,13 @@
-# Rich Wind Core
+# Rich Wind
 
-Rich Wind Core is a stateless Tailwind runtime service. It compiles CSS from
+Rich Wind is a stateless Tailwind runtime service. It compiles CSS from
 HTML and/or class lists and caches results in memory (LRU + TTL). There is no
 database.
 
 ## Deploy on Render (free)
 
 This repo includes a `render.yaml` Blueprint that provisions **two web services**:
-- `rich-wind-core` (API)
+- `rich-wind` (API)
 - `rich-wind-ui` (SSR demo UI)
 
 Render will wire the UI to the API automatically via `RW_CORE_URL` (internal host:port).

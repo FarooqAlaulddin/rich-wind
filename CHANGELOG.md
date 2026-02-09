@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-02-09
 
 ### Added
-- Initial public release of Rich Wind Core
+- Initial public release of Rich Wind
 - Stateless Tailwind CSS runtime service with in-memory caching
 - `POST /api/compile` endpoint for compiling CSS from HTML and/or class lists
 - `GET /api/css` endpoint for retrieving cached page CSS
