@@ -62,12 +62,17 @@ function rateLimit(req, res, next) {
 
 app.use(rateLimit);
 
-app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.too.large') {
-        return res.status(413).json({ error: 'Payload too large.' });
+// Periodic cleanup of expired rate bucket entries to prevent memory leak
+const rateBucketCleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of rateBuckets.entries()) {
+        if (entry.resetAt <= now) {
+            rateBuckets.delete(ip);
+        }
     }
-    return next(err);
-});
+}, RATE_LIMIT_WINDOW_MS);
+// Use unref() so the interval doesn't prevent Node from exiting
+rateBucketCleanup.unref();
 
 const CACHE_MAX_PAGES = Number.parseInt(process.env.RW_CACHE_MAX_PAGES ?? '200', 10);
 const CACHE_TTL_MS = Number.parseInt(process.env.RW_CACHE_TTL_MS ?? '600000', 10); // 10 minutes
@@ -445,6 +450,19 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
+// Error handler middleware (must be defined after all routes)
+app.use((err, req, res, next) => {
+    if (err && err.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'Payload too large.' });
+    }
+    return next(err);
 });
 
 const PORT = process.env.PORT || 3001;

@@ -78,3 +78,10 @@ test("POST /api/compile without projectId returns 400", async () => {
   const body = await response.json();
   assert.ok(body.error);
 });
+
+test("GET /health returns 200 with status ok", async () => {
+  const response = await fetch(`${baseUrl}/health`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.status, "ok");
+});
