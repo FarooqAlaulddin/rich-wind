@@ -207,25 +207,17 @@ describe('POST /api/compile', () => {
   });
 
   it('returns 413 when html exceeds RW_MAX_HTML_CHARS', async () => {
-    // Set a small limit for this test
-    const originalLimit = process.env.RW_MAX_HTML_CHARS;
-    process.env.RW_MAX_HTML_CHARS = '10';
+    // Create HTML that exceeds the default limit (50000 chars)
+    const longHtml = '<div class="text-red-500">' + 'x'.repeat(60000) + '</div>';
 
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         projectId: 'test-proj',
-        html: '<div class="text-red-500">This is a very long HTML string that exceeds the limit</div>',
+        html: longHtml,
       }),
     });
-
-    // Restore original limit
-    if (originalLimit) {
-      process.env.RW_MAX_HTML_CHARS = originalLimit;
-    } else {
-      delete process.env.RW_MAX_HTML_CHARS;
-    }
 
     expect(response.status).toBe(413);
     const body = await response.json();
@@ -381,7 +373,7 @@ describe('GET /api/projects/:projectId/css', () => {
   });
 
   it('returns 400 for invalid projectId', async () => {
-    const response = await fetch(`${baseUrl}/api/projects/invalid/project/css`);
+    const response = await fetch(`${baseUrl}/api/projects/invalid%2Fproject/css`);
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toBeTruthy();
