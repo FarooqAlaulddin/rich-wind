@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: rich-wind-core
+    env: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RW_CACHE_MAX_PAGES
+        value: "200"
+      - key: RW_CACHE_TTL_MS
+        value: "600000"
+      - key: RW_PROJECT_CACHE_TTL_MS
+        value: "600000"
+      - key: RW_MAX_BODY_BYTES
+        value: "100000"
+      - key: RW_MAX_HTML_CHARS
+        value: "50000"
+      - key: RW_MAX_CLASS_CHARS
+        value: "10000"
+      - key: RW_MAX_CLASS_COUNT
+        value: "1500"
+      - key: RW_MAX_ID_LENGTH
+        value: "64"
+      - key: RW_RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RW_RATE_LIMIT_MAX
+        value: "60"
+
+  - type: web
+    name: rich-wind-ui
+    env: node
+    plan: free
+    rootDir: ui
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RW_CORE_URL
+        fromService:
+          type: web
+          name: rich-wind-core
+          property: hostport
