@@ -28,7 +28,7 @@ export default function Preview() {
         id="preview-standalone"
         title="Standalone Preview"
         className="mt-4 h-[calc(100vh-120px)] w-full rounded-2xl border border-slate-200 bg-white"
-        sandbox="allow-same-origin"
+        sandbox="allow-same-origin allow-scripts"
         srcDoc={`<!doctype html><html><body style="font-family:Space Grotesk,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#94a3b8;background:#f8fafc;">Waiting for updates...</body></html>`}
         suppressHydrationWarning
       />

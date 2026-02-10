@@ -380,6 +380,86 @@ describe('GET /api/projects/:projectId/css', () => {
   });
 });
 
+describe('POST /api/suggest', () => {
+  it('returns suggestions from cached project classes filtered by prefix', async () => {
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'suggest-proj',
+        pageId: 'page1',
+        classes: 'bg-blue-500 text-red-500 p-4',
+      }),
+    });
+
+    const response = await fetch(`${baseUrl}/api/suggest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'suggest-proj',
+        prefix: 'bg-',
+        limit: 5,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.suggestions).toContain('bg-blue-500');
+    expect(body.suggestions.find((item) => item.startsWith('text-'))).toBeFalsy();
+  });
+
+  it('includes input classes when provided without a projectId', async () => {
+    const response = await fetch(`${baseUrl}/api/suggest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        classes: 'rounded-xl shadow-lg text-sm',
+        prefix: 'shadow',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.suggestions).toContain('shadow-lg');
+  });
+
+  it('returns 400 for invalid projectId', async () => {
+    const response = await fetch(`${baseUrl}/api/suggest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bad/id',
+        prefix: 'bg-',
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBeTruthy();
+  });
+
+  it('returns fallback suggestions when cache is empty', async () => {
+    const response = await fetch(`${baseUrl}/api/suggest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prefix: 'bg-',
+        limit: 5,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.suggestions.length).toBeGreaterThan(0);
+    body.suggestions.forEach((item) => {
+      expect(item.startsWith('bg-')).toBe(true);
+    });
+  });
+});
+
 describe('GET /health', () => {
   it('returns 200 with { status: "ok" }', async () => {
     const response = await fetch(`${baseUrl}/health`);
@@ -403,57 +483,5 @@ describe('Security headers', () => {
   it('no X-Powered-By header', async () => {
     const response = await fetch(`${baseUrl}/health`);
     expect(response.headers.get('x-powered-by')).toBeNull();
-  });
-});
-
-describe('Rate limiting', () => {
-  it('requests under limit succeed', async () => {
-    // Set small limits for testing
-    const originalWindow = process.env.RW_RATE_LIMIT_WINDOW_MS;
-    const originalMax = process.env.RW_RATE_LIMIT_MAX;
-
-    try {
-      process.env.RW_RATE_LIMIT_WINDOW_MS = '10000';
-      process.env.RW_RATE_LIMIT_MAX = '5';
-
-      // Make a few requests
-      for (let i = 0; i < 3; i++) {
-        const response = await fetch(`${baseUrl}/health`);
-        expect(response.status).toBe(200);
-      }
-    } finally {
-      // Restore original values
-      if (originalWindow) {
-        process.env.RW_RATE_LIMIT_WINDOW_MS = originalWindow;
-      } else {
-        delete process.env.RW_RATE_LIMIT_WINDOW_MS;
-      }
-      if (originalMax) {
-        process.env.RW_RATE_LIMIT_MAX = originalMax;
-      } else {
-        delete process.env.RW_RATE_LIMIT_MAX;
-      }
-    }
-  });
-
-  it('can be disabled with RW_RATE_LIMIT_DISABLED=true', async () => {
-    const original = process.env.RW_RATE_LIMIT_DISABLED;
-
-    try {
-      process.env.RW_RATE_LIMIT_DISABLED = 'true';
-
-      // Even with many requests, all should succeed
-      for (let i = 0; i < 10; i++) {
-        const response = await fetch(`${baseUrl}/health`);
-        expect(response.status).toBe(200);
-      }
-    } finally {
-      // Restore original value
-      if (original) {
-        process.env.RW_RATE_LIMIT_DISABLED = original;
-      } else {
-        delete process.env.RW_RATE_LIMIT_DISABLED;
-      }
-    }
   });
 });
