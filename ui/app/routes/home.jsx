@@ -55,6 +55,8 @@ export default function Home() {
   const [html, setHtml] = useState(sampleHtml);
   const [classes, setClasses] = useState(sampleClasses);
   const [customCss, setCustomCss] = useState(sampleCustomCss);
+  const [activeTab, setActiveTab] = useState("html");
+  const [outputTab, setOutputTab] = useState("preview");
 
   const handleReset = () => {
     setProjectId("richwind-studio");
@@ -94,279 +96,365 @@ export default function Home() {
     return () => window.clearTimeout(handle);
   }, [projectId, pageId, html, classes, customCss]);
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      try {
+        window.dispatchEvent(new Event("resize"));
+      } catch (error) {
+        console.error("Failed to refresh layout", error);
+      }
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [activeTab]);
+
   return (
-    <main className="min-h-screen pb-16">
-      <header className="hero-grid border-b border-black/10">
-        <div className="mx-auto flex max-w-[1680px] flex-wrap items-center justify-between gap-6 px-2 py-6">
-          <div className="flex items-center gap-3">
-            <div className="animate-float flex h-12 w-12 items-center justify-center rounded-2xl bg-black text-white shadow-lg">
-              RW
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
-                Stateless Tailwind Runtime
-              </p>
-              <p className="text-2xl font-semibold">Rich Wind Studio</p>
-            </div>
+    <main className="play-shell">
+      <header className="play-topbar hero-grid">
+        <div className="flex items-center gap-3">
+          <div className="animate-float flex h-10 w-10 items-center justify-center rounded-2xl bg-black text-white shadow-lg">
+            RW
           </div>
-          <div className="flex flex-wrap gap-2 text-sm text-slate-600">
-            <span className="rounded-full border border-black/10 bg-white/70 px-4 py-2">
-              HTMX-driven
-            </span>
-            <span className="rounded-full border border-black/10 bg-white/70 px-4 py-2">
-              No database
-            </span>
-            <span className="rounded-full border border-black/10 bg-white/70 px-4 py-2">
-              In-memory cache
-            </span>
+          <div>
+            <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
+              Stateless Tailwind Runtime
+            </p>
+            <p className="text-xl font-semibold">Rich Wind Studio</p>
           </div>
         </div>
-      </header>
-
-      <section className="mx-auto max-w-[1680px] px-2 pt-5">
-        <div className="glass-panel mb-3 flex flex-wrap items-center justify-between gap-4 rounded-3xl px-4 py-2 text-sm text-slate-600">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-slate-400">
-              Workspace
-            </p>
-            <p className="text-lg font-semibold text-slate-800">
-              Live Compile Studio
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+            <label className="topbar-toggle">
               <input
                 id="auto-compile"
                 type="checkbox"
                 defaultChecked
                 className="h-4 w-4 accent-black"
               />
-              <label htmlFor="auto-compile" className="text-xs font-semibold">
-                Auto-compile
-              </label>
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-4 py-2">
-              <input
-                id="compact-mode"
-                type="checkbox"
-                className="h-4 w-4 accent-black"
-              />
-              <label htmlFor="compact-mode" className="text-xs font-semibold">
-                Compact
-              </label>
-            </div>
-            <div className="flex items-center gap-2 rounded-full border border-black/10 bg-white px-2 py-1">
+              <span>Auto-compile</span>
+            </label>
+            <label className="topbar-toggle">
+              <input id="compact-mode" type="checkbox" className="h-4 w-4 accent-black" />
+              <span>Compact</span>
+            </label>
+            <div className="topbar-group" suppressHydrationWarning>
               <button
                 type="button"
                 data-layout="split"
                 className="layout-btn is-active"
+                suppressHydrationWarning
               >
                 Split
               </button>
-              <button type="button" data-layout="editor" className="layout-btn">
-                Focus Editor
-              </button>
-              <button type="button" data-layout="output" className="layout-btn">
-                Focus Output
-              </button>
-              <a
-                href="/preview"
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                data-layout="editor"
                 className="layout-btn"
+                suppressHydrationWarning
               >
+                Editor
+              </button>
+              <button
+                type="button"
+                data-layout="output"
+                className="layout-btn"
+                suppressHydrationWarning
+              >
+                Preview
+              </button>
+              <button
+                type="button"
+                data-layout="collapsed"
+                className="layout-btn"
+                suppressHydrationWarning
+              >
+                Collapse
+              </button>
+              <button type="button" id="reset-panes" className="layout-btn">
+                Reset Size
+              </button>
+              <a href="/preview" target="_blank" rel="noreferrer" className="layout-btn">
                 Open Preview
               </a>
             </div>
-          </div>
         </div>
+      </header>
 
-        <div
-          id="studio-grid"
-          className="studio-grid gap-3"
-          suppressHydrationWarning
-        >
-          <div className="studio-input glass-panel rounded-3xl p-4">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
-                  Inputs
-                </p>
-                <p className="text-lg font-semibold">Editor + Controls</p>
-              </div>
-              <span
-                id="status-pill"
-                className="rounded-full bg-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-700"
-              >
-                Ready
-              </span>
+      <section
+        id="studio-grid"
+        className="play-body studio-grid"
+        suppressHydrationWarning
+      >
+        <div className="editor-pane">
+          <div className="editor-header">
+            <div>
+              <p className="text-xs uppercase tracking-[0.4em] text-slate-400">
+                Editor
+              </p>
+              <p className="text-lg font-semibold text-slate-50">HTML + Classes</p>
+            </div>
+            <span
+              id="status-pill"
+              className="rounded-full bg-slate-200/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200"
+            >
+              Ready
+            </span>
+          </div>
+          <div id="suggest-debug" className="suggest-debug">
+            Suggestions: idle
+          </div>
+
+          <form
+            id="compile-form"
+            className="editor-form"
+            hx-post="/htmx/compile"
+            hx-target="#htmx-target"
+            hx-swap="innerHTML"
+            hx-indicator="#compile-indicator"
+            hx-trigger="submit"
+            hx-sync="this:replace"
+          >
+            <input type="hidden" name="_autoIntent" value="compile" />
+            <input type="hidden" id="intent-field" name="intent" value="compile" />
+
+            <div className="editor-identifiers">
+              <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">
+                Project
+                <input
+                  name="projectId"
+                  value={projectId}
+                  onChange={(event) => setProjectId(event.target.value)}
+                  className="editor-input"
+                  placeholder="project-id"
+                />
+              </label>
+              <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">
+                Page
+                <input
+                  name="pageId"
+                  value={pageId}
+                  onChange={(event) => setPageId(event.target.value)}
+                  className="editor-input"
+                  placeholder="page-id"
+                />
+              </label>
             </div>
 
-            <form
-              id="compile-form"
-              className="mt-5 space-y-6"
-              hx-post="/htmx/compile"
-              hx-target="#htmx-target"
-              hx-swap="innerHTML"
-              hx-indicator="#compile-indicator"
-              hx-trigger="submit"
-              hx-sync="this:replace"
-            >
-              <input type="hidden" name="_autoIntent" value="compile" />
-              <input type="hidden" id="intent-field" name="intent" value="compile" />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="text-sm font-medium text-slate-600">
-                  Project ID
-                  <input
-                    name="projectId"
-                    value={projectId}
-                    onChange={(event) => setProjectId(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm"
-                    placeholder="project-id"
-                  />
-                </label>
-                <label className="text-sm font-medium text-slate-600">
-                  Page ID
-                  <input
-                    name="pageId"
-                    value={pageId}
-                    onChange={(event) => setPageId(event.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm"
-                    placeholder="page-id"
-                  />
-                </label>
+            <div className="editor-tabs">
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "html" ? "is-active" : ""}`}
+                onClick={() => setActiveTab("html")}
+              >
+                HTML
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "classes" ? "is-active" : ""}`}
+                onClick={() => setActiveTab("classes")}
+              >
+                Classes
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${activeTab === "custom" ? "is-active" : ""}`}
+                onClick={() => setActiveTab("custom")}
+              >
+                Custom CSS
+              </button>
+            </div>
+
+            <div className="editor-body">
+              <div className={`tab-panel ${activeTab === "html" ? "is-active" : ""}`}>
+                <MonacoField
+                  name="html"
+                  label="HTML Editor"
+                  value={html}
+                  onChange={setHtml}
+                  language="html"
+                  height="100%"
+                  rows={10}
+                  placeholder="<section class='...'>...</section>"
+                  ariaLabel="HTML editor"
+                  hideLabel
+                  enableSuggest
+                  suggestMode="html"
+                />
               </div>
+              <div
+                className={`tab-panel ${activeTab === "classes" ? "is-active" : ""}`}
+              >
+                <MonacoField
+                  name="classes"
+                  label="Tailwind Classes"
+                  value={classes}
+                  onChange={setClasses}
+                  language="css"
+                  height="100%"
+                  rows={3}
+                  placeholder="text-sm text-amber-600 bg-white/70 ..."
+                  ariaLabel="Tailwind classes editor"
+                  hideLabel
+                  enableSuggest
+                  suggestMode="classes"
+                />
+              </div>
+              <div
+                className={`tab-panel ${activeTab === "custom" ? "is-active" : ""}`}
+              >
+                <MonacoField
+                  name="customCss"
+                  label="Custom CSS"
+                  value={customCss}
+                  onChange={setCustomCss}
+                  language="css"
+                  height="100%"
+                  rows={5}
+                  placeholder=".btn { border-radius: 999px; }"
+                  ariaLabel="Custom CSS editor"
+                  hideLabel
+                />
+              </div>
+            </div>
 
-              <MonacoField
-                name="html"
-                label="HTML Editor"
-                value={html}
-                onChange={setHtml}
-                language="html"
-                height="420px"
-                rows={10}
-                placeholder="<section class='...'>...</section>"
-                ariaLabel="HTML editor"
-              />
-
-              <MonacoField
-                name="classes"
-                label="Tailwind Classes"
-                value={classes}
-                onChange={setClasses}
-                language="css"
-                height="170px"
-                rows={3}
-                placeholder="text-sm text-amber-600 bg-white/70 ..."
-                ariaLabel="Tailwind classes editor"
-              />
-
-              <MonacoField
-                name="customCss"
-                label="Custom CSS"
-                value={customCss}
-                onChange={setCustomCss}
-                language="css"
-                height="240px"
-                rows={5}
-                placeholder=".btn { border-radius: 999px; }"
-                ariaLabel="Custom CSS editor"
-              />
-
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="editor-footer">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
-                  className="action-btn rounded-full bg-black px-5 py-2 text-sm font-semibold text-white"
+                  className="action-btn rounded-full bg-slate-100 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-900"
                   data-intent="compile"
                   type="submit"
                 >
                   Compile
                 </button>
                 <button
-                  className="action-btn rounded-full border border-black/10 bg-white px-5 py-2 text-sm font-semibold text-slate-700"
+                  className="action-btn rounded-full border border-white/20 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200"
                   data-intent="cache"
                   type="submit"
                 >
                   Load Cache
                 </button>
                 <button
-                  className="action-btn rounded-full border border-black/10 bg-white px-5 py-2 text-sm font-semibold text-slate-700"
+                  className="action-btn rounded-full border border-white/20 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200"
                   data-intent="project"
                   type="submit"
                 >
                   Project CSS
                 </button>
                 <button
-                  className="action-btn rounded-full border border-black/10 bg-white px-5 py-2 text-sm font-semibold text-slate-700"
+                  className="action-btn rounded-full border border-white/20 bg-white/5 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200"
                   type="button"
                   onClick={handleReset}
                 >
                   Reset
                 </button>
-                <span
-                  id="compile-indicator"
-                  className="rounded-full bg-amber-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-900 opacity-0"
-                >
-                  Working
-                </span>
               </div>
-
-              <div id="htmx-target" className="hidden" />
-            </form>
-          </div>
-
-          <div id="splitter" className="splitter" aria-hidden="true" />
-
-          <div className="studio-output space-y-4">
-            <div className="glass-panel rounded-3xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
-                    Preview
-                  </p>
-                  <p className="text-lg font-semibold">Live Render</p>
-                </div>
-                <span
-                  id="preview-badge"
-                  className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
-                >
-                  Awaiting compile
-                </span>
-              </div>
-              <iframe
-                id="preview-frame"
-                title="Preview"
-                className="mt-4 h-[480px] w-full rounded-2xl border border-slate-200 bg-white"
-                sandbox="allow-same-origin"
-                srcDoc={`<!doctype html><html><body style="font-family:Space Grotesk,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#94a3b8;background:#f8fafc;">Compile to render preview.</body></html>`}
-                suppressHydrationWarning
-              />
-              <div id="preview-data" className="hidden" />
+              <span
+                id="compile-indicator"
+                className="rounded-full bg-amber-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-amber-900 opacity-0"
+              >
+                Working
+              </span>
             </div>
 
-            <div className="glass-panel rounded-3xl p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
-                    Output
-                  </p>
-                  <p className="text-lg font-semibold">Generated CSS</p>
+            <div id="htmx-target" className="hidden" />
+          </form>
+          <div className="pane-resizer" data-pane-resizer="editor" aria-hidden="true" />
+        </div>
+
+        <div id="splitter" className="splitter" aria-hidden="true" />
+
+        <div className="preview-pane">
+          <div className="preview-header">
+            <div>
+              <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
+                Preview
+              </p>
+              <p className="text-lg font-semibold">Live Render</p>
+            </div>
+            <span
+              id="preview-badge"
+              className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white"
+            >
+              Awaiting compile
+            </span>
+          </div>
+          <div className="preview-tabs">
+            <button
+              type="button"
+              className={`preview-tab-btn ${outputTab === "preview" ? "is-active" : ""}`}
+              onClick={() => setOutputTab("preview")}
+            >
+              Preview
+            </button>
+            <button
+              type="button"
+              className={`preview-tab-btn ${outputTab === "css" ? "is-active" : ""}`}
+              onClick={() => setOutputTab("css")}
+            >
+              Generated CSS
+            </button>
+            <button
+              type="button"
+              className={`preview-tab-btn ${outputTab === "info" ? "is-active" : ""}`}
+              onClick={() => setOutputTab("info")}
+            >
+              Info
+            </button>
+          </div>
+
+          <div className="preview-body">
+            <div
+              className={`preview-panel ${outputTab === "preview" ? "is-active" : ""}`}
+            >
+              <div className="preview-canvas">
+                <iframe
+                  id="preview-frame"
+                  title="Preview"
+                  className="preview-frame"
+                  sandbox="allow-same-origin allow-scripts"
+                  srcDoc={`<!doctype html><html><body style="font-family:Space Grotesk,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#94a3b8;background:#f8fafc;">Compile to render preview.</body></html>`}
+                  suppressHydrationWarning
+                />
+                <div id="preview-data" className="hidden" />
+              </div>
+            </div>
+
+            <div
+              className={`preview-panel css-panel ${outputTab === "css" ? "is-active" : ""}`}
+            >
+              <div className="panel-header">
+                <p className="panel-title text-xs uppercase tracking-[0.3em] text-slate-400">
+                  CSS Output
+                </p>
+                <div className="panel-actions">
+                  <span
+                    id="cache-badge"
+                    className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                  >
+                    Awaiting compile
+                  </span>
+                  <button type="button" id="copy-css-btn" className="copy-btn">
+                    Copy CSS
+                  </button>
                 </div>
-                <span
-                  id="cache-badge"
-                  className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700"
-                >
-                  Awaiting compile
-                </span>
               </div>
               <div
                 id="css-output"
-                className="mt-4 rounded-2xl border border-slate-200 bg-slate-950/95 p-4 text-xs text-slate-200"
+                className="rounded-2xl border border-slate-200 bg-slate-950/95 p-4 text-xs text-slate-200"
               >
                 <pre className="font-mono whitespace-pre-wrap break-words">
                   Compile to see CSS output.
                 </pre>
               </div>
-              <div className="mt-5">
+            </div>
+
+            <div
+              className={`preview-panel info-panel ${outputTab === "info" ? "is-active" : ""}`}
+            >
+              <div className="panel-header">
+                <p className="panel-title text-xs uppercase tracking-[0.3em] text-slate-400">
+                  Metrics + Classes
+                </p>
+              </div>
+              <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
                   Extracted Classes
                 </p>
@@ -377,7 +465,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+              <div className="grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
                     Classes
@@ -404,10 +492,7 @@ export default function Home() {
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
                     Cache key
                   </p>
-                  <p
-                    id="stat-hash"
-                    className="font-mono mt-2 text-xs text-slate-700"
-                  >
+                  <p id="stat-hash" className="font-mono mt-2 text-xs text-slate-700">
                     --
                   </p>
                   <p id="stat-run" className="mt-1 text-xs text-slate-400">
@@ -417,6 +502,7 @@ export default function Home() {
               </div>
             </div>
           </div>
+          <div className="pane-resizer" data-pane-resizer="preview" aria-hidden="true" />
         </div>
       </section>
     </main>

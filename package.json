@@ -1,15 +1,45 @@
 {
-  "name": "rich-wind-core",
-  "private": true,
+  "name": "rich-wind",
+  "version": "0.1.0",
+  "description": "A stateless Tailwind CSS runtime service for compiling CSS from HTML and class lists",
   "type": "module",
+  "main": "./services/index.js",
+  "exports": {
+    ".": "./services/index.js"
+  },
+  "files": [
+    "services/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node ./services/index.js",
-    "dev": "node --watch ./services/index.js",
-    "test": "node --test"
+    "dev": "RW_SUGGEST_LIMIT=99 node --watch ./services/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "tailwindcss",
+    "tailwind",
+    "css",
+    "runtime",
+    "compiler",
+    "api",
+    "service"
+  ],
+  "author": "Farooq Alaulddin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FarooqAlaulddin/rich-wind.git"
   },
   "dependencies": {
     "@tailwindcss/node": "^4.1.4",
     "@tailwindcss/oxide": "^4.1.4",
     "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.1.0"
   }
 }

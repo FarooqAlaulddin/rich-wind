@@ -45,7 +45,9 @@ export function Layout({ children }) {
                   setupPreviewSync();
                   setupLayoutControls();
                   setupSplitter();
+                  setupPaneResizers();
                   setupCompactToggle();
+                  setupCopyButtons();
 
                   var tries = 0;
                   var timer = setInterval(function() {
@@ -71,14 +73,17 @@ export function Layout({ children }) {
 
                   function setLayout(mode) {
                     grid.classList.remove('layout-editor', 'layout-output');
+                    grid.classList.remove('layout-collapsed');
                     if (mode === 'editor') grid.classList.add('layout-editor');
                     if (mode === 'output') grid.classList.add('layout-output');
+                    if (mode === 'collapsed') grid.classList.add('layout-collapsed');
                     buttons.forEach(function(btn) {
                       btn.classList.toggle('is-active', btn.dataset.layout === mode);
                     });
                     try {
                       localStorage.setItem('rw-layout', mode || 'split');
                     } catch (e) {}
+                    syncScrollMode();
                   }
 
                   buttons.forEach(function(btn) {
@@ -93,6 +98,28 @@ export function Layout({ children }) {
                     saved = localStorage.getItem('rw-layout');
                   } catch (e) {}
                   setLayout(saved || 'split');
+                  window.addEventListener('resize', syncScrollMode);
+                }
+
+                function getLayoutMode(grid) {
+                  if (!grid) return 'split';
+                  if (grid.classList.contains('layout-editor')) return 'editor';
+                  if (grid.classList.contains('layout-output')) return 'output';
+                  if (grid.classList.contains('layout-collapsed')) return 'collapsed';
+                  return 'split';
+                }
+
+                function syncScrollMode() {
+                  var grid = document.getElementById('studio-grid');
+                  var mode = getLayoutMode(grid);
+                  var isStacked = false;
+                  try {
+                    isStacked = window.matchMedia('(max-width: 1100px)').matches;
+                  } catch (e) {}
+                  var hasResize = document.body.classList.contains('pane-resized');
+                  var isResizing = document.body.classList.contains('pane-resizing');
+                  var allow = isStacked || hasResize || isResizing || mode !== 'split';
+                  document.body.classList.toggle('allow-scroll', allow);
                 }
 
                 function setupAutoCompile(form) {
@@ -262,6 +289,69 @@ export function Layout({ children }) {
                   });
                 }
 
+                function setupCopyButtons() {
+                  var button = document.getElementById('copy-css-btn');
+                  if (!button || button.__rwBound) return;
+                  button.__rwBound = true;
+                  var originalLabel = button.textContent;
+
+                  function setLabel(text, tone) {
+                    button.textContent = text;
+                    button.classList.remove('is-success', 'is-error');
+                    if (tone) button.classList.add(tone);
+                    window.clearTimeout(button.__rwTimer);
+                    button.__rwTimer = window.setTimeout(function() {
+                      button.textContent = originalLabel;
+                      button.classList.remove('is-success', 'is-error');
+                    }, 1400);
+                  }
+
+                  function getCssText() {
+                    var output = document.getElementById('css-output');
+                    if (!output) return '';
+                    var pre = output.querySelector('pre');
+                    var text = pre ? pre.textContent : output.textContent;
+                    return (text || '').trim();
+                  }
+
+                  function copyText(text) {
+                    if (!text) return Promise.reject(new Error('empty'));
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      return navigator.clipboard.writeText(text);
+                    }
+                    return new Promise(function(resolve, reject) {
+                      try {
+                        var area = document.createElement('textarea');
+                        area.value = text;
+                        area.setAttribute('readonly', 'true');
+                        area.style.position = 'fixed';
+                        area.style.opacity = '0';
+                        document.body.appendChild(area);
+                        area.select();
+                        var ok = document.execCommand('copy');
+                        document.body.removeChild(area);
+                        if (ok) resolve();
+                        else reject(new Error('copy-failed'));
+                      } catch (err) {
+                        reject(err);
+                      }
+                    });
+                  }
+
+                  button.addEventListener('click', function() {
+                    var text = getCssText();
+                    copyText(text)
+                      .then(function() { setLabel('Copied', 'is-success'); })
+                      .catch(function() { setLabel('Copy failed', 'is-error'); });
+                  });
+                }
+
+                function clearSuggestCache() {
+                  if (window.__rwSuggestCache && typeof window.__rwSuggestCache.clear === 'function') {
+                    window.__rwSuggestCache.clear();
+                  }
+                }
+
                 function setupSplitter() {
                   var grid = document.getElementById('studio-grid');
                   var splitter = document.getElementById('splitter');
@@ -292,6 +382,130 @@ export function Layout({ children }) {
                       try { localStorage.setItem('rw-split', parseInt(value, 10)); } catch (e) {}
                     }
                   });
+                }
+
+                function setupPaneResizers() {
+                  var handles = document.querySelectorAll('[data-pane-resizer]');
+                  if (!handles.length) return;
+                  var resetButton = document.getElementById('reset-panes');
+
+                  function readPxVar(name, fallback) {
+                    try {
+                      var value = getComputedStyle(document.documentElement).getPropertyValue(name);
+                      var parsed = parseInt(value, 10);
+                      if (Number.isFinite(parsed)) return parsed;
+                    } catch (e) {}
+                    return fallback;
+                  }
+
+                  var minHeight = readPxVar('--pane-min-height', 520);
+                  var maxHeight = readPxVar('--pane-max-height', 2200);
+
+                  function clampHeight(value) {
+                    return Math.max(minHeight, Math.min(maxHeight, value));
+                  }
+
+                  function clearHeights() {
+                    document.querySelectorAll('.editor-pane, .preview-pane').forEach(function(pane) {
+                      pane.style.height = '';
+                    });
+                    document.body.classList.remove('pane-resized');
+                    try {
+                      localStorage.removeItem('rw-editor-height');
+                      localStorage.removeItem('rw-preview-height');
+                    } catch (e) {}
+                    syncScrollMode();
+                  }
+
+                  function applyStoredHeight(pane, key) {
+                    var saved = null;
+                    try { saved = localStorage.getItem(key); } catch (e) {}
+                    var next = parseInt(saved, 10);
+                    if (!Number.isFinite(next)) return;
+                    pane.style.height = clampHeight(next) + 'px';
+                    document.body.classList.add('pane-resized');
+                  }
+
+                  handles.forEach(function(handle) {
+                    if (handle.__rwBound) return;
+                    handle.__rwBound = true;
+                    var pane = handle.closest('.editor-pane, .preview-pane');
+                    if (!pane) return;
+                    var key = pane.classList.contains('editor-pane')
+                      ? 'rw-editor-height'
+                      : 'rw-preview-height';
+                    applyStoredHeight(pane, key);
+
+                    handle.addEventListener('pointerdown', function(event) {
+                      event.preventDefault();
+                      var paneTop = pane.getBoundingClientRect().top + window.scrollY;
+                      var lastClientY = event.clientY;
+                      var dragging = true;
+                      var raf = null;
+                      handle.setPointerCapture(event.pointerId);
+                      document.body.classList.add('pane-resizing', 'pane-resized');
+                      syncScrollMode();
+
+                      function applyHeight() {
+                        var desired = clampHeight(lastClientY + window.scrollY - paneTop);
+                        pane.style.height = desired + 'px';
+                      }
+
+                      function onMove(moveEvent) {
+                        if (!dragging) return;
+                        lastClientY = moveEvent.clientY;
+                        applyHeight();
+                        document.body.classList.add('pane-resized');
+                        syncScrollMode();
+                      }
+
+                      function autoScroll() {
+                        if (!dragging) return;
+                        var edge = 64;
+                        var scrollDelta = 0;
+                        if (lastClientY > window.innerHeight - edge) scrollDelta = 10;
+                        else if (lastClientY < edge) scrollDelta = -10;
+                        if (scrollDelta) {
+                          window.scrollBy(0, scrollDelta);
+                          applyHeight();
+                          document.body.classList.add('pane-resized');
+                          syncScrollMode();
+                        }
+                        raf = window.requestAnimationFrame(autoScroll);
+                      }
+
+                      function finish() {
+                        if (!dragging) return;
+                        dragging = false;
+                        if (raf) window.cancelAnimationFrame(raf);
+                        document.body.classList.remove('pane-resizing');
+                        try {
+                          var finalHeight = pane.getBoundingClientRect().height;
+                          localStorage.setItem(key, Math.round(finalHeight));
+                        } catch (e) {}
+                        syncScrollMode();
+                      }
+
+                      handle.addEventListener('pointermove', onMove);
+                      applyHeight();
+                      raf = window.requestAnimationFrame(autoScroll);
+                      handle.addEventListener('pointerup', function() {
+                        handle.removeEventListener('pointermove', onMove);
+                        finish();
+                      }, { once: true });
+                      handle.addEventListener('pointercancel', function() {
+                        handle.removeEventListener('pointermove', onMove);
+                        finish();
+                      }, { once: true });
+                    });
+                  });
+
+                  if (resetButton && !resetButton.__rwBound) {
+                    resetButton.__rwBound = true;
+                    resetButton.addEventListener('click', clearHeights);
+                  }
+
+                  syncScrollMode();
                 }
 
                 function decodePayload(encoded) {
@@ -409,7 +623,10 @@ export function Layout({ children }) {
                     var node = document.getElementById('preview-data');
                     if (!node) return;
                     var payload = decodePayload(node.dataset.payload || '');
-                    if (payload) applyPreview(payload, 'local');
+                    if (payload) {
+                      applyPreview(payload, 'local');
+                      clearSuggestCache();
+                    }
                   }
                   document.body.addEventListener('htmx:afterOnLoad', syncPreviewFromDom);
                   document.body.addEventListener('htmx:afterSwap', syncPreviewFromDom);

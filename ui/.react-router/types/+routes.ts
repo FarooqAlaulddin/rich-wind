@@ -17,6 +17,9 @@ type Pages = {
   "/htmx/compile": {
     params: {};
   };
+  "/api/suggest": {
+    params: {};
+  };
   "/preview": {
     params: {};
   };
@@ -25,7 +28,7 @@ type Pages = {
 type RouteFiles = {
   "root.jsx": {
     id: "root";
-    page: "/" | "/htmx/compile" | "/preview";
+    page: "/" | "/htmx/compile" | "/api/suggest" | "/preview";
   };
   "./routes/home.jsx": {
     id: "routes/home";
@@ -34,6 +37,10 @@ type RouteFiles = {
   "./routes/htmx.compile.jsx": {
     id: "routes/htmx.compile";
     page: "/htmx/compile";
+  };
+  "./routes/api.suggest.jsx": {
+    id: "routes/api.suggest";
+    page: "/api/suggest";
   };
   "./routes/preview.jsx": {
     id: "routes/preview";
@@ -45,5 +52,6 @@ type RouteModules = {
   "root": typeof import("./app/root.jsx");
   "routes/home": typeof import("./app/./routes/home.jsx");
   "routes/htmx.compile": typeof import("./app/./routes/htmx.compile.jsx");
+  "routes/api.suggest": typeof import("./app/./routes/api.suggest.jsx");
   "routes/preview": typeof import("./app/./routes/preview.jsx");
 };
