@@ -46,6 +46,7 @@ export function Layout({ children }) {
                   setupLayoutControls();
                   setupSplitter();
                   setupPaneResizers();
+                  setupThemeToggle();
                   setupCompactToggle();
                   setupCopyButtons();
 
@@ -289,6 +290,29 @@ export function Layout({ children }) {
                   });
                 }
 
+                function setupThemeToggle() {
+                  var toggle = document.getElementById('theme-toggle');
+                  if (!toggle) return;
+                  var saved = null;
+                  try { saved = localStorage.getItem('rw-theme'); } catch (e) {}
+                  var prefersDark = false;
+                  try {
+                    prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  } catch (e) {}
+                  var useDark = saved ? saved === 'dark' : prefersDark;
+                  toggle.checked = useDark;
+                  document.body.classList.toggle('theme-dark', useDark);
+
+                  toggle.addEventListener('change', function() {
+                    var enabled = toggle.checked;
+                    document.body.classList.toggle('theme-dark', enabled);
+                    try { localStorage.setItem('rw-theme', enabled ? 'dark' : 'light'); } catch (e) {}
+                    if (window.__rwPreview) {
+                      applyPreview(window.__rwPreview, 'local');
+                    }
+                  });
+                }
+
                 function setupCopyButtons() {
                   var button = document.getElementById('copy-css-btn');
                   if (!button || button.__rwBound) return;
@@ -528,9 +552,8 @@ export function Layout({ children }) {
                 function buildPreviewHostDoc() {
                   return '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>' +
                     '<meta http-equiv="Content-Security-Policy" content="default-src \\'none\\'; img-src data: https:; style-src \\'unsafe-inline\\' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src \\'none\\'; script-src \\'none\\'; object-src \\'none\\'; base-uri \\'none\\'; form-action \\'none\\';">' +
-                    '<style>@import url(\\'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap\\');:root{color-scheme:only light;}body{margin:0;font-family:\\'Space Grotesk\\',system-ui,sans-serif;background:radial-gradient(circle at top,rgba(255,255,255,0.9),rgba(255,255,255,0.65));padding:24px;} .preview-shell{min-height:100%;}</style>' +
                     '<style id="rw-preview-style"></style></head><body>' +
-                    '<div id="rw-preview-root" class="preview-shell"><div style="border:1px dashed rgba(148,163,184,0.4);padding:24px;text-align:center;color:#94a3b8;border-radius:16px;">Compile to render preview.</div></div>' +
+                    '<div id="rw-preview-root" class="preview-shell"><div class="rw-preview-empty">Compile to render preview.</div></div>' +
                     '</body></html>';
                 }
 
@@ -555,7 +578,7 @@ export function Layout({ children }) {
                   if (!style || !root) return false;
                   var html = payload && payload.html ? payload.html : '';
                   if (!html || !html.trim()) {
-                    html = '<div style="border:1px dashed rgba(148,163,184,0.4);padding:24px;text-align:center;color:#94a3b8;border-radius:16px;">Add HTML or classes to preview compiled CSS.</div>';
+                    html = '<div class="rw-preview-empty">Add HTML or classes to preview compiled CSS.</div>';
                   }
                   html = sanitizeHtml(html);
                   var css = (payload && payload.css ? payload.css : '') + '\\n' + (payload && payload.customCss ? payload.customCss : '');
