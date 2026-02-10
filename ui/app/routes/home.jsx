@@ -43,10 +43,31 @@ const sampleClasses =
   "text-sm uppercase tracking-[0.18em] text-amber-600 bg-white/70 px-3 py-1 rounded-full shadow-md";
 
 const sampleCustomCss = `/* Optional: add custom CSS on top of compiled output */
+/* Example: @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap'); */
+:root {
+  --rw-preview-font: "Space Grotesk", system-ui, sans-serif;
+  --rw-preview-bg: #0f172a;
+  --rw-preview-fg: #e2e8f0;
+  --rw-preview-pad: 28px;
+}
+body {
+  margin: 0;
+  font-family: var(--rw-preview-font);
+  background: var(--rw-preview-bg);
+  color: var(--rw-preview-fg);
+  padding: var(--rw-preview-pad);
+}
 .preview-shell {
   border-radius: 24px;
   background: linear-gradient(140deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.8));
   padding: 28px;
+}
+.rw-preview-empty {
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  padding: 24px;
+  text-align: center;
+  color: rgba(148, 163, 184, 0.9);
+  border-radius: 16px;
 }`;
 
 export default function Home() {
@@ -134,6 +155,10 @@ export default function Home() {
             <label className="topbar-toggle">
               <input id="compact-mode" type="checkbox" className="h-4 w-4 accent-black" />
               <span>Compact</span>
+            </label>
+            <label className="topbar-toggle">
+              <input id="theme-toggle" type="checkbox" className="h-4 w-4 accent-black" />
+              <span>Dark mode</span>
             </label>
             <div className="topbar-group" suppressHydrationWarning>
               <button
@@ -410,7 +435,7 @@ export default function Home() {
                   title="Preview"
                   className="preview-frame"
                   sandbox="allow-same-origin allow-scripts"
-                  srcDoc={`<!doctype html><html><body style="font-family:Space Grotesk,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#94a3b8;background:#f8fafc;">Compile to render preview.</body></html>`}
+                  srcDoc={`<!doctype html><html><body>Compile to render preview.</body></html>`}
                   suppressHydrationWarning
                 />
                 <div id="preview-data" className="hidden" />

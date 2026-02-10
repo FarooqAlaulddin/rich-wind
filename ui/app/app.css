@@ -53,6 +53,92 @@ body.allow-scroll .studio-grid {
   align-items: start;
 }
 
+body.theme-dark {
+  color: #e2e8f0;
+  background:
+    linear-gradient(to right, rgba(148, 163, 184, 0.12) 1px, transparent 1px) 0 0 / 48px 48px repeat,
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.12) 1px, transparent 1px) 0 0 / 48px 48px repeat,
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.14), transparent 40%),
+    radial-gradient(circle at 20% 20%, rgba(248, 113, 113, 0.12), transparent 40%),
+    linear-gradient(140deg, #0b1120, #0f172a 55%, #111827);
+}
+
+body.theme-dark .play-topbar {
+  background: rgba(15, 23, 42, 0.8);
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+body.theme-dark .topbar-toggle,
+body.theme-dark .topbar-group {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+body.theme-dark .layout-btn {
+  color: rgba(226, 232, 240, 0.8);
+}
+
+body.theme-dark .layout-btn.is-active {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+body.theme-dark .preview-pane {
+  background: rgba(15, 23, 42, 0.92);
+  border-color: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+body.theme-dark .preview-pane .text-slate-400 {
+  color: #94a3b8;
+}
+
+body.theme-dark .preview-pane .text-slate-500 {
+  color: #cbd5f5;
+}
+
+body.theme-dark .preview-pane .text-slate-600,
+body.theme-dark .panel-title {
+  color: #cbd5f5;
+}
+
+body.theme-dark .preview-tab-btn {
+  background: rgba(15, 23, 42, 0.6);
+  color: rgba(226, 232, 240, 0.9);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+body.theme-dark .preview-tab-btn.is-active {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+body.theme-dark #cache-badge {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+body.theme-dark .copy-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+body.theme-dark .preview-pane .bg-white {
+  background: rgba(15, 23, 42, 0.75) !important;
+}
+
+body.theme-dark .preview-pane .border-slate-200 {
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+body.theme-dark .preview-pane .text-slate-900 {
+  color: #f1f5f9 !important;
+}
+
 main {
   position: relative;
   z-index: 1;

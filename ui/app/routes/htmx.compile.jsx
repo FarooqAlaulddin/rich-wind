@@ -22,34 +22,6 @@ const formatBytes = (value) => {
   return `${mb.toFixed(2)} MB`;
 };
 
-const buildPreviewDoc = ({ html, css, customCss }) => {
-  const safeHtml =
-    html?.trim() ||
-    `<div class="rounded-2xl border border-dashed border-slate-500/40 p-6 text-center text-slate-400">
-      Add HTML or classes to preview compiled CSS.
-    </div>`;
-  const embeddedCss = `${css || ""}\n${customCss || ""}`;
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
-      :root { color-scheme: only light; }
-      body {
-        margin: 0;
-        font-family: "Space Grotesk", system-ui, sans-serif;
-        background: radial-gradient(circle at top, rgba(255,255,255,0.9), rgba(255,255,255,0.65));
-        padding: 24px;
-      }
-    </style>
-    <style>${embeddedCss}</style>
-  </head>
-  <body><div class="preview-shell">${safeHtml}</div></body>
-</html>`;
-};
-
 const renderStatus = ({ tone, message }) => {
   return `<span id="status-pill" hx-swap-oob="true" class="rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] ${tone}">${escapeHtml(
     message
@@ -89,13 +61,13 @@ const renderClassList = (classes) => {
   const list =
     classes && classes.length
       ? classes
-          .map(
-            (item) =>
-              `<span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">${escapeHtml(
-                item
-              )}</span>`
-          )
-          .join("")
+        .map(
+          (item) =>
+            `<span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">${escapeHtml(
+              item
+            )}</span>`
+        )
+        .join("")
       : `<span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">No classes yet</span>`;
   return `<div id="class-list" hx-swap-oob="true" class="mt-3 flex flex-wrap gap-2">${list}</div>`;
 };
