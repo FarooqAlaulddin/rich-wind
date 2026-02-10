@@ -132,8 +132,12 @@ export default function Home() {
     <main className="play-shell">
       <header className="play-topbar hero-grid">
         <div className="flex items-center gap-3">
-          <div className="animate-float flex h-10 w-10 items-center justify-center rounded-2xl bg-black text-white shadow-lg">
-            RW
+          <div className="animate-float flex h-14 w-14 items-center justify-center rounded-3xl shadow-lg">
+            <img
+              src="/rw-icon-128.png"
+              alt="Rich Wind"
+              className="h-12 w-12"
+            />
           </div>
           <div>
             <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
