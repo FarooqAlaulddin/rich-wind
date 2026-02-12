@@ -207,11 +207,8 @@ export default function Home() {
         </div>
       </header>
 
-      <section
-        id="studio-grid"
-        className="play-body studio-grid"
-        suppressHydrationWarning
-      >
+      <section className="play-body" suppressHydrationWarning>
+        <div id="studio-grid" className="studio-grid" suppressHydrationWarning>
         <div className="editor-pane">
           <div className="editor-header">
             <div>
@@ -533,6 +530,136 @@ export default function Home() {
           </div>
           <div className="pane-resizer" data-pane-resizer="preview" aria-hidden="true" />
         </div>
+        </div>
+
+        <section className="api-showcase">
+          <div className="api-header">
+            <div>
+              <div className="api-title">Live API Telemetry</div>
+              <div className="api-subtitle">
+                Real-time request/response snapshots from the Rich Wind core.
+              </div>
+            </div>
+            <span className="api-status api-live">
+              <span className="api-live-dot" />
+              Watching
+            </span>
+          </div>
+
+          <div className="api-grid">
+            <div>
+              <div className="api-column-title">Requests</div>
+
+              <div className="api-card" data-api-kind="compile" data-api-role="request">
+                <div className="api-card-header">
+                  <span className="api-endpoint">POST /api/compile</span>
+                  <div className="api-card-actions">
+                    <span id="api-compile-time" className="api-time">Idle</span>
+                    <button type="button" className="api-action" data-api-action="curl" data-api-target="api-compile-request">Curl</button>
+                    <button type="button" className="api-action" data-api-action="copy" data-api-target="api-compile-request">Copy</button>
+                  </div>
+                </div>
+                <pre id="api-compile-request" className="api-code">
+                  Awaiting compile request.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="cache" data-api-role="request">
+                <div className="api-card-header">
+                  <span className="api-endpoint">GET /api/css</span>
+                  <div className="api-card-actions">
+                    <span id="api-cache-time" className="api-time">Idle</span>
+                    <button type="button" className="api-action" data-api-action="curl" data-api-target="api-cache-request">Curl</button>
+                    <button type="button" className="api-action" data-api-action="copy" data-api-target="api-cache-request">Copy</button>
+                  </div>
+                </div>
+                <pre id="api-cache-request" className="api-code">
+                  Awaiting cache request.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="project" data-api-role="request">
+                <div className="api-card-header">
+                  <span className="api-endpoint">GET /api/projects/:id/css</span>
+                  <div className="api-card-actions">
+                    <span id="api-project-time" className="api-time">Idle</span>
+                    <button type="button" className="api-action" data-api-action="curl" data-api-target="api-project-request">Curl</button>
+                    <button type="button" className="api-action" data-api-action="copy" data-api-target="api-project-request">Copy</button>
+                  </div>
+                </div>
+                <pre id="api-project-request" className="api-code">
+                  Awaiting project request.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="suggest" data-api-role="request">
+                <div className="api-card-header">
+                  <span className="api-endpoint">POST /api/suggest</span>
+                  <div className="api-card-actions">
+                    <span id="api-suggest-time" className="api-time">Idle</span>
+                    <button type="button" className="api-action" data-api-action="curl" data-api-target="api-suggest-request">Curl</button>
+                    <button type="button" className="api-action" data-api-action="copy" data-api-target="api-suggest-request">Copy</button>
+                  </div>
+                </div>
+                <pre id="api-suggest-request" className="api-code">
+                  Awaiting suggest request.
+                </pre>
+              </div>
+            </div>
+
+            <div>
+              <div className="api-column-title">Responses</div>
+
+              <div className="api-card" data-api-kind="compile" data-api-role="response">
+                <div className="api-card-header">
+                  <span className="api-endpoint">/api/compile</span>
+                  <div className="api-card-actions">
+                    <span id="api-compile-status" className="api-status">—</span>
+                  </div>
+                </div>
+                <pre id="api-compile-response" className="api-code">
+                  Awaiting compile response.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="cache" data-api-role="response">
+                <div className="api-card-header">
+                  <span className="api-endpoint">/api/css</span>
+                  <div className="api-card-actions">
+                    <span id="api-cache-status" className="api-status">—</span>
+                  </div>
+                </div>
+                <pre id="api-cache-response" className="api-code">
+                  Awaiting cache response.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="project" data-api-role="response">
+                <div className="api-card-header">
+                  <span className="api-endpoint">/api/projects/:id/css</span>
+                  <div className="api-card-actions">
+                    <span id="api-project-status" className="api-status">—</span>
+                  </div>
+                </div>
+                <pre id="api-project-response" className="api-code">
+                  Awaiting project response.
+                </pre>
+              </div>
+
+              <div className="api-card" data-api-kind="suggest" data-api-role="response">
+                <div className="api-card-header">
+                  <span className="api-endpoint">/api/suggest</span>
+                  <div className="api-card-actions">
+                    <span id="api-suggest-status" className="api-status">—</span>
+                  </div>
+                </div>
+                <pre id="api-suggest-response" className="api-code">
+                  Awaiting suggest response.
+                </pre>
+              </div>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
   );

@@ -27,11 +27,21 @@ export const links = () => [
 ];
 
 export function Layout({ children }) {
+  const coreOrigin = (() => {
+    if (typeof process === "undefined") return "";
+    const raw = (process.env.RW_CORE_URL || "").trim();
+    if (!raw) return "";
+    return /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  })();
+
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {coreOrigin ? (
+          <meta name="rw-core-origin" content={coreOrigin} />
+        ) : null}
         <Meta />
         <Links />
       </head>
@@ -46,10 +56,15 @@ export function Layout({ children }) {
             __html: `
               (function() {
                 function boot() {
+                  var meta = document.querySelector('meta[name="rw-core-origin"]');
+                  if (meta && meta.content) {
+                    window.__rwCoreOrigin = meta.content;
+                  }
                   setupPreviewSync();
                   setupLayoutControls();
                   setupSplitter();
                   setupPaneResizers();
+                  setupApiPanel();
                   setupThemeToggle();
                   setupCompactToggle();
                   setupCopyButtons();
@@ -371,6 +386,100 @@ export function Layout({ children }) {
                     copyText(text)
                       .then(function() { setLabel('Copied', 'is-success'); })
                       .catch(function() { setLabel('Copy failed', 'is-error'); });
+                  });
+                }
+
+                function setupApiPanel() {
+                  if (window.__rwApiPanelUpdate) return;
+                  function updatePre(id, value) {
+                    var node = document.getElementById(id);
+                    if (!node) return;
+                    node.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+                  }
+                  function updateStatus(id, status) {
+                    var node = document.getElementById(id);
+                    if (!node) return;
+                    var tone = status === 'error' ? 'is-error' : status === 'ok' ? 'is-ok' : '';
+                    node.classList.remove('is-ok', 'is-error');
+                    if (tone) node.classList.add(tone);
+                    node.textContent = status ? status.toUpperCase() : '—';
+                  }
+                  function pulseCards(kind) {
+                    var cards = document.querySelectorAll('[data-api-kind="' + kind + '"]');
+                    cards.forEach(function(card) {
+                      card.classList.remove('is-updated');
+                      void card.offsetWidth;
+                      card.classList.add('is-updated');
+                      window.clearTimeout(card.__rwPulse);
+                      card.__rwPulse = window.setTimeout(function() {
+                        card.classList.remove('is-updated');
+                      }, 900);
+                    });
+                  }
+                  window.__rwApiPanelUpdate = function(kind, request, response, status) {
+                    var time = new Date().toLocaleTimeString();
+                    if (request && typeof request === 'object') {
+                      var origin = window.__rwCoreOrigin || window.location.origin;
+                      if (typeof request.url === 'string' && request.url.startsWith('/')) {
+                        request = Object.assign({}, request, { url: origin + request.url });
+                      }
+                    }
+                    updatePre('api-' + kind + '-request', request || '—');
+                    updatePre('api-' + kind + '-response', response || '—');
+                    updatePre('api-' + kind + '-time', time);
+                    updateStatus('api-' + kind + '-status', status || 'ok');
+                    pulseCards(kind);
+                  };
+
+                  document.addEventListener('click', function(event) {
+                    var btn = event.target.closest('[data-api-action]');
+                    if (!btn) return;
+                    var targetId = btn.getAttribute('data-api-target');
+                    var action = btn.getAttribute('data-api-action');
+                    var node = targetId ? document.getElementById(targetId) : null;
+                    if (!node) return;
+
+                    if (action === 'expand') {
+                      return;
+                    }
+
+                    if (action === 'curl') {
+                      var json = node.dataset.json || '';
+                      var curl = node.dataset.curl || '';
+                      if (!curl) return;
+                      if (node.dataset.view === 'curl') {
+                        node.textContent = json || node.textContent;
+                        node.dataset.view = 'json';
+                        return;
+                      }
+                      node.textContent = curl;
+                      node.dataset.view = 'curl';
+                      return;
+                    }
+
+                    if (action === 'copy') {
+                      var copyValue = node.dataset.curl || node.textContent;
+                      if (!copyValue) return;
+                      if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(copyValue);
+                      } else {
+                        try {
+                          var area = document.createElement('textarea');
+                          area.value = copyValue;
+                          area.setAttribute('readonly', 'true');
+                          area.style.position = 'fixed';
+                          area.style.opacity = '0';
+                          document.body.appendChild(area);
+                          area.select();
+                          document.execCommand('copy');
+                          document.body.removeChild(area);
+                        } catch (e) {}
+                      }
+                      btn.textContent = 'Copied';
+                      window.setTimeout(function() {
+                        btn.textContent = 'Copy';
+                      }, 1000);
+                    }
                   });
                 }
 
