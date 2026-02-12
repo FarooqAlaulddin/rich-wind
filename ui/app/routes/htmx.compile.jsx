@@ -88,6 +88,79 @@ const renderPreviewBadge = (label) => {
   )}</span>`;
 };
 
+const truncate = (value = "", limit = 320) => {
+  const safe = String(value || "");
+  if (safe.length <= limit) return safe;
+  return `${safe.slice(0, limit)}…`;
+};
+
+const escapeShellSingle = (value = "") => String(value).replace(/'/g, `'\"'\"'`);
+
+const resolveCoreUrl = (path = "") => {
+  return `${CORE_URL.replace(/\/$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+};
+
+const buildCurlCommand = (kind, request, curlPayload) => {
+  const projectId = request?.projectId || "";
+  const pageId = request?.pageId || "";
+  if (kind === "compile") {
+    const payload = curlPayload || {
+      projectId,
+      pageId,
+      html: "",
+      classes: "",
+    };
+    const body = escapeShellSingle(JSON.stringify(payload));
+    return `curl -X POST ${resolveCoreUrl("/api/compile")} -H "Content-Type: application/json" -d '${body}'`;
+  }
+  if (kind === "cache") {
+    return `curl "${resolveCoreUrl(`/api/css?projectId=${encodeURIComponent(
+      projectId
+    )}&pageId=${encodeURIComponent(pageId)}`)}"`;
+  }
+  if (kind === "project") {
+    return `curl "${resolveCoreUrl(`/api/projects/${encodeURIComponent(projectId)}/css`)}"`;
+  }
+  return "";
+};
+
+const renderApiPanel = ({ kind, request, response, status = "ok", curlPayload }) => {
+  const time = new Date().toLocaleTimeString();
+  const req = escapeHtml(JSON.stringify(request, null, 2));
+  const res = escapeHtml(JSON.stringify(response, null, 2));
+  const tone = status === "error" ? "is-error" : "is-ok";
+  const curl = escapeHtml(buildCurlCommand(kind, request, curlPayload));
+  return [
+    `<pre id="api-${kind}-request" hx-swap-oob="true" class="api-code" data-json="${req}" data-curl="${curl}" data-view="json">${req}</pre>`,
+    `<pre id="api-${kind}-response" hx-swap-oob="true" class="api-code">${res}</pre>`,
+    `<span id="api-${kind}-time" hx-swap-oob="true" class="api-time">${escapeHtml(
+      time
+    )}</span>`,
+    `<span id="api-${kind}-status" hx-swap-oob="true" class="api-status ${tone}">${escapeHtml(
+      status.toUpperCase()
+    )}</span>`,
+  ].join("");
+};
+
+const buildRequestMeta = ({ projectId, pageId, html, classes, customCss, intent }) => {
+  const path =
+    intent === "compile"
+      ? "/api/compile"
+      : intent === "cache"
+      ? `/api/css?projectId=${encodeURIComponent(projectId)}&pageId=${encodeURIComponent(pageId)}`
+      : `/api/projects/${encodeURIComponent(projectId)}/css`;
+  return {
+    method: intent === "compile" ? "POST" : "GET",
+    url: resolveCoreUrl(path),
+    projectId,
+    pageId,
+    intent,
+    html: html ? `<HTML:${String(html).length}>` : "",
+    classes: classes ? `<CLASSES:${String(classes).length}>` : "",
+    customCss: customCss ? `<CUSTOM_CSS:${String(customCss).length}>` : "",
+  };
+};
+
 const renderResponse = (payload) => {
   return new Response(`<div class="htmx-stub"></div>${payload}`, {
     headers: { "Content-Type": "text/html; charset=utf-8" },
@@ -104,11 +177,24 @@ export async function action({ request }) {
   const intent = formData.get("intent") || formData.get("_autoIntent") || "compile";
 
   if (!projectId) {
+    const apiPanel = renderApiPanel({
+      kind: "compile",
+      request: buildRequestMeta({
+        projectId,
+        pageId,
+        html,
+        classes,
+        customCss,
+        intent,
+      }),
+      response: { error: "Project ID required" },
+      status: "error",
+    });
     return renderResponse(
       renderStatus({
         tone: "bg-rose-200 text-rose-900",
         message: "Project ID required",
-      })
+      }) + apiPanel
     );
   }
 
@@ -126,6 +212,24 @@ export async function action({ request }) {
         throw new Error(body?.error || "Cache miss.");
       }
       const css = await response.text();
+      const apiPanel = renderApiPanel({
+        kind: "cache",
+        request: buildRequestMeta({
+          projectId,
+          pageId,
+          html,
+          classes,
+          customCss,
+          intent,
+        }),
+        response: {
+          status: "cache hit",
+          cssBytes: css.length,
+          cssSnippet: truncate(css, 320),
+        },
+        curlPayload: null,
+        status: "ok",
+      });
       return renderResponse(
         [
           renderStatus({
@@ -142,6 +246,7 @@ export async function action({ request }) {
             hash: "--",
             runLabel: nowLabel,
           }),
+          apiPanel,
         ].join("")
       );
     }
@@ -155,6 +260,24 @@ export async function action({ request }) {
         throw new Error(body?.error || "Project cache miss.");
       }
       const css = await response.text();
+      const apiPanel = renderApiPanel({
+        kind: "project",
+        request: buildRequestMeta({
+          projectId,
+          pageId,
+          html,
+          classes,
+          customCss,
+          intent,
+        }),
+        response: {
+          status: "project css",
+          cssBytes: css.length,
+          cssSnippet: truncate(css, 320),
+        },
+        curlPayload: null,
+        status: "ok",
+      });
       return renderResponse(
         [
           renderStatus({
@@ -171,6 +294,7 @@ export async function action({ request }) {
             hash: "--",
             runLabel: nowLabel,
           }),
+          apiPanel,
         ].join("")
       );
     }
@@ -191,6 +315,31 @@ export async function action({ request }) {
       throw new Error(data?.error || "Compile failed.");
     }
 
+    const apiPanel = renderApiPanel({
+      kind: "compile",
+      request: buildRequestMeta({
+        projectId,
+        pageId,
+        html,
+        classes,
+        customCss,
+        intent,
+      }),
+      curlPayload: {
+        projectId,
+        pageId,
+        html,
+        classes,
+      },
+      response: {
+        cached: Boolean(data.cached),
+        cssBytes: (data.css || "").length,
+        classCount: data.classes?.length ?? 0,
+        hash: data.hash ? `${data.hash.slice(0, 16)}...` : null,
+        cssSnippet: data.css ? `<CSS:${(data.css || "").length}>` : "",
+      },
+      status: "ok",
+    });
     return renderResponse(
       [
         renderStatus({
@@ -210,14 +359,39 @@ export async function action({ request }) {
           hash: data.hash ? `${data.hash.slice(0, 16)}...` : "--",
           runLabel: nowLabel,
         }),
+        apiPanel,
       ].join("")
     );
   } catch (error) {
+    const apiPanel = renderApiPanel({
+      kind: intent === "cache" ? "cache" : intent === "project" ? "project" : "compile",
+      request: buildRequestMeta({
+        projectId,
+        pageId,
+        html,
+        classes,
+        customCss,
+        intent,
+      }),
+      curlPayload:
+        intent === "compile"
+          ? {
+              projectId,
+              pageId,
+              html,
+              classes,
+            }
+          : null,
+      response: {
+        error: error?.message || "Something went wrong.",
+      },
+      status: "error",
+    });
     return renderResponse(
       renderStatus({
         tone: "bg-rose-200 text-rose-900",
         message: error?.message || "Something went wrong.",
-      })
+      }) + apiPanel
     );
   }
 }

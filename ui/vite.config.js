@@ -5,6 +5,12 @@ import path from "path";
 
 export default defineConfig({
   plugins: [reactRouter(), tailwindcss()],
+  optimizeDeps: {
+    include: ["@monaco-editor/react", "monaco-editor"],
+  },
+  ssr: {
+    noExternal: ["@monaco-editor/react", "monaco-editor"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./app"),

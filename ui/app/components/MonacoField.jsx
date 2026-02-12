@@ -41,13 +41,31 @@ export default function MonacoField({
   suggestMode = "classes",
 }) {
   const [Editor, setEditor] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const hiddenRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
-    import("@monaco-editor/react").then((mod) => {
-      if (mounted) setEditor(() => mod.default);
-    });
+    let attempts = 0;
+    function loadEditor() {
+      attempts += 1;
+      import("@monaco-editor/react")
+        .then((mod) => {
+          if (mounted) {
+            setEditor(() => mod.default);
+            setLoadError(null);
+          }
+        })
+        .catch((error) => {
+          if (!mounted) return;
+          console.error("Monaco load failed", error);
+          setLoadError(error);
+          if (attempts < 3) {
+            setTimeout(loadEditor, 400 * attempts);
+          }
+        });
+    }
+    loadEditor();
     return () => {
       mounted = false;
     };
@@ -132,16 +150,90 @@ export default function MonacoField({
             limit: 50,
           }),
         });
-        if (!response.ok) return [];
+        if (!response.ok) {
+          if (window.__rwApiPanelUpdate) {
+            window.__rwApiPanelUpdate(
+              "suggest",
+              {
+                projectId,
+                prefix,
+                classesLength: String(classes).length,
+                limit: 50,
+              },
+              { error: `HTTP ${response.status}` },
+              "error"
+            );
+          }
+          return [];
+        }
         const payload = await response.json();
         const suggestions = Array.isArray(payload?.suggestions)
           ? payload.suggestions
           : [];
+        if (window.__rwApiPanelUpdate) {
+          const classesPreview = String(classes || "")
+            .split(/\s+/)
+            .slice(0, 12)
+            .join(" ");
+          const responsePreview = {
+            count: payload?.count ?? suggestions.length,
+            suggestions: suggestions.slice(0, 30),
+            truncated: suggestions.length > 30,
+          };
+          const origin = window.__rwCoreOrigin || window.location.origin;
+          const curlPayload = {
+            projectId,
+            prefix,
+            classes: String(classes || ""),
+            limit: 50,
+          };
+          window.__rwApiPanelUpdate(
+            "suggest",
+            {
+              method: "POST",
+              url: `${origin}/api/suggest`,
+              projectId,
+              prefix,
+              classesLength: String(classes).length,
+              classes: `<CLASSES:${String(classes).length}>`,
+              limit: 50,
+            },
+            responsePreview,
+            "ok"
+          );
+          const requestNode = document.getElementById("api-suggest-request");
+          if (requestNode) {
+            const payloadStr = JSON.stringify(curlPayload);
+            const safePayload = payloadStr.replace(/'/g, `'\"'\"'`);
+            requestNode.dataset.json = JSON.stringify(
+              {
+                method: "POST",
+                url: `${origin}/api/suggest`,
+                projectId,
+                prefix,
+                classes: `<CLASSES:${String(classes).length}>`,
+                limit: 50,
+              },
+              null,
+              2
+            );
+            requestNode.dataset.curl = `curl -X POST ${origin}/api/suggest -H "Content-Type: application/json" -d '${safePayload}'`;
+            requestNode.dataset.view = "json";
+          }
+        }
         window.__rwSuggestCache.set(cacheKey, suggestions);
         setDebug(`Suggestions: "${prefix}" → ${suggestions.length}`);
         return suggestions;
       } catch (error) {
         setDebug("Suggestions: error");
+        if (window.__rwApiPanelUpdate) {
+          window.__rwApiPanelUpdate(
+            "suggest",
+            { error: "request failed" },
+            { error: error?.message || "Suggest failed" },
+            "error"
+          );
+        }
         return [];
       }
     }
@@ -258,6 +350,11 @@ export default function MonacoField({
             aria-label={ariaLabel}
           />
         )}
+        {loadError ? (
+          <div className="mt-2 text-xs text-rose-300">
+            Monaco failed to load. Check the console for details.
+          </div>
+        ) : null}
       </div>
     </div>
   );
