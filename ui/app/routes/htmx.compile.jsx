@@ -103,6 +103,7 @@ const resolveCoreUrl = (path = "") => {
 const buildCurlCommand = (kind, request, curlPayload) => {
   const projectId = request?.projectId || "";
   const pageId = request?.pageId || "";
+  const bundle = request?.bundle || "";
   if (kind === "compile") {
     const payload = curlPayload || {
       projectId,
@@ -110,16 +111,19 @@ const buildCurlCommand = (kind, request, curlPayload) => {
       html: "",
       classes: "",
     };
+    if (bundle && bundle !== "full") payload.bundle = bundle;
     const body = escapeShellSingle(JSON.stringify(payload));
     return `curl -X POST ${resolveCoreUrl("/api/compile")} -H "Content-Type: application/json" -d '${body}'`;
   }
   if (kind === "cache") {
+    const bundleParam = bundle && bundle !== "full" ? `&bundle=${encodeURIComponent(bundle)}` : "";
     return `curl "${resolveCoreUrl(`/api/css?projectId=${encodeURIComponent(
       projectId
-    )}&pageId=${encodeURIComponent(pageId)}`)}"`;
+    )}&pageId=${encodeURIComponent(pageId)}${bundleParam}`)}"`;
   }
   if (kind === "project") {
-    return `curl "${resolveCoreUrl(`/api/projects/${encodeURIComponent(projectId)}/css`)}"`;
+    const bundleParam = bundle && bundle !== "full" ? `?bundle=${encodeURIComponent(bundle)}` : "";
+    return `curl "${resolveCoreUrl(`/api/projects/${encodeURIComponent(projectId)}/css${bundleParam}`)}"`;
   }
   return "";
 };
@@ -142,19 +146,22 @@ const renderApiPanel = ({ kind, request, response, status = "ok", curlPayload })
   ].join("");
 };
 
-const buildRequestMeta = ({ projectId, pageId, html, classes, customCss, intent }) => {
+const buildRequestMeta = ({ projectId, pageId, html, classes, customCss, intent, bundle }) => {
+  const bundleParam = bundle && bundle !== "full" ? `&bundle=${encodeURIComponent(bundle)}` : "";
+  const projectBundleParam = bundle && bundle !== "full" ? `?bundle=${encodeURIComponent(bundle)}` : "";
   const path =
     intent === "compile"
       ? "/api/compile"
       : intent === "cache"
-      ? `/api/css?projectId=${encodeURIComponent(projectId)}&pageId=${encodeURIComponent(pageId)}`
-      : `/api/projects/${encodeURIComponent(projectId)}/css`;
+      ? `/api/css?projectId=${encodeURIComponent(projectId)}&pageId=${encodeURIComponent(pageId)}${bundleParam}`
+      : `/api/projects/${encodeURIComponent(projectId)}/css${projectBundleParam}`;
   return {
     method: intent === "compile" ? "POST" : "GET",
     url: resolveCoreUrl(path),
     projectId,
     pageId,
     intent,
+    bundle: bundle || "full",
     html: html ? `<HTML:${String(html).length}>` : "",
     classes: classes ? `<CLASSES:${String(classes).length}>` : "",
     customCss: customCss ? `<CUSTOM_CSS:${String(customCss).length}>` : "",
@@ -174,22 +181,24 @@ export async function action({ request }) {
   const html = formData.get("html") || "";
   const classes = formData.get("classes") || "";
   const customCss = formData.get("customCss") || "";
+  const bundle = (formData.get("bundle") || "full").trim() || "full";
   const intent = formData.get("intent") || formData.get("_autoIntent") || "compile";
 
   if (!projectId) {
     const apiPanel = renderApiPanel({
       kind: "compile",
-      request: buildRequestMeta({
-        projectId,
-        pageId,
-        html,
-        classes,
-        customCss,
-        intent,
-      }),
-      response: { error: "Project ID required" },
-      status: "error",
-    });
+        request: buildRequestMeta({
+          projectId,
+          pageId,
+          html,
+          classes,
+          customCss,
+          intent,
+          bundle,
+        }),
+        response: { error: "Project ID required" },
+        status: "error",
+      });
     return renderResponse(
       renderStatus({
         tone: "bg-rose-200 text-rose-900",
@@ -205,7 +214,7 @@ export async function action({ request }) {
       const response = await fetch(
         `${CORE_URL}/api/css?projectId=${encodeURIComponent(
           projectId
-        )}&pageId=${encodeURIComponent(pageId)}`
+        )}&pageId=${encodeURIComponent(pageId)}${bundle !== "full" ? `&bundle=${encodeURIComponent(bundle)}` : ""}`
       );
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -221,6 +230,7 @@ export async function action({ request }) {
           classes,
           customCss,
           intent,
+          bundle,
         }),
         response: {
           status: "cache hit",
@@ -253,7 +263,7 @@ export async function action({ request }) {
 
     if (intent === "project") {
       const response = await fetch(
-        `${CORE_URL}/api/projects/${encodeURIComponent(projectId)}/css`
+        `${CORE_URL}/api/projects/${encodeURIComponent(projectId)}/css${bundle !== "full" ? `?bundle=${encodeURIComponent(bundle)}` : ""}`
       );
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -269,6 +279,7 @@ export async function action({ request }) {
           classes,
           customCss,
           intent,
+          bundle,
         }),
         response: {
           status: "project css",
@@ -307,6 +318,7 @@ export async function action({ request }) {
         pageId,
         html,
         classes,
+        bundle,
       }),
     });
 
@@ -324,12 +336,14 @@ export async function action({ request }) {
         classes,
         customCss,
         intent,
+        bundle,
       }),
       curlPayload: {
         projectId,
         pageId,
         html,
         classes,
+        bundle,
       },
       response: {
         cached: Boolean(data.cached),
@@ -372,6 +386,7 @@ export async function action({ request }) {
         classes,
         customCss,
         intent,
+        bundle,
       }),
       curlPayload:
         intent === "compile"
@@ -380,6 +395,7 @@ export async function action({ request }) {
               pageId,
               html,
               classes,
+              bundle,
             }
           : null,
       response: {

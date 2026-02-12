@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { app } from '../services/index.js';
+import { createTestServer } from './helpers/createTestServer.js';
 
 let server;
 let baseUrl;
@@ -275,6 +276,125 @@ describe('POST /api/compile', () => {
     expect(body.classes).not.toContain('not-a-real-class');
     expect(body.classes).not.toContain('another-fake-class');
   });
+
+  it('supports bundle=base without html/classes and returns only preflight CSS', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-base-only',
+        bundle: 'base'
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('base');
+    expect(Array.isArray(body.classes)).toBe(true);
+    expect(body.classes.length).toBe(0);
+    expect(body.css).toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).not.toContain('bg-red-500');
+    expect(body.css).not.toContain('--color-');
+  });
+
+  it('supports bundle=utilities and omits preflight and theme styles', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-utils',
+        pageId: 'page1',
+        classes: 'bg-red-500 text-white',
+        bundle: 'utilities'
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('utilities');
+    expect(body.css).toContain('bg-red-500');
+    expect(body.css).not.toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).not.toContain(':root, :host');
+  });
+
+  it('supports bundle=theme and returns only theme tokens', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-theme',
+        pageId: 'page1',
+        classes: 'bg-red-500 text-white',
+        bundle: 'theme'
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('theme');
+    expect(body.css).toContain('--color-');
+    expect(body.css).not.toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).not.toContain('bg-red-500');
+  });
+
+  it('supports bundle=full and includes base + utilities', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-full',
+        pageId: 'page1',
+        classes: 'bg-red-500 text-white',
+        bundle: 'full'
+      })
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('full');
+    expect(body.css).toContain('bg-red-500');
+    expect(body.css).toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).toContain('--color-');
+  });
+
+  it('accepts mode alias for bundle', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-alias',
+        pageId: 'page1',
+        classes: 'bg-red-500',
+        mode: 'utilities',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('utilities');
+    expect(body.css).toContain('bg-red-500');
+    expect(body.css).not.toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).not.toContain(':root, :host');
+  });
+
+  it('defaults invalid bundle values to full', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'bundle-invalid',
+        pageId: 'page1',
+        classes: 'bg-red-500',
+        bundle: 'not-real',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.bundle).toBe('full');
+    expect(body.css).toContain('bg-red-500');
+    expect(body.css).toMatch(/box-sizing:\s*border-box/);
+  });
 });
 
 describe('GET /api/css', () => {
@@ -312,6 +432,13 @@ describe('GET /api/css', () => {
     expect(body.error).toBeTruthy();
   });
 
+  it('returns 400 when pageId is invalid', async () => {
+    const response = await fetch(`${baseUrl}/api/css?projectId=valid-proj&pageId=bad%2Fid`);
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBeTruthy();
+  });
+
   it('supports project_id and page_id query params', async () => {
     // First compile
     await fetch(`${baseUrl}/api/compile`, {
@@ -329,6 +456,31 @@ describe('GET /api/css', () => {
     expect(response.status).toBe(200);
     const css = await response.text();
     expect(css.length).toBeGreaterThan(0);
+  });
+
+  it('returns base bundle even without cached page', async () => {
+    const response = await fetch(`${baseUrl}/api/css?projectId=base-miss&pageId=page1&bundle=base`);
+    expect(response.status).toBe(200);
+    const css = await response.text();
+    expect(css).toMatch(/box-sizing:\s*border-box/);
+  });
+
+  it('returns utilities bundle for a cached page', async () => {
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'css-utils-test',
+        pageId: 'page1',
+        classes: 'bg-green-500 text-white'
+      })
+    });
+
+    const response = await fetch(`${baseUrl}/api/css?projectId=css-utils-test&pageId=page1&bundle=utilities`);
+    expect(response.status).toBe(200);
+    const css = await response.text();
+    expect(css).toContain('bg-green-500');
+    expect(css).not.toMatch(/box-sizing:\s*border-box/);
   });
 });
 
@@ -377,6 +529,44 @@ describe('GET /api/projects/:projectId/css', () => {
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toBeTruthy();
+  });
+
+  it('returns base bundle even when project is missing', async () => {
+    const response = await fetch(`${baseUrl}/api/projects/base-project-miss/css?bundle=base`);
+    expect(response.status).toBe(200);
+    const css = await response.text();
+    expect(css).toMatch(/box-sizing:\s*border-box/);
+  });
+
+  it('returns utilities bundle aggregated across pages', async () => {
+    const projectId = 'utilities-project';
+
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        pageId: 'page1',
+        classes: 'bg-blue-500'
+      })
+    });
+
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        pageId: 'page2',
+        classes: 'text-red-500'
+      })
+    });
+
+    const response = await fetch(`${baseUrl}/api/projects/${projectId}/css?bundle=utilities`);
+    expect(response.status).toBe(200);
+    const css = await response.text();
+    expect(css).toContain('bg-blue-500');
+    expect(css).toContain('text-red-500');
+    expect(css).not.toMatch(/box-sizing:\s*border-box/);
   });
 });
 
@@ -456,6 +646,73 @@ describe('POST /api/suggest', () => {
     expect(body.suggestions.length).toBeGreaterThan(0);
     body.suggestions.forEach((item) => {
       expect(item.startsWith('bg-')).toBe(true);
+    });
+  });
+
+  it('returns no suggestions when fallback is disabled and cache is empty', async () => {
+    const { baseUrl: tempBase, close } = await createTestServer({
+      RW_SUGGEST_FALLBACK: 'false',
+    });
+
+    try {
+      const response = await fetch(`${tempBase}/api/suggest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prefix: 'bg-',
+          limit: 5,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.success).toBe(true);
+      expect(body.suggestions.length).toBe(0);
+    } finally {
+      await close();
+    }
+  });
+
+  it('clamps suggestion limit to RW_SUGGEST_LIMIT', async () => {
+    const { baseUrl: tempBase, close } = await createTestServer({
+      RW_SUGGEST_LIMIT: '5',
+    });
+
+    try {
+      const response = await fetch(`${tempBase}/api/suggest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prefix: 'bg-',
+          limit: 50,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.success).toBe(true);
+      expect(body.suggestions.length).toBeLessThanOrEqual(5);
+    } finally {
+      await close();
+    }
+  });
+
+  it('supports variant prefixes like hover:bg-', async () => {
+    const response = await fetch(`${baseUrl}/api/suggest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prefix: 'hover:bg-',
+        limit: 5,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.suggestions.length).toBeGreaterThan(0);
+    body.suggestions.forEach((item) => {
+      expect(item.startsWith('hover:bg-')).toBe(true);
     });
   });
 });

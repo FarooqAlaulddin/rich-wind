@@ -125,6 +125,8 @@ function evictPageByKey(key) {
 
     project.pages.delete(pageId);
     project.cssCache = null;
+    project.utilitiesCssCache = null;
+    project.themeCssCache = null;
 
     if (project.pages.size === 0) {
         projects.delete(projectId);
@@ -145,7 +147,9 @@ function getProject(projectId) {
             id: projectId,
             pages: new Map(),
             classCounts: new Map(),
-            cssCache: null
+            cssCache: null,
+            utilitiesCssCache: null,
+            themeCssCache: null
         };
         projects.set(projectId, project);
     }
@@ -358,6 +362,7 @@ function getProjectSuggestionList(projectId) {
 
 // Your existing functions
 let cachedDesignSystem = null;
+let cachedBaseCss = null;
 
 async function getDesignSystem() {
     if (!cachedDesignSystem) {
@@ -419,6 +424,61 @@ async function generateCssForClasses(classes) {
     return compiled.build(classes);
 }
 
+function splitThemeUtilitiesCss(css = '') {
+    const headerMatch = css.match(/^\/\*![\s\S]*?\*\/\n@layer[^;]*;\n/);
+    const header = headerMatch ? headerMatch[0] : '';
+    const body = headerMatch ? css.slice(header.length) : css;
+    const themeBlocks = body.match(/:root, :host\s*\{[\s\S]*?\}\n?/g) || [];
+    const themeBody = themeBlocks.join('\n').trim();
+    const utilitiesBody = body.replace(/:root, :host\s*\{[\s\S]*?\}\n?/g, '').trim();
+    const themeHeader = header ? header.replace(/@layer[^;]*;/, '@layer theme;') : '';
+    const utilitiesHeader = header ? header.replace(/@layer[^;]*;/, '@layer utilities;') : '';
+
+    return {
+        themeCss: `${themeHeader}${themeBody ? `\n${themeBody}` : ''}`.trim(),
+        utilitiesCss: `${utilitiesHeader}${utilitiesBody ? `\n${utilitiesBody}` : ''}`.trim()
+    };
+}
+
+async function generateThemeUtilitiesForClasses(classes) {
+    let inputCss = '@layer theme, utilities;\n';
+    inputCss += '@import "tailwindcss/utilities";\n';
+    inputCss += '@import "tailwindcss/theme.css";\n';
+
+    classes.forEach(className => {
+        const escaped = className.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        inputCss += `@source inline("${escaped}");\n`;
+    });
+
+    const compiled = await compile(inputCss, {
+        base: __dirname,
+        onDependency: () => {}
+    });
+
+    const css = compiled.build(classes);
+    return splitThemeUtilitiesCss(css);
+}
+
+async function generateBaseCss() {
+    if (cachedBaseCss) return cachedBaseCss;
+    const inputCss = '@layer base;\n@import "tailwindcss/preflight";\n';
+    const compiled = await compile(inputCss, {
+        base: __dirname,
+        onDependency: () => {}
+    });
+    cachedBaseCss = compiled.build([]);
+    return cachedBaseCss;
+}
+
+function normalizeBundle(value) {
+    if (!value) return 'full';
+    const normalized = String(value).trim().toLowerCase();
+    if (['base', 'preflight'].includes(normalized)) return 'base';
+    if (['theme', 'tokens', 'design'].includes(normalized)) return 'theme';
+    if (['utilities', 'utility', 'utils', 'util', 'utilities-only', 'utility-only'].includes(normalized)) return 'utilities';
+    return 'full';
+}
+
 async function resolveClassesFromInput({ html, classes }) {
     let fromHtml = [];
     if (html) {
@@ -433,7 +493,11 @@ async function resolveClassesFromInput({ html, classes }) {
     return valid.sort();
 }
 
-async function compileAndCachePage({ projectId, pageId, html, classes }) {
+async function compileAndCachePage({ projectId, pageId, html, classes, bundle = 'full' }) {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss(), classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
+    }
     const resolvedClasses = await resolveClassesFromInput({ html, classes });
     if (resolvedClasses.length === 0) {
         return { error: 'No valid classes found.', classes: [], css: '', status: 400 };
@@ -451,19 +515,34 @@ async function compileAndCachePage({ projectId, pageId, html, classes }) {
     const project = getProject(projectId);
     const existing = project.pages.get(pageId);
     const classHash = hashClasses(resolvedClasses);
+    const bundleKey =
+        normalizedBundle === 'utilities'
+            ? 'utilitiesCss'
+            : normalizedBundle === 'theme'
+              ? 'themeCss'
+              : 'css';
 
     if (existing && existing.hash === classHash && !isExpired(existing)) {
         existing.expiresAt = now + CACHE_TTL_MS;
         existing.updatedAt = now;
         const pageKey = makePageKey(projectId, pageId);
         touchPageKey(pageKey);
-        return { css: existing.css, classes: resolvedClasses, hash: classHash, cached: true };
+        if (existing[bundleKey]) {
+            return { css: existing[bundleKey], classes: resolvedClasses, hash: classHash, cached: true, bundle: normalizedBundle };
+        }
     }
 
-    const css = await generateCssForClasses(resolvedClasses);
+    let css = '';
+    if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+        const split = await generateThemeUtilitiesForClasses(resolvedClasses);
+        css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
+    } else {
+        css = await generateCssForClasses(resolvedClasses);
+    }
     const newClassSet = new Set(resolvedClasses);
+    const classesChanged = !existing || existing.hash !== classHash;
 
-    if (existing) {
+    if (classesChanged && existing) {
         for (const className of existing.classes) {
             if (!newClassSet.has(className)) {
                 const count = project.classCounts.get(className) ?? 0;
@@ -480,31 +559,55 @@ async function compileAndCachePage({ projectId, pageId, html, classes }) {
                 project.classCounts.set(className, count + 1);
             }
         }
-    } else {
+    } else if (!existing && newClassSet.size) {
         for (const className of newClassSet) {
             const count = project.classCounts.get(className) ?? 0;
             project.classCounts.set(className, count + 1);
         }
     }
 
-    project.pages.set(pageId, {
-        css,
-        classes: newClassSet,
-        hash: classHash,
-        updatedAt: now,
-        expiresAt: now + CACHE_TTL_MS
-    });
-    project.cssCache = null;
+    if (existing) {
+        existing.hash = classHash;
+        existing.classes = newClassSet;
+        existing.updatedAt = now;
+        existing.expiresAt = now + CACHE_TTL_MS;
+        if (normalizedBundle === 'utilities') {
+            existing.utilitiesCss = css;
+        } else if (normalizedBundle === 'theme') {
+            existing.themeCss = css;
+        } else if (normalizedBundle === 'full') {
+            existing.css = css;
+        }
+    } else {
+        project.pages.set(pageId, {
+            css: normalizedBundle === 'full' ? css : null,
+            utilitiesCss: normalizedBundle === 'utilities' ? css : null,
+            themeCss: normalizedBundle === 'theme' ? css : null,
+            classes: newClassSet,
+            hash: classHash,
+            updatedAt: now,
+            expiresAt: now + CACHE_TTL_MS
+        });
+    }
+    if (classesChanged) {
+        project.cssCache = null;
+        project.utilitiesCssCache = null;
+        project.themeCssCache = null;
+    }
 
     const pageKey = makePageKey(projectId, pageId);
     pageLru.set(pageKey, { projectId, pageId });
     touchPageKey(pageKey);
     evictIfNeeded();
 
-    return { css, classes: resolvedClasses, hash: classHash, cached: false };
+    return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
 }
 
-function getCachedPageCss(projectId, pageId) {
+async function getCachedPageCss(projectId, pageId, bundle = 'full') {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss() };
+    }
     const project = projects.get(projectId);
     if (!project) return null;
     const page = project.pages.get(pageId);
@@ -516,27 +619,57 @@ function getCachedPageCss(projectId, pageId) {
 
     page.expiresAt = Date.now() + CACHE_TTL_MS;
     touchPageKey(makePageKey(projectId, pageId));
-    return page;
+    if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+        if (!page.utilitiesCss || !page.themeCss) {
+            const split = await generateThemeUtilitiesForClasses(Array.from(page.classes || []));
+            page.utilitiesCss = split.utilitiesCss;
+            page.themeCss = split.themeCss;
+        }
+        return { css: normalizedBundle === 'utilities' ? page.utilitiesCss : page.themeCss };
+    }
+    if (!page.css) {
+        page.css = await generateCssForClasses(Array.from(page.classes || []));
+    }
+    return { css: page.css };
 }
 
-async function getProjectCss(projectId) {
+async function getProjectCss(projectId, bundle = 'full') {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss(), hash: 'base', cached: true };
+    }
     const project = projects.get(projectId);
     if (!project) return null;
 
     const now = Date.now();
-    if (project.cssCache && !isExpired(project.cssCache)) {
-        return { css: project.cssCache.css, hash: project.cssCache.hash, cached: true };
+    const cacheKey =
+        normalizedBundle === 'utilities'
+            ? 'utilitiesCssCache'
+            : normalizedBundle === 'theme'
+              ? 'themeCssCache'
+              : 'cssCache';
+    const cacheEntry = project[cacheKey];
+    if (cacheEntry && !isExpired(cacheEntry)) {
+        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
 
     const classes = Array.from(project.classCounts.keys()).sort();
     const hash = hashClasses(classes);
-    if (project.cssCache && project.cssCache.hash === hash && !isExpired(project.cssCache)) {
-        project.cssCache.expiresAt = now + PROJECT_CACHE_TTL_MS;
-        return { css: project.cssCache.css, hash: project.cssCache.hash, cached: true };
+    if (cacheEntry && cacheEntry.hash === hash && !isExpired(cacheEntry)) {
+        cacheEntry.expiresAt = now + PROJECT_CACHE_TTL_MS;
+        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
 
-    const css = classes.length ? await generateCssForClasses(classes) : '';
-    project.cssCache = {
+    let css = '';
+    if (classes.length) {
+        if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+            const split = await generateThemeUtilitiesForClasses(classes);
+            css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
+        } else {
+            css = await generateCssForClasses(classes);
+        }
+    }
+    project[cacheKey] = {
         css,
         hash,
         updatedAt: now,
@@ -553,6 +686,7 @@ app.post('/api/compile', async (req, res) => {
         const projectId = req.body.projectId ?? req.body.project_id;
         const pageId = req.body.pageId ?? req.body.page_id ?? 'default';
         const { html, classes } = req.body;
+        const bundle = normalizeBundle(req.body.bundle ?? req.body.mode);
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
@@ -563,7 +697,7 @@ app.post('/api/compile', async (req, res) => {
         if (!isValidId(pageId)) {
             return res.status(400).json({ error: 'pageId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
         }
-        if (!html && !classes) {
+        if (!html && !classes && bundle !== 'base') {
             return res.status(400).json({ error: 'Either html or classes is required.' });
         }
         if (typeof html === 'string' && html.length > MAX_HTML_CHARS) {
@@ -572,8 +706,21 @@ app.post('/api/compile', async (req, res) => {
         if (typeof classes === 'string' && classes.length > MAX_CLASS_CHARS) {
             return res.status(413).json({ error: `classes is too large. Limit is ${MAX_CLASS_CHARS} chars.` });
         }
+        if (!html && !classes && bundle === 'base') {
+            const css = await generateBaseCss();
+            return res.json({
+                success: true,
+                projectId,
+                pageId,
+                bundle: 'base',
+                hash: 'base',
+                classes: [],
+                cached: true,
+                css
+            });
+        }
 
-        const result = await compileAndCachePage({ projectId, pageId, html, classes });
+        const result = await compileAndCachePage({ projectId, pageId, html, classes, bundle });
         if (result.error) {
             return res.status(result.status || 400).json({ error: result.error });
         }
@@ -582,6 +729,7 @@ app.post('/api/compile', async (req, res) => {
             success: true,
             projectId,
             pageId,
+            bundle: result.bundle ?? bundle,
             hash: result.hash,
             classes: result.classes,
             cached: result.cached,
@@ -593,10 +741,11 @@ app.post('/api/compile', async (req, res) => {
 });
 
 // Get cached CSS for a project/page
-app.get('/api/css', (req, res) => {
+app.get('/api/css', async (req, res) => {
     try {
         const projectId = req.query.projectId ?? req.query.project_id;
         const pageId = req.query.pageId ?? req.query.page_id ?? 'default';
+        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
@@ -608,7 +757,7 @@ app.get('/api/css', (req, res) => {
             return res.status(400).json({ error: 'pageId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
         }
 
-        const cached = getCachedPageCss(projectId, pageId);
+        const cached = await getCachedPageCss(projectId, pageId, bundle);
         if (!cached) {
             return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
         }
@@ -623,15 +772,16 @@ app.get('/api/css', (req, res) => {
 app.get('/api/projects/:projectId/css', async (req, res) => {
     try {
         const { projectId } = req.params;
+        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
         if (!isValidId(projectId)) {
             return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
         }
         const project = projects.get(projectId);
-        if (!project) {
+        if (!project && bundle !== 'base') {
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
-        const result = await getProjectCss(projectId);
+        const result = await getProjectCss(projectId, bundle);
         return res.type('text/css').send(result?.css ?? '');
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -651,7 +801,7 @@ app.post('/api/suggest', async (req, res) => {
             return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
         }
 
-    const suggestions = new Map();
+        const suggestions = new Map();
 
         const pushList = (list) => {
             for (const item of list) {

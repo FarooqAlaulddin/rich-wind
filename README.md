@@ -18,6 +18,8 @@ Rich Wind focuses on the “compile at request time” workflow without persisti
 ## Features
 - Compile CSS from HTML, class strings, or both.
 - In‑memory page cache plus aggregated project CSS.
+- Optional output bundles: full (preflight + theme + utilities), preflight‑only, theme‑only, or utilities‑only.
+  - When using `bundle=utilities`, load the matching `bundle=theme` output first so the CSS variables exist.
 - Class suggestions from cached data and Tailwind’s static design system.
 - Simple JSON API with small surface area.
 
@@ -57,11 +59,12 @@ Request body:
   "projectId": "string (required)",
   "pageId": "string (optional, default: \"default\")",
   "html": "string (optional)",
-  "classes": "string | string[] (optional)"
+  "classes": "string | string[] (optional)",
+  "bundle": "\"full\" | \"base\" | \"theme\" | \"utilities\" (optional, default: \"full\")"
 }
 ```
 
-At least one of `html` or `classes` is required.
+At least one of `html` or `classes` is required unless `bundle` is `base`.
 
 Response:
 
@@ -70,6 +73,7 @@ Response:
   "success": true,
   "projectId": "string",
   "pageId": "string",
+  "bundle": "string",
   "hash": "string",
   "classes": ["string"],
   "cached": true,
@@ -90,6 +94,32 @@ curl -X POST http://localhost:3001/api/compile \
   }'
 ```
 
+Utilities only (no preflight/theme):
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "pageId": "hero", "classes": "bg-red-500", "bundle": "utilities" }'
+```
+
+Theme only (design tokens only):
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "pageId": "hero", "classes": "bg-red-500 text-white", "bundle": "theme" }'
+```
+
+If you split theme + utilities, load `theme` before `utilities`.
+
+Preflight only:
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "bundle": "base" }'
+```
+
 ### `GET /api/css`
 Fetch cached CSS for a page.
 
@@ -98,6 +128,7 @@ Query:
 ```text
 projectId (required)
 pageId (optional, default: "default")
+bundle (optional: "full" | "base" | "theme" | "utilities")
 ```
 
 Response: `text/css`
@@ -106,6 +137,24 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/css?projectId=demo&pageId=hero"
+```
+
+Utilities only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=utilities"
+```
+
+Preflight only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=base"
+```
+
+Theme only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=theme"
 ```
 
 ### `GET /api/projects/:projectId/css`
@@ -117,6 +166,24 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/projects/demo/css"
+```
+
+Utilities only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=utilities"
+```
+
+Preflight only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=base"
+```
+
+Theme only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=theme"
 ```
 
 ### `POST /api/suggest`

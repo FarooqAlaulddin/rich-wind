@@ -153,7 +153,7 @@ export function Layout({ children }) {
 
                   function snapshotCore() {
                     var data = new FormData(form);
-                    var keys = ['projectId', 'pageId', 'html', 'classes'];
+                    var keys = ['projectId', 'pageId', 'html', 'classes', 'bundle'];
                     return keys.map(function(key) {
                       return key + ':' + (data.get(key) || '');
                     }).join('||');

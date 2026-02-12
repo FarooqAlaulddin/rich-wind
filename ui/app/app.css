@@ -466,6 +466,14 @@ main {
   gap: 12px;
 }
 
+.editor-bundle {
+  display: block;
+}
+
+.bundle-select {
+  margin-top: 6px;
+}
+
 .editor-input {
   margin-top: 6px;
   width: 100%;

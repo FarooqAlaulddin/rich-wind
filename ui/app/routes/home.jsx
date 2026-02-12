@@ -76,6 +76,7 @@ export default function Home() {
   const [html, setHtml] = useState(sampleHtml);
   const [classes, setClasses] = useState(sampleClasses);
   const [customCss, setCustomCss] = useState(sampleCustomCss);
+  const [bundle, setBundle] = useState("full");
   const [activeTab, setActiveTab] = useState("html");
   const [outputTab, setOutputTab] = useState("preview");
 
@@ -85,6 +86,7 @@ export default function Home() {
     setHtml(sampleHtml);
     setClasses(sampleClasses);
     setCustomCss(sampleCustomCss);
+    setBundle("full");
   };
 
   useEffect(() => {
@@ -97,6 +99,7 @@ export default function Home() {
         if (parsed.html) setHtml(parsed.html);
         if (parsed.classes) setClasses(parsed.classes);
         if (parsed.customCss) setCustomCss(parsed.customCss);
+        if (parsed.bundle) setBundle(parsed.bundle);
       }
     } catch (error) {
       console.error("Failed to load editor state", error);
@@ -108,14 +111,14 @@ export default function Home() {
       try {
         window.localStorage.setItem(
           "rw-editor-state",
-          JSON.stringify({ projectId, pageId, html, classes, customCss })
+          JSON.stringify({ projectId, pageId, html, classes, customCss, bundle })
         );
       } catch (error) {
         console.error("Failed to save editor state", error);
       }
     }, 600);
     return () => window.clearTimeout(handle);
-  }, [projectId, pageId, html, classes, customCss]);
+  }, [projectId, pageId, html, classes, customCss, bundle]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -263,6 +266,21 @@ export default function Home() {
                 />
               </label>
             </div>
+
+            <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300 editor-bundle">
+              Bundle
+              <select
+                name="bundle"
+                value={bundle}
+                onChange={(event) => setBundle(event.target.value)}
+                className="editor-input bundle-select"
+              >
+                <option value="full">Full (preflight + theme + utilities)</option>
+                <option value="base">Preflight only</option>
+                <option value="theme">Theme tokens only</option>
+                <option value="utilities">Utilities only (no theme)</option>
+              </select>
+            </label>
 
             <div className="editor-tabs">
               <button
