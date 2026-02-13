@@ -13,6 +13,16 @@ const docsRoot = path.resolve(__dirname, "../../public/docs");
 
 const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
 
+function wrapTables(html) {
+  const source = String(html || "");
+  if (!source.includes("<table")) {
+    return source;
+  }
+  return source
+    .replace(/<table(\s[^>]*)?>/g, '<div class="table-wrapper"><table$1>')
+    .replace(/<\/table>/g, "</table></div>");
+}
+
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
@@ -69,7 +79,7 @@ export async function loader({ request }) {
 
   try {
     const markdown = await readFile(fullPath, "utf8");
-    const html = md.render(markdown);
+    const html = wrapTables(md.render(markdown));
     return jsonResponse({
       html,
       slug: page.slug,

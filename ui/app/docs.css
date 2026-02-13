@@ -733,20 +733,15 @@ body.theme-dark .docs-idea-banner {
    Tables
    -------------------------------------------------------------------------- */
 .docs-content :where(table) {
-  display: block;
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
   table-layout: auto;
-  margin: var(--docs-space-6) 0;
+  margin: 0;
   font-size: var(--docs-text-sm);
   line-height: var(--docs-leading-normal);
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
   white-space: nowrap;
-  border-radius: var(--docs-radius-md);
-  box-shadow: 0 0 0 1px var(--docs-border);
+  background: transparent;
 }
 
 .docs-content :where(thead) {
@@ -795,11 +790,15 @@ body.theme-dark .docs-content :where(tbody tr):hover {
   background: rgba(148, 163, 184, 0.05);
 }
 
-/* Responsive table wrapper (add this class manually to tables that overflow) */
+/* Responsive table wrapper (injected automatically for markdown tables) */
 .docs-content :where(.table-wrapper) {
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   margin: var(--docs-space-6) 0;
   -webkit-overflow-scrolling: touch;
+  border-radius: var(--docs-radius-md);
+  box-shadow: 0 0 0 1px var(--docs-border);
 }
 
 .docs-content :where(.table-wrapper table) {
