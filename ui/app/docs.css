@@ -574,8 +574,6 @@ body.theme-dark .docs-idea-banner {
   dd,
   dt,
   blockquote,
-  th,
-  td,
   a,
   h1,
   h2,
@@ -735,12 +733,16 @@ body.theme-dark .docs-idea-banner {
    Tables
    -------------------------------------------------------------------------- */
 .docs-content :where(table) {
+  display: block;
   width: 100%;
   border-collapse: collapse;
   margin: var(--docs-space-6) 0;
   font-size: var(--docs-text-sm);
   line-height: var(--docs-leading-normal);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
   border-radius: var(--docs-radius-md);
   box-shadow: 0 0 0 1px var(--docs-border);
 }
@@ -759,11 +761,17 @@ body.theme-dark .docs-content :where(thead) {
   padding: var(--docs-space-3) var(--docs-space-4);
   border-bottom: 1px solid var(--docs-border-strong);
   color: var(--docs-ink);
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
 }
 
 .docs-content :where(td) {
   padding: var(--docs-space-3) var(--docs-space-4);
   border-bottom: 1px solid var(--docs-border);
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
 }
 
 .docs-content :where(tbody tr):last-child :where(td) {
