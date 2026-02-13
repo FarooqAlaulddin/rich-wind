@@ -1,0 +1,70 @@
+{
+  "colorNames": [
+    "slate", "gray", "zinc", "neutral", "stone",
+    "red", "orange", "amber", "yellow", "lime",
+    "green", "emerald", "teal", "cyan", "sky",
+    "blue", "indigo", "violet", "purple", "fuchsia",
+    "pink", "rose"
+  ],
+  "colorScales": ["50", "100", "200", "300", "400", "500", "600", "700", "800", "900", "950"],
+  "colorSpecials": ["black", "white", "transparent", "current"],
+  "colorUtilities": ["bg", "text", "border", "ring", "from", "via", "to"],
+  "spacingValues": [
+    "0", "0.5", "1", "1.5", "2", "2.5", "3", "3.5",
+    "4", "5", "6", "7", "8", "9", "10", "11", "12",
+    "14", "16", "20", "24", "28", "32", "36", "40",
+    "44", "48", "52", "56", "60", "64", "72", "80", "96"
+  ],
+  "spacingPrefixes": [
+    "p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-",
+    "m-", "mx-", "my-", "mt-", "mr-", "mb-", "ml-",
+    "gap-", "gap-x-", "gap-y-",
+    "space-x-", "space-y-",
+    "w-", "h-", "min-w-", "min-h-", "max-w-", "max-h-",
+    "top-", "right-", "bottom-", "left-",
+    "inset-", "inset-x-", "inset-y-",
+    "translate-x-", "translate-y-"
+  ],
+  "textSizes": [
+    "text-xs", "text-sm", "text-base", "text-lg", "text-xl",
+    "text-2xl", "text-3xl", "text-4xl", "text-5xl", "text-6xl",
+    "text-7xl", "text-8xl", "text-9xl"
+  ],
+  "fontWeights": [
+    "font-thin", "font-extralight", "font-light", "font-normal",
+    "font-medium", "font-semibold", "font-bold", "font-extrabold", "font-black"
+  ],
+  "shadows": [
+    "shadow-none", "shadow-sm", "shadow", "shadow-md", "shadow-lg", "shadow-xl", "shadow-2xl", "shadow-inner"
+  ],
+  "rounded": [
+    "rounded-none", "rounded-sm", "rounded", "rounded-md", "rounded-lg",
+    "rounded-xl", "rounded-2xl", "rounded-3xl", "rounded-full"
+  ],
+  "leading": [
+    "leading-none", "leading-tight", "leading-snug", "leading-normal",
+    "leading-relaxed", "leading-loose"
+  ],
+  "tracking": [
+    "tracking-tighter", "tracking-tight", "tracking-normal", "tracking-wide",
+    "tracking-wider", "tracking-widest"
+  ],
+  "opacity": [
+    "opacity-0", "opacity-5", "opacity-10", "opacity-20", "opacity-25",
+    "opacity-30", "opacity-40", "opacity-50", "opacity-60", "opacity-70",
+    "opacity-75", "opacity-80", "opacity-90", "opacity-95", "opacity-100"
+  ],
+  "z": [
+    "z-0", "z-10", "z-20", "z-30", "z-40", "z-50"
+  ],
+  "keywords": [
+    "flex", "inline-flex", "grid", "inline-grid", "block", "inline-block", "hidden",
+    "items-start", "items-center", "items-end",
+    "justify-start", "justify-center", "justify-end", "justify-between",
+    "content-start", "content-center", "content-end", "content-between",
+    "flex-row", "flex-col", "flex-wrap", "flex-nowrap",
+    "overflow-hidden", "overflow-auto", "overflow-scroll",
+    "text-left", "text-center", "text-right",
+    "uppercase", "lowercase", "capitalize", "normal-case"
+  ]
+}

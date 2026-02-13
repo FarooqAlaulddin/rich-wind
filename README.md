@@ -31,6 +31,46 @@ npm install
 
 ## Usage
 
+### Programmatic usage (core + plugins)
+
+```js
+import { createCore } from "rich-wind";
+
+const app = createCore({
+  plugins: [
+    {
+      name: "logger",
+      onCompileStart: ({ projectId, pageId }) => {
+        console.log("compile start", projectId, pageId);
+      },
+    },
+  ],
+});
+
+app.listen(3001);
+```
+
+Plugins are optional and isolated: hook errors are caught and forwarded to `onError`.
+
+Available hooks:
+- `onRequestStart`
+- `onResponseSent`
+- `onCompileStart`
+- `onCompileResult`
+- `onCacheHit`
+- `onCacheMiss`
+- `onProjectCss`
+- `onSuggest`
+- `onError`
+
+Plugin options:
+- `name` (string) — for error reporting.
+- `defer` (boolean) — run all hooks asynchronously (non‑blocking).
+- `deferHooks` (string[]) — defer only specific hooks.
+- `timeoutMs` (number) — per‑hook timeout before `onError` is called.
+
+Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
+
 ### Run the core API
 
 ```bash
@@ -231,6 +271,47 @@ Response:
 
 ## Configuration
 
+Programmatic configuration (core):
+
+```js
+import { createCore } from "rich-wind";
+
+const app = createCore({
+  config: {
+    maxClassCount: 1200,
+    cacheTtlMs: 5 * 60 * 1000,
+    projectCacheTtlMs: 10 * 60 * 1000,
+    suggestLimit: 75,
+    rateLimitDisabled: true
+  }
+});
+```
+
+Supported config keys:
+
+| Key | Purpose |
+| --- | --- |
+| `maxBodyBytes` | Request size limit |
+| `maxHtmlChars` | Max HTML length |
+| `maxClassChars` | Max class string length |
+| `maxClassCount` | Max class count |
+| `maxIdLength` | Max `projectId`/`pageId` length |
+| `cacheMaxPages` | Max cached pages |
+| `cacheTtlMs` | Page cache TTL |
+| `projectCacheTtlMs` | Project CSS TTL |
+| `suggestLimit` | Max suggestions |
+| `suggestFallback` | Include Tailwind static list |
+| `rateLimitWindowMs` | Rate limit window |
+| `rateLimitMax` | Requests per window |
+| `rateLimitDisabled` | Disable rate limiting |
+| `trustProxy` | Trust proxy IPs |
+
+Additional top-level options:
+
+| Option | Purpose |
+| --- | --- |
+| `pluginTimeoutMs` | Default plugin hook timeout (ms) |
+
 Environment variables (core):
 
 | Variable | Default | Purpose |
@@ -251,6 +332,11 @@ Environment variables (core):
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
 
+Notes:
+- `PORT` only applies when running `node services/index.js`. In embedded mode, you call `app.listen(...)`.
+- `RW_PLUGIN_TIMEOUT_MS` maps to the top-level `pluginTimeoutMs` option, not `config`.
+- Precedence: JS options win over env vars. Invalid values fall back to defaults.
+
 Environment variables (UI):
 
 | Variable | Default | Purpose |
@@ -261,6 +347,15 @@ Environment variables (UI):
 
 ```bash
 npm test
+```
+
+## Docs
+
+Docs live in `/docs` (Markdown) and are rendered inside the UI at `/docs`:
+
+```bash
+cd ui
+npm run dev
 ```
 
 ## License

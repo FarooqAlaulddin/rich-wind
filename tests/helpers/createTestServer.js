@@ -1,12 +1,13 @@
 import { vi } from 'vitest';
 
-export async function createTestServer(envOverrides = {}) {
+export async function createTestServer(envOverrides = {}, options = {}) {
   const originalEnv = { ...process.env };
   Object.assign(process.env, envOverrides);
 
   vi.resetModules();
   const moduleUrl = new URL('../../services/index.js', import.meta.url).href;
-  const { app } = await import(moduleUrl);
+  const { createCore } = await import(moduleUrl);
+  const app = createCore({ plugins: options.plugins || [], config: options.config || {} });
 
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

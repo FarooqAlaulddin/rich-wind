@@ -1,20 +1,22 @@
-# Rich Wind Persistence Layer — Detailed Report
+# Persistence Layer
 
-This document outlines a persistence layer package that plugs into the Rich Wind core. The design keeps developer setup under 5 minutes while supporting SQL and NoSQL databases.
+Design report for a persistence layer package that plugs into the Rich Wind core. Setup takes under 5 minutes and supports both SQL and NoSQL databases.
 
-## 1. Goals
+## Goals
 
-### Primary goals
+**In scope:**
+
 - Persist class usage and compiled bundles across restarts.
 - Enable project-level intelligence (usage stats, promotion of utilities into base).
 - Keep developer setup under 5 minutes.
 - Support SQL + NoSQL with minimal configuration.
 
-### Non-goals
+**Out of scope:**
+
 - Authentication / tenant enforcement (belongs to the host app).
 - CMS or multi-tenant management.
 
-## 2. Package Shape
+## Package Shape
 
 **New package:** `rich-wind-persist`
 
@@ -23,25 +25,25 @@ This document outlines a persistence layer package that plugs into the Rich Wind
 import { createPersistence } from "rich-wind-persist";
 ```
 
-### Usage (under 5 minutes)
+### Quick setup
 ```ts
 const persist = await createPersistence({
   // optional: DATABASE_URL, defaults to ./rich-wind.db
 });
 
-const core = createRichWindCore({
+const core = createCore({
   persistence: persist
 });
 ```
 
-### Environment auto-detect
+### Auto-detection
 - If `DATABASE_URL` is not set: SQLite file `./.rich-wind.db`
 - If `DATABASE_URL` starts with:
   - `postgres://` -> Postgres adapter
   - `mongodb://` -> Mongo adapter
   - `sqlite://` -> SQLite adapter
 
-## 3. Adapter Interface (Minimal)
+## Adapter Interface
 
 ```ts
 interface PersistenceAdapter {
@@ -59,7 +61,7 @@ interface PersistenceAdapter {
 }
 ```
 
-## 4. Schema Design
+## Schema Design
 
 ### SQL (Postgres/SQLite)
 ```sql
@@ -117,13 +119,9 @@ Example document:
 }
 ```
 
-## 5. Bundling + Promotion Logic
+## Bundling + Promotion Logic
 
-### Key idea
-- Each compile updates usage counts.
-- If a class crosses a configured cutoff, it is promoted into `base`.
-
-### Configurable cutoff
+Each compile updates usage counts. When a class crosses a configurable cutoff, it is promoted into `base`.
 ```ts
 createPersistence({
   promoteThreshold: 20,
@@ -131,32 +129,31 @@ createPersistence({
 });
 ```
 
-### Base / Utilities split
-- `base` = high-frequency classes
-- `utilities` = per-page or low-frequency classes
-- `theme` = variables for classes in use
+**Bundle types:**
 
-## 6. Migrations (Auto by default)
+| Bundle | Contains |
+| --- | --- |
+| `base` | High-frequency classes |
+| `utilities` | Per-page or low-frequency classes |
+| `theme` | CSS variables for classes in use |
 
-### Strategy
-- Migration files are shipped with the package.
-- On `init()`, adapter checks `schema_version` and runs missing migrations.
+## Migrations
 
-### Optional CLI
+Migration files ship with the package. On `init()`, the adapter checks `schema_version` and runs missing migrations automatically.
 ```
 npx rich-wind-persist migrate
 ```
 
-## 7. Performance + Safety
+## Performance + Safety
 
-- Writes are async (write-behind) so compile stays fast.
-- Core memory cache remains the hot path.
-- Persistence failures do not block compile.
+- Writes are async (write-behind) so compilation stays fast.
+- The core memory cache remains the hot path.
+- Persistence failures never block compilation.
 - Optional event hooks for observability.
 
-## 8. Setup Flow (Under 5 Minutes)
+## Setup Examples
 
-### SQLite default
+### SQLite (default)
 ```bash
 npm i rich-wind-persist
 node app.js
@@ -177,23 +174,23 @@ npm i rich-wind-persist
 node app.js
 ```
 
-## 9. Integration Points
+## Integration
 
 ```ts
 const persist = await createPersistence();
-const core = createRichWindCore({
+const core = createCore({
   persistence: persist,
   onUsageUpdate: (projectId, stats) => {}
 });
 ```
 
-## 10. Extension Points
+## Extension Points
 
 - Custom adapters for other databases.
 - Custom promotion policy (override cutoff logic).
 - Analytics hooks for dashboards.
 
-## 11. Why this design works
+## Design Rationale
 
 - Zero-config setup for developers.
 - SQL + NoSQL support without heavy ORM requirements.

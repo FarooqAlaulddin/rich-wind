@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { app } from '../services/index.js';
+import { createCore } from '../services/index.js';
+const app = createCore();
 import { createTestServer } from './helpers/createTestServer.js';
 
 let server;

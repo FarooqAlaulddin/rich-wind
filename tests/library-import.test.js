@@ -1,16 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { app } from '../services/index.js';
+import { createCore } from '../services/index.js';
 
 describe('Library import tests', () => {
-  it('import { app } from "../services/index.js" succeeds', () => {
-    expect(app).toBeDefined();
+  it('import { createCore } from "../services/index.js" succeeds', () => {
+    expect(createCore).toBeDefined();
   });
 
-  it('app is a function (Express app)', () => {
+  it('createCore returns an Express app', () => {
+    const app = createCore();
     expect(typeof app).toBe('function');
   });
 
   it('app has .get, .post, .listen, .use methods', () => {
+    const app = createCore();
     expect(typeof app.get).toBe('function');
     expect(typeof app.post).toBe('function');
     expect(typeof app.listen).toBe('function');
@@ -18,6 +20,7 @@ describe('Library import tests', () => {
   });
 
   it('can call app.listen(0) and get a running server that responds to /health', async () => {
+    const app = createCore();
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
@@ -31,9 +34,9 @@ describe('Library import tests', () => {
     await new Promise((resolve) => server.close(resolve));
   });
 
-  it('multiple imports return the same app instance (singleton)', async () => {
-    const { app: app1 } = await import('../services/index.js');
-    const { app: app2 } = await import('../services/index.js');
-    expect(app1).toBe(app2);
+  it('createCore returns separate instances', async () => {
+    const app1 = createCore();
+    const app2 = createCore();
+    expect(app1).not.toBe(app2);
   });
 });

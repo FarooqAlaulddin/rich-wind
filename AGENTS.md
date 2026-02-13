@@ -53,7 +53,7 @@ Key endpoints are in `services/index.js`:
 The API is **stateless** except for in‑memory caches. `projectId` is required for caching and should be **tenant‑scoped by the caller**.
 
 ## Cache & Rate Limit Configuration
-Env vars (see README for full list):
+Config can be set via `createCore({ config: { ... } })` or env vars (see README for full list):
 - Cache: `RW_CACHE_MAX_PAGES`, `RW_CACHE_TTL_MS`, `RW_PROJECT_CACHE_TTL_MS`
 - Request limits: `RW_MAX_BODY_BYTES`, `RW_MAX_HTML_CHARS`, `RW_MAX_CLASS_CHARS`, `RW_MAX_CLASS_COUNT`, `RW_MAX_ID_LENGTH`
 - Suggest: `RW_SUGGEST_LIMIT`, `RW_SUGGEST_FALLBACK`
@@ -101,4 +101,3 @@ When editing:
 
 ## Deployment
 This repo includes `render.yaml` for Render deploys (core + UI). Keep the core public endpoint in `RW_CORE_URL` for UI builds.
-

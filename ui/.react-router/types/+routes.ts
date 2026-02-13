@@ -23,12 +23,17 @@ type Pages = {
   "/preview": {
     params: {};
   };
+  "/docs/*": {
+    params: {
+      "*": string;
+    };
+  };
 };
 
 type RouteFiles = {
   "root.jsx": {
     id: "root";
-    page: "/" | "/htmx/compile" | "/api/suggest" | "/preview";
+    page: "/" | "/htmx/compile" | "/api/suggest" | "/preview" | "/docs/*";
   };
   "./routes/home.jsx": {
     id: "routes/home";
@@ -46,6 +51,10 @@ type RouteFiles = {
     id: "routes/preview";
     page: "/preview";
   };
+  "./routes/docs.jsx": {
+    id: "routes/docs";
+    page: "/docs/*";
+  };
 };
 
 type RouteModules = {
@@ -54,4 +63,5 @@ type RouteModules = {
   "routes/htmx.compile": typeof import("./app/./routes/htmx.compile.jsx");
   "routes/api.suggest": typeof import("./app/./routes/api.suggest.jsx");
   "routes/preview": typeof import("./app/./routes/preview.jsx");
+  "routes/docs": typeof import("./app/./routes/docs.jsx");
 };
