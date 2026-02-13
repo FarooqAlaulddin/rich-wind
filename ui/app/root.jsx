@@ -117,7 +117,13 @@ export function Layout({ children }) {
                   try {
                     saved = localStorage.getItem('rw-layout');
                   } catch (e) {}
-                  setLayout(saved || 'split');
+                  var defaultMode = 'split';
+                  try {
+                    if (!saved && window.matchMedia('(max-width: 1100px)').matches) {
+                      defaultMode = 'editor';
+                    }
+                  } catch (e) {}
+                  setLayout(saved || defaultMode);
                   window.addEventListener('resize', syncScrollMode);
                 }
 
@@ -552,6 +558,13 @@ export function Layout({ children }) {
                   var handles = document.querySelectorAll('[data-pane-resizer]');
                   if (!handles.length) return;
                   var resetButton = document.getElementById('reset-panes');
+                  
+                  function isStackedViewport() {
+                    try {
+                      return window.matchMedia('(max-width: 1100px)').matches;
+                    } catch (e) {}
+                    return false;
+                  }
 
                   function readPxVar(name, fallback) {
                     try {
@@ -581,7 +594,15 @@ export function Layout({ children }) {
                     syncScrollMode();
                   }
 
+                  function clearInlineHeights() {
+                    document.querySelectorAll('.editor-pane, .preview-pane').forEach(function(pane) {
+                      pane.style.height = '';
+                    });
+                    document.body.classList.remove('pane-resized', 'pane-resizing');
+                  }
+
                   function applyStoredHeight(pane, key) {
+                    if (isStackedViewport()) return;
                     var saved = null;
                     try { saved = localStorage.getItem(key); } catch (e) {}
                     var next = parseInt(saved, 10);
@@ -598,9 +619,9 @@ export function Layout({ children }) {
                     var key = pane.classList.contains('editor-pane')
                       ? 'rw-editor-height'
                       : 'rw-preview-height';
-                    applyStoredHeight(pane, key);
 
                     handle.addEventListener('pointerdown', function(event) {
+                      if (isStackedViewport()) return;
                       event.preventDefault();
                       var paneTop = pane.getBoundingClientRect().top + window.scrollY;
                       var lastClientY = event.clientY;
@@ -664,12 +685,30 @@ export function Layout({ children }) {
                     });
                   });
 
+                  function syncPaneSizingMode() {
+                    if (isStackedViewport()) {
+                      clearInlineHeights();
+                      syncScrollMode();
+                      return;
+                    }
+                    handles.forEach(function(handle) {
+                      var pane = handle.closest('.editor-pane, .preview-pane');
+                      if (!pane) return;
+                      var key = pane.classList.contains('editor-pane')
+                        ? 'rw-editor-height'
+                        : 'rw-preview-height';
+                      applyStoredHeight(pane, key);
+                    });
+                    syncScrollMode();
+                  }
+
                   if (resetButton && !resetButton.__rwBound) {
                     resetButton.__rwBound = true;
                     resetButton.addEventListener('click', clearHeights);
                   }
 
-                  syncScrollMode();
+                  window.addEventListener('resize', syncPaneSizingMode);
+                  syncPaneSizingMode();
                 }
 
                 function decodePayload(encoded) {
