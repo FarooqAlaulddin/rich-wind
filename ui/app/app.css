@@ -790,14 +790,15 @@ main {
     height: auto !important;
   }
   .editor-body {
-    min-height: clamp(260px, 42vh, 520px);
+    min-height: 0;
+    flex: 0 0 auto;
   }
   .tab-panel,
   .tab-panel.is-active {
-    height: 100%;
+    height: auto;
   }
   .tab-panel .editor-shell {
-    height: 100%;
+    height: auto;
     min-height: 0;
   }
   .preview-frame {

@@ -42,7 +42,41 @@ export default function MonacoField({
 }) {
   const [Editor, setEditor] = useState(null);
   const [loadError, setLoadError] = useState(null);
+  const [resolvedHeight, setResolvedHeight] = useState(height);
   const hiddenRef = useRef(null);
+
+  useEffect(() => {
+    function updateHeight() {
+      if (height !== "100%") {
+        setResolvedHeight(height);
+        return;
+      }
+      if (typeof window === "undefined") {
+        setResolvedHeight(height);
+        return;
+      }
+      let isStacked = false;
+      try {
+        isStacked = window.matchMedia("(max-width: 1100px)").matches;
+      } catch {
+        isStacked = false;
+      }
+      if (!isStacked) {
+        setResolvedHeight("100%");
+        return;
+      }
+      // Monaco requires a definite height; percent heights are unstable in stacked mobile flow.
+      const target = Math.max(180, Math.min(420, rows * 32 + 36));
+      setResolvedHeight(`${target}px`);
+    }
+
+    updateHeight();
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+    return undefined;
+  }, [height, rows]);
 
   useEffect(() => {
     let mounted = true;
@@ -332,7 +366,7 @@ export default function MonacoField({
       <div className="editor-shell">
         {Editor ? (
           <Editor
-            height={height}
+            height={resolvedHeight}
             language={language}
             value={value}
             onChange={handleChange}
