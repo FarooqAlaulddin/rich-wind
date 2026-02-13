@@ -29,50 +29,22 @@ jobs:
       )
 
     steps:
-      - name: Resolve deploy hooks
-        id: hooks
-        env:
-          RENDER_DEPLOY_HOOK_CORE: ${{ secrets.RENDER_DEPLOY_HOOK_CORE }}
-          RENDER_DEPLOY_HOOK_UI: ${{ secrets.RENDER_DEPLOY_HOOK_UI }}
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
-        run: |
-          set -euo pipefail
-
-          core_hook="$RENDER_DEPLOY_HOOK_CORE"
-          ui_hook="$RENDER_DEPLOY_HOOK_UI"
-
-          # Backward-compatible fallback for older setups using a single hook secret.
-          if [ -z "$core_hook" ] && [ -n "$RENDER_DEPLOY_HOOK" ]; then
-            core_hook="$RENDER_DEPLOY_HOOK"
-          fi
-          if [ -z "$ui_hook" ] && [ -n "$RENDER_DEPLOY_HOOK" ]; then
-            ui_hook="$RENDER_DEPLOY_HOOK"
-          fi
-
-          if [ -n "$core_hook" ]; then
-            echo "core=$core_hook" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Missing secret: RENDER_DEPLOY_HOOK_CORE (or legacy RENDER_DEPLOY_HOOK); core deploy will be skipped."
-          fi
-
-          if [ -n "$ui_hook" ]; then
-            echo "ui=$ui_hook" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Missing secret: RENDER_DEPLOY_HOOK_UI (or legacy RENDER_DEPLOY_HOOK); UI deploy will be skipped."
-          fi
-
-          if [ -z "$core_hook" ] && [ -z "$ui_hook" ]; then
-            echo "::notice::No Render deploy hooks configured; skipping deploy triggers."
-          fi
-
       - name: Trigger core deploy
-        if: steps.hooks.outputs.core != ''
         env:
-          RENDER_DEPLOY_HOOK: ${{ steps.hooks.outputs.core }}
-        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_CORE }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Missing secret: RENDER_DEPLOY_HOOK_CORE"
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
 
       - name: Trigger UI deploy
-        if: steps.hooks.outputs.ui != ''
         env:
-          RENDER_DEPLOY_HOOK: ${{ steps.hooks.outputs.ui }}
-        run: curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_UI }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Missing secret: RENDER_DEPLOY_HOOK_UI"
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
