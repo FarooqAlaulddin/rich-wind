@@ -134,7 +134,7 @@ export default function Home() {
   return (
     <main className="play-shell">
       <header className="play-topbar hero-grid">
-        <div className="flex items-center gap-3">
+        <div className="topbar-brand flex items-center gap-3">
           <div className="animate-float flex h-14 w-14 items-center justify-center rounded-3xl shadow-lg">
             <img
               src="/rw-icon-128.png"
@@ -147,13 +147,13 @@ export default function Home() {
               Stateless Tailwind Runtime
             </p>
             <p className="text-xl font-semibold">Rich Wind Studio</p>
-            <div className="text-xs uppercase tracking-[0.4em] text-slate-500 flex items-center gap-4 mt-1">
+            <div className="topbar-links text-xs uppercase tracking-[0.4em] text-slate-500 flex flex-wrap items-center gap-4 mt-1">
               <a href="/docs" className="text-amber-400/80 hover:text-amber-400">DOCS</a>
               <a href="https://github.com/FarooqAlaulddin/rich-wind" className="text-amber-400/80 hover:text-amber-400">GITHUB</a>
             </div>
           </div>
         </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <div className="topbar-actions flex flex-wrap items-center gap-3 text-xs text-slate-600">
             <label className="topbar-toggle">
               <input
                 id="auto-compile"

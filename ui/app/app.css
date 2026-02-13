@@ -179,14 +179,32 @@ main {
 
 .play-topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1rem;
   padding: 14px 20px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.12);
   background: rgba(248, 244, 238, 0.7);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
+}
+
+.topbar-brand {
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+
+.topbar-links {
+  overflow-wrap: anywhere;
+}
+
+.topbar-actions {
+  display: flex;
+  flex: 1 1 28rem;
+  min-width: 0;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .topbar-toggle {
@@ -201,15 +219,19 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.2em;
   color: #1f2937;
+  white-space: nowrap;
 }
 
 .topbar-group {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   padding: 6px;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   background: rgba(255, 255, 255, 0.7);
+  max-width: 100%;
 }
 
 .play-body {
@@ -317,6 +339,7 @@ main {
   border: none;
   background: transparent;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .layout-btn.is-active {
@@ -728,6 +751,16 @@ main {
   body {
     overflow: auto;
   }
+  .play-topbar {
+    align-items: stretch;
+  }
+  .topbar-brand,
+  .topbar-actions {
+    flex-basis: 100%;
+  }
+  .topbar-actions {
+    justify-content: flex-start;
+  }
   .play-shell {
     height: auto;
   }
@@ -743,6 +776,27 @@ main {
   }
   .preview-pane {
     margin-top: 12px;
+  }
+}
+
+@media (max-width: 700px) {
+  .play-topbar {
+    padding: 12px;
+    gap: 0.75rem;
+  }
+  .topbar-toggle {
+    letter-spacing: 0.14em;
+    font-size: 0.65rem;
+    padding: 6px 8px;
+  }
+  .topbar-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .layout-btn {
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+    padding: 6px 8px;
   }
 }
 
