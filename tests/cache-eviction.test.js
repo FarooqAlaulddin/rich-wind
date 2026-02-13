@@ -55,4 +55,33 @@ describe('Cache eviction and TTL', () => {
       await close();
     }
   });
+
+  it('project aggregated CSS still serves after RW_PROJECT_CACHE_TTL_MS expiry', async () => {
+    const { baseUrl, close } = await createTestServer({
+      RW_PROJECT_CACHE_TTL_MS: '120',
+      RW_CACHE_TTL_MS: '60000',
+    });
+
+    try {
+      await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-ttl', pageId: 'page1', classes: 'text-red-500' }),
+      });
+
+      const first = await fetch(`${baseUrl}/api/projects/proj-ttl/css`);
+      expect(first.status).toBe(200);
+      const css1 = await first.text();
+      expect(css1.length).toBeGreaterThan(0);
+
+      await sleep(160);
+
+      const second = await fetch(`${baseUrl}/api/projects/proj-ttl/css`);
+      expect(second.status).toBe(200);
+      const css2 = await second.text();
+      expect(css2.length).toBeGreaterThan(0);
+    } finally {
+      await close();
+    }
+  });
 });

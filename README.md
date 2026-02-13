@@ -18,6 +18,8 @@ Rich Wind focuses on the “compile at request time” workflow without persisti
 ## Features
 - Compile CSS from HTML, class strings, or both.
 - In‑memory page cache plus aggregated project CSS.
+- Optional output bundles: full (preflight + theme + utilities), preflight‑only, theme‑only, or utilities‑only.
+  - When using `bundle=utilities`, load the matching `bundle=theme` output first so the CSS variables exist.
 - Class suggestions from cached data and Tailwind’s static design system.
 - Simple JSON API with small surface area.
 
@@ -28,6 +30,46 @@ npm install
 ```
 
 ## Usage
+
+### Programmatic usage (core + plugins)
+
+```js
+import { createCore } from "rich-wind";
+
+const app = createCore({
+  plugins: [
+    {
+      name: "logger",
+      onCompileStart: ({ projectId, pageId }) => {
+        console.log("compile start", projectId, pageId);
+      },
+    },
+  ],
+});
+
+app.listen(3001);
+```
+
+Plugins are optional and isolated: hook errors are caught and forwarded to `onError`.
+
+Available hooks:
+- `onRequestStart`
+- `onResponseSent`
+- `onCompileStart`
+- `onCompileResult`
+- `onCacheHit`
+- `onCacheMiss`
+- `onProjectCss`
+- `onSuggest`
+- `onError`
+
+Plugin options:
+- `name` (string) — for error reporting.
+- `defer` (boolean) — run all hooks asynchronously (non‑blocking).
+- `deferHooks` (string[]) — defer only specific hooks.
+- `timeoutMs` (number) — per‑hook timeout before `onError` is called.
+
+Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
 
 ### Run the core API
 
@@ -57,11 +99,12 @@ Request body:
   "projectId": "string (required)",
   "pageId": "string (optional, default: \"default\")",
   "html": "string (optional)",
-  "classes": "string | string[] (optional)"
+  "classes": "string | string[] (optional)",
+  "bundle": "\"full\" | \"base\" | \"theme\" | \"utilities\" (optional, default: \"full\")"
 }
 ```
 
-At least one of `html` or `classes` is required.
+At least one of `html` or `classes` is required unless `bundle` is `base`.
 
 Response:
 
@@ -70,6 +113,7 @@ Response:
   "success": true,
   "projectId": "string",
   "pageId": "string",
+  "bundle": "string",
   "hash": "string",
   "classes": ["string"],
   "cached": true,
@@ -90,6 +134,32 @@ curl -X POST http://localhost:3001/api/compile \
   }'
 ```
 
+Utilities only (no preflight/theme):
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "pageId": "hero", "classes": "bg-red-500", "bundle": "utilities" }'
+```
+
+Theme only (design tokens only):
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "pageId": "hero", "classes": "bg-red-500 text-white", "bundle": "theme" }'
+```
+
+If you split theme + utilities, load `theme` before `utilities`.
+
+Preflight only:
+
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{ "projectId": "demo", "bundle": "base" }'
+```
+
 ### `GET /api/css`
 Fetch cached CSS for a page.
 
@@ -98,6 +168,7 @@ Query:
 ```text
 projectId (required)
 pageId (optional, default: "default")
+bundle (optional: "full" | "base" | "theme" | "utilities")
 ```
 
 Response: `text/css`
@@ -106,6 +177,24 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/css?projectId=demo&pageId=hero"
+```
+
+Utilities only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=utilities"
+```
+
+Preflight only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=base"
+```
+
+Theme only:
+
+```bash
+curl "http://localhost:3001/api/css?projectId=demo&pageId=hero&bundle=theme"
 ```
 
 ### `GET /api/projects/:projectId/css`
@@ -117,6 +206,24 @@ Example:
 
 ```bash
 curl "http://localhost:3001/api/projects/demo/css"
+```
+
+Utilities only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=utilities"
+```
+
+Preflight only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=base"
+```
+
+Theme only:
+
+```bash
+curl "http://localhost:3001/api/projects/demo/css?bundle=theme"
 ```
 
 ### `POST /api/suggest`
@@ -164,6 +271,47 @@ Response:
 
 ## Configuration
 
+Programmatic configuration (core):
+
+```js
+import { createCore } from "rich-wind";
+
+const app = createCore({
+  config: {
+    maxClassCount: 1200,
+    cacheTtlMs: 5 * 60 * 1000,
+    projectCacheTtlMs: 10 * 60 * 1000,
+    suggestLimit: 75,
+    rateLimitDisabled: true
+  }
+});
+```
+
+Supported config keys:
+
+| Key | Purpose |
+| --- | --- |
+| `maxBodyBytes` | Request size limit |
+| `maxHtmlChars` | Max HTML length |
+| `maxClassChars` | Max class string length |
+| `maxClassCount` | Max class count |
+| `maxIdLength` | Max `projectId`/`pageId` length |
+| `cacheMaxPages` | Max cached pages |
+| `cacheTtlMs` | Page cache TTL |
+| `projectCacheTtlMs` | Project CSS TTL |
+| `suggestLimit` | Max suggestions |
+| `suggestFallback` | Include Tailwind static list |
+| `rateLimitWindowMs` | Rate limit window |
+| `rateLimitMax` | Requests per window |
+| `rateLimitDisabled` | Disable rate limiting |
+| `trustProxy` | Trust proxy IPs |
+
+Additional top-level options:
+
+| Option | Purpose |
+| --- | --- |
+| `pluginTimeoutMs` | Default plugin hook timeout (ms) |
+
 Environment variables (core):
 
 | Variable | Default | Purpose |
@@ -184,6 +332,11 @@ Environment variables (core):
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
 
+Notes:
+- `PORT` only applies when running `node services/index.js`. In embedded mode, you call `app.listen(...)`.
+- `RW_PLUGIN_TIMEOUT_MS` maps to the top-level `pluginTimeoutMs` option, not `config`.
+- Precedence: JS options win over env vars. Invalid values fall back to defaults.
+
 Environment variables (UI):
 
 | Variable | Default | Purpose |
@@ -194,6 +347,30 @@ Environment variables (UI):
 
 ```bash
 npm test
+```
+
+## Production
+
+Core:
+
+```bash
+npm run prod
+```
+
+UI (from the `ui/` folder):
+
+```bash
+cd ui
+npm run prod
+```
+
+## Docs
+
+Docs live in `/docs` (Markdown) and are rendered inside the UI at `/docs`:
+
+```bash
+cd ui
+npm run dev
 ```
 
 ## License

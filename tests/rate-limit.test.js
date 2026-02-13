@@ -41,4 +41,50 @@ describe('Rate limiting', () => {
       await close();
     }
   });
+
+  it('ignores X-Forwarded-For when trust proxy is disabled', async () => {
+    const { baseUrl, close } = await createTestServer({
+      RW_RATE_LIMIT_WINDOW_MS: '60000',
+      RW_RATE_LIMIT_MAX: '1',
+      RW_RATE_LIMIT_DISABLED: 'false',
+      RW_TRUST_PROXY: 'false',
+    });
+
+    try {
+      const r1 = await fetch(`${baseUrl}/health`, {
+        headers: { 'x-forwarded-for': '1.1.1.1' },
+      });
+      const r2 = await fetch(`${baseUrl}/health`, {
+        headers: { 'x-forwarded-for': '2.2.2.2' },
+      });
+
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(429);
+    } finally {
+      await close();
+    }
+  });
+
+  it('uses X-Forwarded-For when trust proxy is enabled', async () => {
+    const { baseUrl, close } = await createTestServer({
+      RW_RATE_LIMIT_WINDOW_MS: '60000',
+      RW_RATE_LIMIT_MAX: '1',
+      RW_RATE_LIMIT_DISABLED: 'false',
+      RW_TRUST_PROXY: 'true',
+    });
+
+    try {
+      const r1 = await fetch(`${baseUrl}/health`, {
+        headers: { 'x-forwarded-for': '1.1.1.1' },
+      });
+      const r2 = await fetch(`${baseUrl}/health`, {
+        headers: { 'x-forwarded-for': '2.2.2.2' },
+      });
+
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+    } finally {
+      await close();
+    }
+  });
 });

@@ -2,113 +2,179 @@ import express from 'express';
 import { compile, __unstable__loadDesignSystem } from '@tailwindcss/node';
 import { Scanner } from '@tailwindcss/oxide';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-
-const app = express();
-app.disable('x-powered-by');
-
+// =============================================================================
+// Configuration + state helpers
+// =============================================================================
 const parseIntWithDefault = (value, fallback, min = 1) => {
     const parsed = Number.parseInt(value, 10);
     if (!Number.isFinite(parsed) || parsed < min) return fallback;
     return parsed;
 };
 
-const MAX_BODY_BYTES = parseIntWithDefault(process.env.RW_MAX_BODY_BYTES, 100000, 1024);
-const MAX_HTML_CHARS = parseIntWithDefault(process.env.RW_MAX_HTML_CHARS, 50000, 1);
-const MAX_CLASS_CHARS = parseIntWithDefault(process.env.RW_MAX_CLASS_CHARS, 10000, 1);
-const MAX_CLASS_COUNT = parseIntWithDefault(process.env.RW_MAX_CLASS_COUNT, 1500, 1);
-const MAX_ID_LENGTH = parseIntWithDefault(process.env.RW_MAX_ID_LENGTH, 64, 1);
-const SUGGEST_LIMIT = parseIntWithDefault(process.env.RW_SUGGEST_LIMIT, 100, 1);
-const SUGGEST_FALLBACK_RAW = (process.env.RW_SUGGEST_FALLBACK ?? 'true').toString();
-const SUGGEST_FALLBACK = ['1', 'true', 'yes'].includes(SUGGEST_FALLBACK_RAW.toLowerCase());
-const RATE_LIMIT_WINDOW_MS = parseIntWithDefault(process.env.RW_RATE_LIMIT_WINDOW_MS, 60000, 1000);
-const RATE_LIMIT_MAX = parseIntWithDefault(process.env.RW_RATE_LIMIT_MAX, 60, 1);
-const RATE_LIMIT_DISABLED = process.env.RW_RATE_LIMIT_DISABLED === 'true';
-const TRUST_PROXY_RAW = (process.env.RW_TRUST_PROXY ?? (process.env.RENDER_EXTERNAL_URL ? '1' : '0')).toString();
-const TRUST_PROXY = ['1', 'true', 'yes'].includes(TRUST_PROXY_RAW.toLowerCase());
+const parseBoolean = (value, fallback = false) => {
+    if (value === undefined || value === null) return fallback;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    return fallback;
+};
 
-app.set('trust proxy', TRUST_PROXY);
+function buildConfig(overrides = {}) {
+    const cacheTtlMs = parseIntWithDefault(
+        overrides.cacheTtlMs ?? process.env.RW_CACHE_TTL_MS,
+        600000,
+        0
+    );
+    return {
+        maxBodyBytes: parseIntWithDefault(
+            overrides.maxBodyBytes ?? process.env.RW_MAX_BODY_BYTES,
+            100000,
+            1024
+        ),
+        maxHtmlChars: parseIntWithDefault(
+            overrides.maxHtmlChars ?? process.env.RW_MAX_HTML_CHARS,
+            50000,
+            1
+        ),
+        maxClassChars: parseIntWithDefault(
+            overrides.maxClassChars ?? process.env.RW_MAX_CLASS_CHARS,
+            10000,
+            1
+        ),
+        maxClassCount: parseIntWithDefault(
+            overrides.maxClassCount ?? process.env.RW_MAX_CLASS_COUNT,
+            1500,
+            1
+        ),
+        maxIdLength: parseIntWithDefault(
+            overrides.maxIdLength ?? process.env.RW_MAX_ID_LENGTH,
+            64,
+            1
+        ),
+        suggestLimit: parseIntWithDefault(
+            overrides.suggestLimit ?? process.env.RW_SUGGEST_LIMIT,
+            100,
+            1
+        ),
+        suggestFallback: parseBoolean(
+            overrides.suggestFallback ?? process.env.RW_SUGGEST_FALLBACK,
+            true
+        ),
+        rateLimitWindowMs: parseIntWithDefault(
+            overrides.rateLimitWindowMs ?? process.env.RW_RATE_LIMIT_WINDOW_MS,
+            60000,
+            1000
+        ),
+        rateLimitMax: parseIntWithDefault(
+            overrides.rateLimitMax ?? process.env.RW_RATE_LIMIT_MAX,
+            60,
+            1
+        ),
+        rateLimitDisabled: parseBoolean(
+            overrides.rateLimitDisabled ?? process.env.RW_RATE_LIMIT_DISABLED,
+            false
+        ),
+        trustProxy: parseBoolean(
+            overrides.trustProxy ??
+                (process.env.RW_TRUST_PROXY ??
+                    (process.env.RENDER_EXTERNAL_URL ? '1' : '0')),
+            false
+        ),
+        cacheMaxPages: parseIntWithDefault(
+            overrides.cacheMaxPages ?? process.env.RW_CACHE_MAX_PAGES,
+            200,
+            0
+        ),
+        cacheTtlMs,
+        projectCacheTtlMs: parseIntWithDefault(
+            overrides.projectCacheTtlMs ?? process.env.RW_PROJECT_CACHE_TTL_MS,
+            cacheTtlMs,
+            0
+        )
+    };
+}
 
-app.use((req, res, next) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    next();
-});
-
-app.use(express.json({ limit: MAX_BODY_BYTES }));
-
-const rateBuckets = new Map();
+function createCacheState() {
+    return {
+        projects: new Map(),
+        pageLru: new Map()
+    };
+}
 
 function getClientIp(req) {
     return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
-function rateLimit(req, res, next) {
-    if (RATE_LIMIT_DISABLED) return next();
-    const now = Date.now();
-    const ip = getClientIp(req);
-    const entry = rateBuckets.get(ip);
-    if (!entry || entry.resetAt <= now) {
-        rateBuckets.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+// =============================================================================
+// Rate limiting (per-core instance)
+// =============================================================================
+function createRateLimiter(config) {
+    const rateBuckets = new Map();
+    let cleanup = null;
+
+    if (!config.rateLimitDisabled && config.rateLimitWindowMs > 0) {
+        cleanup = setInterval(() => {
+            const now = Date.now();
+            for (const [ip, entry] of rateBuckets.entries()) {
+                if (entry.resetAt <= now) {
+                    rateBuckets.delete(ip);
+                }
+            }
+        }, config.rateLimitWindowMs);
+        cleanup.unref();
+    }
+
+    const middleware = (req, res, next) => {
+        if (config.rateLimitDisabled) return next();
+        const now = Date.now();
+        const ip = getClientIp(req);
+        const entry = rateBuckets.get(ip);
+        if (!entry || entry.resetAt <= now) {
+            rateBuckets.set(ip, { count: 1, resetAt: now + config.rateLimitWindowMs });
+            return next();
+        }
+        if (entry.count >= config.rateLimitMax) {
+            const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+            res.setHeader('Retry-After', retryAfter);
+            return res.status(429).json({ error: 'Rate limit exceeded. Slow down.' });
+        }
+        entry.count += 1;
         return next();
-    }
-    if (entry.count >= RATE_LIMIT_MAX) {
-        const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
-        res.setHeader('Retry-After', retryAfter);
-        return res.status(429).json({ error: 'Rate limit exceeded. Slow down.' });
-    }
-    entry.count += 1;
-    return next();
+    };
+
+    return { middleware };
 }
 
-app.use(rateLimit);
-
-// Periodic cleanup of expired rate bucket entries to prevent memory leak
-const rateBucketCleanup = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of rateBuckets.entries()) {
-        if (entry.resetAt <= now) {
-            rateBuckets.delete(ip);
-        }
-    }
-}, RATE_LIMIT_WINDOW_MS);
-// Use unref() so the interval doesn't prevent Node from exiting
-rateBucketCleanup.unref();
-
-const CACHE_MAX_PAGES = Number.parseInt(process.env.RW_CACHE_MAX_PAGES ?? '200', 10);
-const CACHE_TTL_MS = Number.parseInt(process.env.RW_CACHE_TTL_MS ?? '600000', 10); // 10 minutes
-const PROJECT_CACHE_TTL_MS = Number.parseInt(process.env.RW_PROJECT_CACHE_TTL_MS ?? `${CACHE_TTL_MS}`, 10);
-
-// In-memory project/page store
-const projects = new Map();
-const pageLru = new Map();
-
+// =============================================================================
+// In-memory cache helpers (per-core instance)
+// =============================================================================
 function makePageKey(projectId, pageId) {
     return `${projectId}::${pageId}`;
 }
 
-function touchPageKey(key) {
-    if (!pageLru.has(key)) return;
-    const value = pageLru.get(key);
-    pageLru.delete(key);
-    pageLru.set(key, value);
+function touchPageKey(state, key) {
+    if (!state.pageLru.has(key)) return;
+    const value = state.pageLru.get(key);
+    state.pageLru.delete(key);
+    state.pageLru.set(key, value);
 }
 
-function evictPageByKey(key) {
-    const meta = pageLru.get(key);
+function evictPageByKey(state, key) {
+    const meta = state.pageLru.get(key);
     if (!meta) return;
-    pageLru.delete(key);
+    state.pageLru.delete(key);
 
     const { projectId, pageId } = meta;
-    const project = projects.get(projectId);
+    const project = state.projects.get(projectId);
     if (!project) return;
 
     const page = project.pages.get(pageId);
@@ -125,29 +191,33 @@ function evictPageByKey(key) {
 
     project.pages.delete(pageId);
     project.cssCache = null;
+    project.utilitiesCssCache = null;
+    project.themeCssCache = null;
 
     if (project.pages.size === 0) {
-        projects.delete(projectId);
+        state.projects.delete(projectId);
     }
 }
 
-function evictIfNeeded() {
-    while (pageLru.size > CACHE_MAX_PAGES) {
-        const oldestKey = pageLru.keys().next().value;
-        evictPageByKey(oldestKey);
+function evictIfNeeded(state, config) {
+    while (state.pageLru.size > config.cacheMaxPages) {
+        const oldestKey = state.pageLru.keys().next().value;
+        evictPageByKey(state, oldestKey);
     }
 }
 
-function getProject(projectId) {
-    let project = projects.get(projectId);
+function getProject(state, projectId) {
+    let project = state.projects.get(projectId);
     if (!project) {
         project = {
             id: projectId,
             pages: new Map(),
             classCounts: new Map(),
-            cssCache: null
+            cssCache: null,
+            utilitiesCssCache: null,
+            themeCssCache: null
         };
-        projects.set(projectId, project);
+        state.projects.set(projectId, project);
     }
     return project;
 }
@@ -165,9 +235,9 @@ function normalizeClassList(input) {
     return [];
 }
 
-function isValidId(value) {
+function isValidId(value, config) {
     if (!value || typeof value !== 'string') return false;
-    if (value.length > MAX_ID_LENGTH) return false;
+    if (value.length > config.maxIdLength) return false;
     return /^[a-zA-Z0-9._-]+$/.test(value);
 }
 
@@ -179,105 +249,58 @@ function isExpired(entry) {
     return entry?.expiresAt && entry.expiresAt <= Date.now();
 }
 
-const COLOR_NAMES = [
-    'slate', 'gray', 'zinc', 'neutral', 'stone',
-    'red', 'orange', 'amber', 'yellow', 'lime',
-    'green', 'emerald', 'teal', 'cyan', 'sky',
-    'blue', 'indigo', 'violet', 'purple', 'fuchsia',
-    'pink', 'rose'
-];
-const COLOR_SCALES = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950'];
-const COLOR_SPECIALS = ['black', 'white', 'transparent', 'current'];
-const COLOR_UTILS = ['bg', 'text', 'border', 'ring', 'from', 'via', 'to'];
+// =============================================================================
+// Tailwind suggestion data (loaded from JSON)
+// =============================================================================
+const SUGGESTIONS_PATH = path.join(__dirname, 'tailwind-suggestions.json');
+let cachedSuggestionData = null;
+let cachedSuggestionIndex = null;
 
-const SPACING_VALUES = [
-    '0', '0.5', '1', '1.5', '2', '2.5', '3', '3.5',
-    '4', '5', '6', '7', '8', '9', '10', '11', '12',
-    '14', '16', '20', '24', '28', '32', '36', '40',
-    '44', '48', '52', '56', '60', '64', '72', '80', '96'
-];
+function loadSuggestionData() {
+    if (cachedSuggestionData) return cachedSuggestionData;
+    try {
+        const raw = fs.readFileSync(SUGGESTIONS_PATH, 'utf8');
+        cachedSuggestionData = JSON.parse(raw);
+        return cachedSuggestionData;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to load Tailwind suggestion data: ${message}`);
+    }
+}
 
-const SPACING_PREFIXES = [
-    'p-', 'px-', 'py-', 'pt-', 'pr-', 'pb-', 'pl-',
-    'm-', 'mx-', 'my-', 'mt-', 'mr-', 'mb-', 'ml-',
-    'gap-', 'gap-x-', 'gap-y-',
-    'space-x-', 'space-y-',
-    'w-', 'h-', 'min-w-', 'min-h-', 'max-w-', 'max-h-',
-    'top-', 'right-', 'bottom-', 'left-',
-    'inset-', 'inset-x-', 'inset-y-',
-    'translate-x-', 'translate-y-'
-];
-
-const TEXT_SIZE_CLASSES = [
-    'text-xs', 'text-sm', 'text-base', 'text-lg', 'text-xl',
-    'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl', 'text-6xl',
-    'text-7xl', 'text-8xl', 'text-9xl'
-];
-
-const FONT_WEIGHT_CLASSES = [
-    'font-thin', 'font-extralight', 'font-light', 'font-normal',
-    'font-medium', 'font-semibold', 'font-bold', 'font-extrabold', 'font-black'
-];
-
-const SHADOW_CLASSES = [
-    'shadow-none', 'shadow-sm', 'shadow', 'shadow-md', 'shadow-lg', 'shadow-xl', 'shadow-2xl', 'shadow-inner'
-];
-
-const ROUNDED_CLASSES = [
-    'rounded-none', 'rounded-sm', 'rounded', 'rounded-md', 'rounded-lg',
-    'rounded-xl', 'rounded-2xl', 'rounded-3xl', 'rounded-full'
-];
-
-const LEADING_CLASSES = [
-    'leading-none', 'leading-tight', 'leading-snug', 'leading-normal',
-    'leading-relaxed', 'leading-loose'
-];
-
-const TRACKING_CLASSES = [
-    'tracking-tighter', 'tracking-tight', 'tracking-normal', 'tracking-wide',
-    'tracking-wider', 'tracking-widest'
-];
-
-const OPACITY_CLASSES = [
-    'opacity-0', 'opacity-5', 'opacity-10', 'opacity-20', 'opacity-25',
-    'opacity-30', 'opacity-40', 'opacity-50', 'opacity-60', 'opacity-70',
-    'opacity-75', 'opacity-80', 'opacity-90', 'opacity-95', 'opacity-100'
-];
-
-const Z_CLASSES = [
-    'z-0', 'z-10', 'z-20', 'z-30', 'z-40', 'z-50'
-];
-
-const KEYWORD_CLASSES = [
-    'flex', 'inline-flex', 'grid', 'inline-grid', 'block', 'inline-block', 'hidden',
-    'items-start', 'items-center', 'items-end',
-    'justify-start', 'justify-center', 'justify-end', 'justify-between',
-    'content-start', 'content-center', 'content-end', 'content-between',
-    'flex-row', 'flex-col', 'flex-wrap', 'flex-nowrap',
-    'overflow-hidden', 'overflow-auto', 'overflow-scroll',
-    'text-left', 'text-center', 'text-right',
-    'uppercase', 'lowercase', 'capitalize', 'normal-case'
-];
-
-const COLOR_CLASS_MAP = COLOR_UTILS.reduce((acc, util) => {
-    const list = [];
-    for (const name of COLOR_NAMES) {
-        for (const scale of COLOR_SCALES) {
-            list.push(`${util}-${name}-${scale}`);
+function buildSuggestionIndex(data) {
+    const colorClassMap = data.colorUtilities.reduce((acc, util) => {
+        const list = [];
+        for (const name of data.colorNames) {
+            for (const scale of data.colorScales) {
+                list.push(`${util}-${name}-${scale}`);
+            }
         }
-    }
-    for (const special of COLOR_SPECIALS) {
-        list.push(`${util}-${special}`);
-    }
-    acc[util] = list;
-    return acc;
-}, {});
+        for (const special of data.colorSpecials) {
+            list.push(`${util}-${special}`);
+        }
+        acc[util] = list;
+        return acc;
+    }, {});
 
-const SPACING_CLASS_MAP = SPACING_PREFIXES.reduce((acc, prefix) => {
-    acc[prefix] = SPACING_VALUES.map((value) => `${prefix}${value}`);
-    return acc;
-}, {});
+    const spacingClassMap = data.spacingPrefixes.reduce((acc, prefix) => {
+        acc[prefix] = data.spacingValues.map((value) => `${prefix}${value}`);
+        return acc;
+    }, {});
 
+    return { data, colorClassMap, spacingClassMap };
+}
+
+function getSuggestionIndex() {
+    if (!cachedSuggestionIndex) {
+        cachedSuggestionIndex = buildSuggestionIndex(loadSuggestionData());
+    }
+    return cachedSuggestionIndex;
+}
+
+// =============================================================================
+// Suggestion logic
+// =============================================================================
 function splitVariantPrefix(prefix = '') {
     const idx = prefix.lastIndexOf(':');
     if (idx === -1) return { variant: '', base: prefix };
@@ -297,30 +320,32 @@ function getFallbackSuggestions(prefix) {
         }
     };
 
-    if (base.startsWith('bg-')) addList(COLOR_CLASS_MAP.bg);
-    if (base.startsWith('text-')) addList([...TEXT_SIZE_CLASSES, ...COLOR_CLASS_MAP.text]);
-    if (base.startsWith('border-')) addList([...COLOR_CLASS_MAP.border, 'border', 'border-0', 'border-2', 'border-4', 'border-8']);
-    if (base.startsWith('ring-')) addList([...COLOR_CLASS_MAP.ring, 'ring', 'ring-0', 'ring-1', 'ring-2', 'ring-4', 'ring-8']);
-    if (base.startsWith('from-')) addList(COLOR_CLASS_MAP.from);
-    if (base.startsWith('via-')) addList(COLOR_CLASS_MAP.via);
-    if (base.startsWith('to-')) addList(COLOR_CLASS_MAP.to);
+    const { data, colorClassMap, spacingClassMap } = getSuggestionIndex();
 
-    for (const prefixKey of Object.keys(SPACING_CLASS_MAP)) {
+    if (base.startsWith('bg-')) addList(colorClassMap.bg);
+    if (base.startsWith('text-')) addList([...data.textSizes, ...colorClassMap.text]);
+    if (base.startsWith('border-')) addList([...colorClassMap.border, 'border', 'border-0', 'border-2', 'border-4', 'border-8']);
+    if (base.startsWith('ring-')) addList([...colorClassMap.ring, 'ring', 'ring-0', 'ring-1', 'ring-2', 'ring-4', 'ring-8']);
+    if (base.startsWith('from-')) addList(colorClassMap.from);
+    if (base.startsWith('via-')) addList(colorClassMap.via);
+    if (base.startsWith('to-')) addList(colorClassMap.to);
+
+    for (const prefixKey of Object.keys(spacingClassMap)) {
         if (base.startsWith(prefixKey)) {
-            addList(SPACING_CLASS_MAP[prefixKey]);
+            addList(spacingClassMap[prefixKey]);
         }
     }
 
-    if (base.startsWith('rounded')) addList(ROUNDED_CLASSES);
-    if (base.startsWith('shadow')) addList(SHADOW_CLASSES);
-    if (base.startsWith('font-')) addList(FONT_WEIGHT_CLASSES);
-    if (base.startsWith('leading-')) addList(LEADING_CLASSES);
-    if (base.startsWith('tracking-')) addList(TRACKING_CLASSES);
-    if (base.startsWith('opacity-')) addList(OPACITY_CLASSES);
-    if (base.startsWith('z-')) addList(Z_CLASSES);
+    if (base.startsWith('rounded')) addList(data.rounded);
+    if (base.startsWith('shadow')) addList(data.shadows);
+    if (base.startsWith('font-')) addList(data.fontWeights);
+    if (base.startsWith('leading-')) addList(data.leading);
+    if (base.startsWith('tracking-')) addList(data.tracking);
+    if (base.startsWith('opacity-')) addList(data.opacity);
+    if (base.startsWith('z-')) addList(data.z);
 
     if (!suggestions.length) {
-        addList(KEYWORD_CLASSES);
+        addList(data.keywords);
     }
 
     return suggestions;
@@ -328,6 +353,9 @@ function getFallbackSuggestions(prefix) {
 
 let cachedClassList = null;
 
+// =============================================================================
+// Tailwind design system + compilation
+// =============================================================================
 async function getTailwindClassList() {
     if (cachedClassList) return cachedClassList;
     const designSystem = await getDesignSystem();
@@ -348,16 +376,16 @@ async function getStaticClassSuggestions(prefix) {
     return matches;
 }
 
-function getProjectSuggestionList(projectId) {
-    const project = projects.get(projectId);
+function getProjectSuggestionList(state, projectId) {
+    const project = state.projects.get(projectId);
     if (!project) return [];
     return Array.from(project.classCounts.entries())
         .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
         .map(([name]) => name);
 }
 
-// Your existing functions
 let cachedDesignSystem = null;
+let cachedBaseCss = null;
 
 async function getDesignSystem() {
     if (!cachedDesignSystem) {
@@ -419,6 +447,67 @@ async function generateCssForClasses(classes) {
     return compiled.build(classes);
 }
 
+// =============================================================================
+// Bundle splitting (theme vs utilities)
+// =============================================================================
+function splitThemeUtilitiesCss(css = '') {
+    const headerMatch = css.match(/^\/\*![\s\S]*?\*\/\n@layer[^;]*;\n/);
+    const header = headerMatch ? headerMatch[0] : '';
+    const body = headerMatch ? css.slice(header.length) : css;
+    const themeBlocks = body.match(/:root, :host\s*\{[\s\S]*?\}\n?/g) || [];
+    const themeBody = themeBlocks.join('\n').trim();
+    const utilitiesBody = body.replace(/:root, :host\s*\{[\s\S]*?\}\n?/g, '').trim();
+    const themeHeader = header ? header.replace(/@layer[^;]*;/, '@layer theme;') : '';
+    const utilitiesHeader = header ? header.replace(/@layer[^;]*;/, '@layer utilities;') : '';
+
+    return {
+        themeCss: `${themeHeader}${themeBody ? `\n${themeBody}` : ''}`.trim(),
+        utilitiesCss: `${utilitiesHeader}${utilitiesBody ? `\n${utilitiesBody}` : ''}`.trim()
+    };
+}
+
+async function generateThemeUtilitiesForClasses(classes) {
+    let inputCss = '@layer theme, utilities;\n';
+    inputCss += '@import "tailwindcss/utilities";\n';
+    inputCss += '@import "tailwindcss/theme.css";\n';
+
+    classes.forEach(className => {
+        const escaped = className.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        inputCss += `@source inline("${escaped}");\n`;
+    });
+
+    const compiled = await compile(inputCss, {
+        base: __dirname,
+        onDependency: () => {}
+    });
+
+    const css = compiled.build(classes);
+    return splitThemeUtilitiesCss(css);
+}
+
+async function generateBaseCss() {
+    if (cachedBaseCss) return cachedBaseCss;
+    const inputCss = '@layer base;\n@import "tailwindcss/preflight";\n';
+    const compiled = await compile(inputCss, {
+        base: __dirname,
+        onDependency: () => {}
+    });
+    cachedBaseCss = compiled.build([]);
+    return cachedBaseCss;
+}
+
+// =============================================================================
+// Input normalization + compile orchestration
+// =============================================================================
+function normalizeBundle(value) {
+    if (!value) return 'full';
+    const normalized = String(value).trim().toLowerCase();
+    if (['base', 'preflight'].includes(normalized)) return 'base';
+    if (['theme', 'tokens', 'design'].includes(normalized)) return 'theme';
+    if (['utilities', 'utility', 'utils', 'util', 'utilities-only', 'utility-only'].includes(normalized)) return 'utilities';
+    return 'full';
+}
+
 async function resolveClassesFromInput({ html, classes }) {
     let fromHtml = [];
     if (html) {
@@ -433,14 +522,18 @@ async function resolveClassesFromInput({ html, classes }) {
     return valid.sort();
 }
 
-async function compileAndCachePage({ projectId, pageId, html, classes }) {
+async function compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle = 'full' }) {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss(), classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
+    }
     const resolvedClasses = await resolveClassesFromInput({ html, classes });
     if (resolvedClasses.length === 0) {
         return { error: 'No valid classes found.', classes: [], css: '', status: 400 };
     }
-    if (resolvedClasses.length > MAX_CLASS_COUNT) {
+    if (resolvedClasses.length > config.maxClassCount) {
         return {
-            error: `Too many classes (${resolvedClasses.length}). Limit is ${MAX_CLASS_COUNT}.`,
+            error: `Too many classes (${resolvedClasses.length}). Limit is ${config.maxClassCount}.`,
             classes: [],
             css: '',
             status: 413
@@ -448,22 +541,37 @@ async function compileAndCachePage({ projectId, pageId, html, classes }) {
     }
 
     const now = Date.now();
-    const project = getProject(projectId);
+    const project = getProject(state, projectId);
     const existing = project.pages.get(pageId);
     const classHash = hashClasses(resolvedClasses);
+    const bundleKey =
+        normalizedBundle === 'utilities'
+            ? 'utilitiesCss'
+            : normalizedBundle === 'theme'
+              ? 'themeCss'
+              : 'css';
 
     if (existing && existing.hash === classHash && !isExpired(existing)) {
-        existing.expiresAt = now + CACHE_TTL_MS;
+        existing.expiresAt = now + config.cacheTtlMs;
         existing.updatedAt = now;
         const pageKey = makePageKey(projectId, pageId);
-        touchPageKey(pageKey);
-        return { css: existing.css, classes: resolvedClasses, hash: classHash, cached: true };
+        touchPageKey(state, pageKey);
+        if (existing[bundleKey]) {
+            return { css: existing[bundleKey], classes: resolvedClasses, hash: classHash, cached: true, bundle: normalizedBundle };
+        }
     }
 
-    const css = await generateCssForClasses(resolvedClasses);
+    let css = '';
+    if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+        const split = await generateThemeUtilitiesForClasses(resolvedClasses);
+        css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
+    } else {
+        css = await generateCssForClasses(resolvedClasses);
+    }
     const newClassSet = new Set(resolvedClasses);
+    const classesChanged = !existing || existing.hash !== classHash;
 
-    if (existing) {
+    if (classesChanged && existing) {
         for (const className of existing.classes) {
             if (!newClassSet.has(className)) {
                 const count = project.classCounts.get(className) ?? 0;
@@ -480,71 +588,213 @@ async function compileAndCachePage({ projectId, pageId, html, classes }) {
                 project.classCounts.set(className, count + 1);
             }
         }
-    } else {
+    } else if (!existing && newClassSet.size) {
         for (const className of newClassSet) {
             const count = project.classCounts.get(className) ?? 0;
             project.classCounts.set(className, count + 1);
         }
     }
 
-    project.pages.set(pageId, {
-        css,
-        classes: newClassSet,
-        hash: classHash,
-        updatedAt: now,
-        expiresAt: now + CACHE_TTL_MS
-    });
-    project.cssCache = null;
+    if (existing) {
+        existing.hash = classHash;
+        existing.classes = newClassSet;
+        existing.updatedAt = now;
+        existing.expiresAt = now + config.cacheTtlMs;
+        if (normalizedBundle === 'utilities') {
+            existing.utilitiesCss = css;
+        } else if (normalizedBundle === 'theme') {
+            existing.themeCss = css;
+        } else if (normalizedBundle === 'full') {
+            existing.css = css;
+        }
+    } else {
+        project.pages.set(pageId, {
+            css: normalizedBundle === 'full' ? css : null,
+            utilitiesCss: normalizedBundle === 'utilities' ? css : null,
+            themeCss: normalizedBundle === 'theme' ? css : null,
+            classes: newClassSet,
+            hash: classHash,
+            updatedAt: now,
+            expiresAt: now + config.cacheTtlMs
+        });
+    }
+    if (classesChanged) {
+        project.cssCache = null;
+        project.utilitiesCssCache = null;
+        project.themeCssCache = null;
+    }
 
     const pageKey = makePageKey(projectId, pageId);
-    pageLru.set(pageKey, { projectId, pageId });
-    touchPageKey(pageKey);
-    evictIfNeeded();
+    state.pageLru.set(pageKey, { projectId, pageId });
+    touchPageKey(state, pageKey);
+    evictIfNeeded(state, config);
 
-    return { css, classes: resolvedClasses, hash: classHash, cached: false };
+    return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
 }
 
-function getCachedPageCss(projectId, pageId) {
-    const project = projects.get(projectId);
+async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full') {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss() };
+    }
+    const project = state.projects.get(projectId);
     if (!project) return null;
     const page = project.pages.get(pageId);
     if (!page) return null;
     if (isExpired(page)) {
-        evictPageByKey(makePageKey(projectId, pageId));
+        evictPageByKey(state, makePageKey(projectId, pageId));
         return null;
     }
 
-    page.expiresAt = Date.now() + CACHE_TTL_MS;
-    touchPageKey(makePageKey(projectId, pageId));
-    return page;
+    page.expiresAt = Date.now() + config.cacheTtlMs;
+    touchPageKey(state, makePageKey(projectId, pageId));
+    if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+        if (!page.utilitiesCss || !page.themeCss) {
+            const split = await generateThemeUtilitiesForClasses(Array.from(page.classes || []));
+            page.utilitiesCss = split.utilitiesCss;
+            page.themeCss = split.themeCss;
+        }
+        return { css: normalizedBundle === 'utilities' ? page.utilitiesCss : page.themeCss };
+    }
+    if (!page.css) {
+        page.css = await generateCssForClasses(Array.from(page.classes || []));
+    }
+    return { css: page.css };
 }
 
-async function getProjectCss(projectId) {
-    const project = projects.get(projectId);
+async function getProjectCss(state, config, projectId, bundle = 'full') {
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') {
+        return { css: await generateBaseCss(), hash: 'base', cached: true };
+    }
+    const project = state.projects.get(projectId);
     if (!project) return null;
 
     const now = Date.now();
-    if (project.cssCache && !isExpired(project.cssCache)) {
-        return { css: project.cssCache.css, hash: project.cssCache.hash, cached: true };
+    const cacheKey =
+        normalizedBundle === 'utilities'
+            ? 'utilitiesCssCache'
+            : normalizedBundle === 'theme'
+              ? 'themeCssCache'
+              : 'cssCache';
+    const cacheEntry = project[cacheKey];
+    if (cacheEntry && !isExpired(cacheEntry)) {
+        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
 
     const classes = Array.from(project.classCounts.keys()).sort();
     const hash = hashClasses(classes);
-    if (project.cssCache && project.cssCache.hash === hash && !isExpired(project.cssCache)) {
-        project.cssCache.expiresAt = now + PROJECT_CACHE_TTL_MS;
-        return { css: project.cssCache.css, hash: project.cssCache.hash, cached: true };
+    if (cacheEntry && cacheEntry.hash === hash && !isExpired(cacheEntry)) {
+        cacheEntry.expiresAt = now + config.projectCacheTtlMs;
+        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
 
-    const css = classes.length ? await generateCssForClasses(classes) : '';
-    project.cssCache = {
+    let css = '';
+    if (classes.length) {
+        if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
+            const split = await generateThemeUtilitiesForClasses(classes);
+            css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
+        } else {
+            css = await generateCssForClasses(classes);
+        }
+    }
+    project[cacheKey] = {
         css,
         hash,
         updatedAt: now,
-        expiresAt: now + PROJECT_CACHE_TTL_MS
+        expiresAt: now + config.projectCacheTtlMs
     };
     return { css, hash, cached: false };
 }
 
+// =============================================================================
+// Plugin system
+// =============================================================================
+function createPluginRunner(plugins = [], options = {}) {
+    const defaultTimeoutMs = parseIntWithDefault(
+        options.timeoutMs ?? process.env.RW_PLUGIN_TIMEOUT_MS,
+        200,
+        0
+    );
+    const list = (Array.isArray(plugins) ? plugins : [plugins])
+        .filter(Boolean)
+        .map((plugin, index) => ({
+            name: plugin.name || `plugin-${index + 1}`,
+            instance: plugin,
+            defer: Boolean(plugin.defer),
+            deferHooks: Array.isArray(plugin.deferHooks) ? plugin.deferHooks : null,
+            timeoutMs: Number.isFinite(plugin.timeoutMs)
+                ? Math.max(0, plugin.timeoutMs)
+                : defaultTimeoutMs
+        }));
+
+    const shouldDefer = (plugin, hook) => {
+        if (hook === 'onError') return false;
+        if (plugin.deferHooks) return plugin.deferHooks.includes(hook);
+        return plugin.defer;
+    };
+
+    const withTimeout = (promise, timeoutMs) => {
+        if (!timeoutMs || timeoutMs <= 0) return promise;
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const error = new Error(`Plugin timeout after ${timeoutMs}ms`);
+                error.code = 'PLUGIN_TIMEOUT';
+                reject(error);
+            }, timeoutMs);
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    };
+
+    const runSingle = async (plugin, hook, context) => {
+        const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
+        if (!fn) return;
+        try {
+            await withTimeout(Promise.resolve(fn(context)), plugin.timeoutMs);
+        } catch (error) {
+            if (hook === 'onError') return;
+            const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
+            await runHook('onError', {
+                error,
+                hook,
+                plugin: plugin.name,
+                timedOut,
+                context
+            });
+        }
+    };
+
+    const runHook = async (hook, context) => {
+        for (const plugin of list) {
+            if (shouldDefer(plugin, hook)) {
+                queueMicrotask(() => {
+                    runSingle(plugin, hook, context);
+                });
+                continue;
+            }
+            await runSingle(plugin, hook, context);
+        }
+    };
+
+    return { runHook };
+}
+
+// =============================================================================
+// HTTP routes
+// =============================================================================
+function registerRoutes(app, pluginRunner, config, state) {
+    const withRequestHooks = (req, res, context) => {
+        const start = Date.now();
+        pluginRunner.runHook('onRequestStart', context);
+        res.once('finish', () => {
+            pluginRunner.runHook('onResponseSent', {
+                ...context,
+                status: res.statusCode,
+                durationMs: Date.now() - start
+            });
+        });
+    };
 // API Routes
 
 // Compile CSS for a project/page (in-memory cache)
@@ -553,68 +803,170 @@ app.post('/api/compile', async (req, res) => {
         const projectId = req.body.projectId ?? req.body.project_id;
         const pageId = req.body.pageId ?? req.body.page_id ?? 'default';
         const { html, classes } = req.body;
+        const bundle = normalizeBundle(req.body.bundle ?? req.body.mode);
+        const hookContext = {
+            projectId,
+            pageId,
+            bundle,
+            html,
+            classes,
+            request: { ip: getClientIp(req), method: req.method, path: req.path }
+        };
+        withRequestHooks(req, res, { ...hookContext, action: 'compile' });
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
         }
-        if (!isValidId(projectId)) {
-            return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        if (!isValidId(projectId, config)) {
+            return res.status(400).json({
+                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
-        if (!isValidId(pageId)) {
-            return res.status(400).json({ error: 'pageId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        if (!isValidId(pageId, config)) {
+            return res.status(400).json({
+                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
-        if (!html && !classes) {
+        if (!html && !classes && bundle !== 'base') {
             return res.status(400).json({ error: 'Either html or classes is required.' });
         }
-        if (typeof html === 'string' && html.length > MAX_HTML_CHARS) {
-            return res.status(413).json({ error: `html is too large. Limit is ${MAX_HTML_CHARS} chars.` });
+        if (typeof html === 'string' && html.length > config.maxHtmlChars) {
+            return res.status(413).json({ error: `html is too large. Limit is ${config.maxHtmlChars} chars.` });
         }
-        if (typeof classes === 'string' && classes.length > MAX_CLASS_CHARS) {
-            return res.status(413).json({ error: `classes is too large. Limit is ${MAX_CLASS_CHARS} chars.` });
+        if (typeof classes === 'string' && classes.length > config.maxClassChars) {
+            return res.status(413).json({ error: `classes is too large. Limit is ${config.maxClassChars} chars.` });
         }
 
-        const result = await compileAndCachePage({ projectId, pageId, html, classes });
+        await pluginRunner.runHook('onCompileStart', hookContext);
+
+        if (!html && !classes && bundle === 'base') {
+            const css = await generateBaseCss();
+            await pluginRunner.runHook('onCacheHit', {
+                projectId,
+                pageId,
+                bundle,
+                source: 'compile'
+            });
+            await pluginRunner.runHook('onCompileResult', {
+                projectId,
+                pageId,
+                bundle: 'base',
+                classes: [],
+                css,
+                hash: 'base',
+                cached: true
+            });
+            return res.json({
+                success: true,
+                projectId,
+                pageId,
+                bundle: 'base',
+                hash: 'base',
+                classes: [],
+                cached: true,
+                css
+            });
+        }
+
+        const result = await compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle });
         if (result.error) {
+            await pluginRunner.runHook('onError', {
+                error: new Error(result.error),
+                stage: 'compile',
+                context: hookContext
+            });
             return res.status(result.status || 400).json({ error: result.error });
         }
+
+        if (result.cached) {
+            await pluginRunner.runHook('onCacheHit', {
+                projectId,
+                pageId,
+                bundle: result.bundle ?? bundle,
+                source: 'compile'
+            });
+        } else {
+            await pluginRunner.runHook('onCacheMiss', {
+                projectId,
+                pageId,
+                bundle: result.bundle ?? bundle,
+                source: 'compile'
+            });
+        }
+        await pluginRunner.runHook('onCompileResult', {
+            projectId,
+            pageId,
+            bundle: result.bundle ?? bundle,
+            classes: result.classes,
+            css: result.css,
+            hash: result.hash,
+            cached: result.cached
+        });
 
         res.json({
             success: true,
             projectId,
             pageId,
+            bundle: result.bundle ?? bundle,
             hash: result.hash,
             classes: result.classes,
             cached: result.cached,
             css: result.css
         });
     } catch (err) {
+        await pluginRunner.runHook('onError', { error: err, stage: 'compile' });
         res.status(500).json({ error: err.message });
     }
 });
 
 // Get cached CSS for a project/page
-app.get('/api/css', (req, res) => {
+app.get('/api/css', async (req, res) => {
     try {
         const projectId = req.query.projectId ?? req.query.project_id;
         const pageId = req.query.pageId ?? req.query.page_id ?? 'default';
+        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        const hookContext = {
+            projectId,
+            pageId,
+            bundle,
+            request: { ip: getClientIp(req), method: req.method, path: req.path }
+        };
+        withRequestHooks(req, res, { ...hookContext, action: 'cache' });
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
         }
-        if (!isValidId(projectId)) {
-            return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        if (!isValidId(projectId, config)) {
+            return res.status(400).json({
+                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
-        if (!isValidId(pageId)) {
-            return res.status(400).json({ error: 'pageId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        if (!isValidId(pageId, config)) {
+            return res.status(400).json({
+                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
 
-        const cached = getCachedPageCss(projectId, pageId);
+        const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
         if (!cached) {
+            await pluginRunner.runHook('onCacheMiss', {
+                projectId,
+                pageId,
+                bundle,
+                source: 'page'
+            });
             return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
         }
 
+        await pluginRunner.runHook('onCacheHit', {
+            projectId,
+            pageId,
+            bundle,
+            source: 'page'
+        });
         res.type('text/css').send(cached.css);
     } catch (err) {
+        await pluginRunner.runHook('onError', { error: err, stage: 'cache' });
         res.status(500).json({ error: err.message });
     }
 });
@@ -623,17 +975,34 @@ app.get('/api/css', (req, res) => {
 app.get('/api/projects/:projectId/css', async (req, res) => {
     try {
         const { projectId } = req.params;
-        if (!isValidId(projectId)) {
-            return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        const hookContext = {
+            projectId,
+            bundle,
+            request: { ip: getClientIp(req), method: req.method, path: req.path }
+        };
+        withRequestHooks(req, res, { ...hookContext, action: 'project-css' });
+        if (!isValidId(projectId, config)) {
+            return res.status(400).json({
+                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
-        const project = projects.get(projectId);
-        if (!project) {
+        const project = state.projects.get(projectId);
+        if (!project && bundle !== 'base') {
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
-        const result = await getProjectCss(projectId);
+        const result = await getProjectCss(state, config, projectId, bundle);
+        await pluginRunner.runHook('onProjectCss', {
+            projectId,
+            bundle,
+            css: result?.css ?? '',
+            hash: result?.hash ?? null,
+            cached: result?.cached ?? false
+        });
         return res.type('text/css').send(result?.css ?? '');
     } catch (err) {
+        await pluginRunner.runHook('onError', { error: err, stage: 'project-css' });
         res.status(500).json({ error: err.message });
     }
 });
@@ -644,14 +1013,35 @@ app.post('/api/suggest', async (req, res) => {
         const projectId = req.body.projectId ?? req.body.project_id ?? null;
         const prefix = typeof req.body.prefix === 'string' ? req.body.prefix.trim() : '';
         const limitRaw = req.body.limit ?? req.body.max ?? req.body.count;
-        const limit = Math.min(parseIntWithDefault(limitRaw, SUGGEST_LIMIT, 1), SUGGEST_LIMIT);
+        const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
         const includeInput = normalizeClassList(req.body.classes);
+        const hookContext = {
+            projectId,
+            prefix,
+            limit,
+            request: { ip: getClientIp(req), method: req.method, path: req.path }
+        };
+        withRequestHooks(req, res, { ...hookContext, action: 'suggest' });
 
-        if (projectId && !isValidId(projectId)) {
-            return res.status(400).json({ error: 'projectId must be <= 64 chars and use a-z, 0-9, ".", "-", "_".' });
+        if (projectId && !isValidId(projectId, config)) {
+            return res.status(400).json({
+                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
         }
 
-    const suggestions = new Map();
+        const suggestions = new Map();
+
+        const finalize = async () => {
+            const payload = {
+                success: true,
+                projectId,
+                prefix,
+                count: suggestions.size,
+                suggestions: Array.from(suggestions.keys())
+            };
+            await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions: payload.suggestions });
+            return res.json(payload);
+        };
 
         const pushList = (list) => {
             for (const item of list) {
@@ -667,29 +1057,17 @@ app.post('/api/suggest', async (req, res) => {
 
         if (includeInput.length) {
             if (pushList(includeInput)) {
-                return res.json({
-                    success: true,
-                    projectId,
-                    prefix,
-                    count: suggestions.size,
-                    suggestions: Array.from(suggestions.keys())
-                });
+                return finalize();
             }
         }
 
         if (projectId) {
-            if (pushList(getProjectSuggestionList(projectId))) {
-                return res.json({
-                    success: true,
-                    projectId,
-                    prefix,
-                    count: suggestions.size,
-                    suggestions: Array.from(suggestions.keys())
-                });
+            if (pushList(getProjectSuggestionList(state, projectId))) {
+                return finalize();
             }
         }
 
-        if (SUGGEST_FALLBACK && prefix) {
+        if (config.suggestFallback && prefix) {
             const staticList = await getStaticClassSuggestions(prefix);
             if (!staticList.length) {
                 pushList(getFallbackSuggestions(prefix));
@@ -698,39 +1076,70 @@ app.post('/api/suggest', async (req, res) => {
             }
         }
 
-        return res.json({
-            success: true,
-            projectId,
-            prefix,
-            count: suggestions.size,
-            suggestions: Array.from(suggestions.keys())
-        });
+        return finalize();
     } catch (err) {
+        await pluginRunner.runHook('onError', { error: err, stage: 'suggest' });
         res.status(500).json({ error: err.message });
     }
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
+    withRequestHooks(req, res, {
+        action: 'health',
+        request: { ip: getClientIp(req), method: req.method, path: req.path }
+    });
     res.status(200).json({ status: 'ok' });
 });
 
 // Error handler middleware (must be defined after all routes)
 app.use((err, req, res, next) => {
     if (err && err.type === 'entity.too.large') {
+        pluginRunner.runHook('onError', { error: err, stage: 'body', context: { path: req.path } });
         return res.status(413).json({ error: 'Payload too large.' });
     }
     return next(err);
 });
+}
 
+// =============================================================================
+// Core factory
+// =============================================================================
+export function createCore({ plugins = [], pluginTimeoutMs, config: configOverrides } = {}) {
+    const config = buildConfig(configOverrides);
+    const state = createCacheState();
+    const app = express();
+    app.disable('x-powered-by');
+    app.set('trust proxy', config.trustProxy);
+
+    app.use((req, res, next) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+        next();
+    });
+
+    app.use(express.json({ limit: config.maxBodyBytes }));
+    const rateLimiter = createRateLimiter(config);
+    app.use(rateLimiter.middleware);
+
+    const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs });
+    registerRoutes(app, pluginRunner, config, state);
+    return app;
+}
+
+// =============================================================================
+// CLI entry (node services/index.js)
+// =============================================================================
 const PORT = process.env.PORT || 3001;
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+const isDirectRun =
+    process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 
 if (isDirectRun) {
+    const app = createCore();
     app.listen(PORT, () => {
         console.log(`🚀 Server running at http://localhost:${PORT}`);
         console.log('🧠 In-memory cache enabled (no DB).');
     });
 }
-
-export { app };

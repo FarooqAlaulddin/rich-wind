@@ -153,7 +153,7 @@ export function Layout({ children }) {
 
                   function snapshotCore() {
                     var data = new FormData(form);
-                    var keys = ['projectId', 'pageId', 'html', 'classes'];
+                    var keys = ['projectId', 'pageId', 'html', 'classes', 'bundle'];
                     return keys.map(function(key) {
                       return key + ':' + (data.get(key) || '');
                     }).join('||');
@@ -315,12 +315,34 @@ export function Layout({ children }) {
                   var saved = null;
                   try { saved = localStorage.getItem('rw-theme'); } catch (e) {}
                   var prefersDark = false;
+                  var mediaQuery = null;
                   try {
-                    prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    if (window.matchMedia) {
+                      mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                      prefersDark = mediaQuery.matches;
+                    }
                   } catch (e) {}
                   var useDark = saved ? saved === 'dark' : prefersDark;
                   toggle.checked = useDark;
                   document.body.classList.toggle('theme-dark', useDark);
+
+                  if (!saved && mediaQuery) {
+                    var syncWithSystem = function(event) {
+                      var next = event.matches;
+                      toggle.checked = next;
+                      document.body.classList.toggle('theme-dark', next);
+                      if (window.__rwPreview) {
+                        applyPreview(window.__rwPreview, 'local');
+                      }
+                    };
+                    try {
+                      if (mediaQuery.addEventListener) {
+                        mediaQuery.addEventListener('change', syncWithSystem);
+                      } else if (mediaQuery.addListener) {
+                        mediaQuery.addListener(syncWithSystem);
+                      }
+                    } catch (e) {}
+                  }
 
                   toggle.addEventListener('change', function() {
                     var enabled = toggle.checked;
