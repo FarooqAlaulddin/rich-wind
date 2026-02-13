@@ -587,7 +587,7 @@ body.theme-dark .docs-idea-banner {
   max-width: 100%;
 }
 
-.docs-content :where(p code, li code, dd code, dt code, blockquote code, th code, td code) {
+.docs-content :where(p code, li code, dd code, dt code, blockquote code) {
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -734,8 +734,10 @@ body.theme-dark .docs-idea-banner {
    -------------------------------------------------------------------------- */
 .docs-content :where(table) {
   display: block;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
   margin: var(--docs-space-6) 0;
   font-size: var(--docs-text-sm);
   line-height: var(--docs-leading-normal);
@@ -772,6 +774,13 @@ body.theme-dark .docs-content :where(thead) {
   overflow-wrap: normal;
   word-break: normal;
   white-space: nowrap;
+}
+
+.docs-content :where(th code, td code) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  display: inline-block;
 }
 
 .docs-content :where(tbody tr):last-child :where(td) {
