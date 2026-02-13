@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "build": "node ./scripts/sync-docs.mjs && react-router build",
-    "dev": "node ./scripts/sync-docs.mjs && react-router dev",
+    "dev": "node ./scripts/dev.mjs",
+    "dev:app": "react-router dev",
+    "docs:sync": "node ./scripts/sync-docs.mjs",
+    "docs:watch": "node ./scripts/sync-docs.mjs --watch",
     "prod": "npm run build && npm run start",
     "start": "react-router-serve ./build/server/index.js"
   },

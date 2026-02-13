@@ -1,6 +1,6 @@
 {
   "name": "rich-wind",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "A stateless Tailwind CSS runtime service for compiling CSS from HTML and class lists",
   "type": "module",
   "main": "./services/index.js",
@@ -15,7 +15,7 @@
   },
   "scripts": {
     "start": "node ./services/index.js",
-    "dev": "RW_SUGGEST_LIMIT=99 node --watch ./services/index.js",
+    "dev": "node --watch ./services/index.js",
     "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -36,11 +36,11 @@
     "url": "https://github.com/FarooqAlaulddin/rich-wind.git"
   },
   "dependencies": {
-    "@tailwindcss/node": "^4.1.4",
-    "@tailwindcss/oxide": "^4.1.4",
-    "express": "^5.1.0"
+    "@tailwindcss/node": "^4.1.18",
+    "@tailwindcss/oxide": "^4.1.18",
+    "express": "^5.2.1"
   },
   "devDependencies": {
-    "vitest": "^3.1.0"
+    "vitest": "^4.0.18"
   }
 }

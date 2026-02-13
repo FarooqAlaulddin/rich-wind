@@ -5,67 +5,96 @@ import MarkdownIt from "markdown-it";
 import "../docs.css";
 import { Link, useLoaderData, useLocation } from "react-router";
 import { useEffect } from "react";
+import { loadDocsCatalog, resolveDocFromPathname } from "./docs.catalog.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const docsRoot = path.resolve(__dirname, "../../public/docs");
 
-const DOC_PAGES = [
-  { slug: "", title: "Overview", file: "index.md" },
-  { slug: "plugin-system", title: "Plugin system", file: "plugin-system.md" },
-  { slug: "css-strategies", title: "CSS strategies", file: "css-strategies.md" },
-  { slug: "persistence-layer", title: "Persistence layer report", file: "persistence-layer.md" },
-];
-
-const pageBySlug = new Map(DOC_PAGES.map((page) => [page.slug, page]));
-const pageByFile = new Map(DOC_PAGES.map((page) => [page.file, page]));
 const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
 
-function resolveDoc(pathname) {
-  const relative = pathname.replace(/^\/docs\/?/, "").replace(/\/+$/, "");
-  if (!relative) {
-    return { file: "index.md", page: pageBySlug.get("") };
-  }
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
+}
 
-  if (relative.includes("..")) return null;
+function notFoundPayload(pathname = "/docs", sections = []) {
+  const safePath = String(pathname || "/docs");
+  return {
+    html: md.render(`# Not Found\n\nNo docs page exists for \`${safePath}\`.`),
+    slug: "",
+    title: "Not found",
+    sections,
+    kind: "docs",
+    isReview: false,
+    isIdea: false,
+  };
+}
 
-  if (relative.endsWith(".md")) {
-    const file = relative;
-    const slug = relative.replace(/\.md$/, "");
-    return { file, page: pageBySlug.get(slug) || pageByFile.get(file) };
-  }
-
-  return { file: `${relative}.md`, page: pageBySlug.get(relative) };
+function pathIsInsideRoot(rootPath, absolutePath) {
+  const relative = path.relative(rootPath, absolutePath);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
 export async function loader({ request }) {
   const { pathname } = new URL(request.url);
-  const resolved = resolveDoc(pathname);
-  if (!resolved || !resolved.file) {
-    return new Response("Not found", { status: 404 });
+  let catalog;
+  try {
+    catalog = await loadDocsCatalog(docsRoot);
+  } catch {
+    catalog = {
+      pages: [],
+      sections: [
+        { kind: "docs", title: "All Docs", pages: [] },
+        { kind: "review", title: "Review", pages: [] },
+        { kind: "idea", title: "Ideas", pages: [] },
+      ],
+      pageBySlug: new Map(),
+      pageByFile: new Map(),
+    };
   }
 
-  const fullPath = path.resolve(docsRoot, resolved.file);
-  if (!fullPath.startsWith(docsRoot)) {
-    return new Response("Not found", { status: 404 });
+  const page = resolveDocFromPathname(pathname, catalog);
+
+  if (!page || !page.file) {
+    return jsonResponse(notFoundPayload(pathname, catalog.sections), 404);
+  }
+
+  const fullPath = path.resolve(docsRoot, page.file);
+  if (!pathIsInsideRoot(docsRoot, fullPath)) {
+    return jsonResponse(notFoundPayload(pathname, catalog.sections), 404);
   }
 
   try {
     const markdown = await readFile(fullPath, "utf8");
     const html = md.render(markdown);
-    return new Response(JSON.stringify({
+    return jsonResponse({
       html,
-      slug: resolved.page?.slug ?? "",
-      title: resolved.page?.title ?? "Docs",
-      pages: DOC_PAGES,
-    }), { headers: { "content-type": "application/json; charset=utf-8" } });
+      slug: page.slug,
+      title: page.title,
+      sections: catalog.sections,
+      kind: page.kind,
+      isReview: Boolean(page.isReview),
+      isIdea: Boolean(page.isIdea),
+    });
   } catch (error) {
-    return new Response("Not found", { status: 404 });
+    return jsonResponse(notFoundPayload(pathname, catalog.sections), 404);
   }
 }
 
 export default function DocsRoute() {
-  const { html, pages, slug, title } = useLoaderData();
+  const data = useLoaderData() || {};
+  const html = typeof data.html === "string" ? data.html : "";
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  const visibleSections = sections.filter(
+    (section) => Array.isArray(section?.pages) && section.pages.length > 0
+  );
+  const reviewStatus = Boolean(data.isReview);
+  const ideaStatus = Boolean(data.isIdea);
+  const slug = typeof data.slug === "string" ? data.slug : "";
+  const title = typeof data.title === "string" ? data.title : "Docs";
   const location = useLocation();
 
   useEffect(() => {
@@ -80,15 +109,20 @@ export default function DocsRoute() {
       <aside className="docs-nav">
         <div className="docs-brand">Rich Wind Docs</div>
         <nav>
-          {pages.map((page) => {
-            const active = page.slug === slug;
-            const href = page.slug ? `/docs/${page.slug}` : "/docs";
-            return (
-              <Link key={page.file} to={href} className={`docs-link${active ? " is-active" : ""}`}>
-                {page.title}
-              </Link>
-            );
-          })}
+          {visibleSections.map((section) => (
+            <div key={section.kind} className={`docs-nav-section docs-nav-section--${section.kind}`}>
+              <div className="docs-nav-section-title">{section.title}</div>
+              {section.pages.map((page) => {
+                const active = page.slug === slug;
+                const href = page.slug ? `/docs/${page.slug}` : "/docs";
+                return (
+                  <Link key={page.slug || "overview"} to={href} className={`docs-link${active ? " is-active" : ""}`}>
+                    {page.title}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className="docs-controls">
           <label className="docs-toggle">
@@ -112,6 +146,16 @@ export default function DocsRoute() {
         <div className="docs-header">
           <h1>{title}</h1>
         </div>
+        {reviewStatus ? (
+          <div className="docs-review-banner" role="status">
+            This page is under review and might contain errors.
+          </div>
+        ) : null}
+        {ideaStatus ? (
+          <div className="docs-idea-banner" role="status">
+            Idea draft: this proposal is not implemented yet and may change before release.
+          </div>
+        ) : null}
         <article
           className="docs-content"
           dangerouslySetInnerHTML={{ __html: html }}

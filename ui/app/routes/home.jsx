@@ -147,6 +147,10 @@ export default function Home() {
               Stateless Tailwind Runtime
             </p>
             <p className="text-xl font-semibold">Rich Wind Studio</p>
+            <div className="text-xs uppercase tracking-[0.4em] text-slate-500 flex items-center gap-4 mt-1">
+              <a href="/docs" className="text-amber-400/80 hover:text-amber-400">DOCS</a>
+              <a href="https://github.com/FarooqAlaulddin/rich-wind" className="text-amber-400/80 hover:text-amber-400">GITHUB</a>
+            </div>
           </div>
         </div>
           <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">

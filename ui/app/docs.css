@@ -164,6 +164,47 @@ body.theme-dark .docs-nav {
   gap: var(--docs-space-2);
 }
 
+.docs-nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--docs-space-1);
+  padding: var(--docs-space-2) var(--docs-space-2) var(--docs-space-2) var(--docs-space-3);
+  border-left: 3px solid transparent;
+  border-radius: var(--docs-radius-md);
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.docs-nav-section--docs {
+  border-left-color: #dbdbdb;
+}
+
+.docs-nav-section--review {
+  border-left-color: #f59e0b;
+}
+
+.docs-nav-section--idea {
+  border-left-color: #2563eb;
+}
+
+.docs-nav-section-title {
+  font-size: var(--docs-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--docs-ink-subtle);
+  margin-bottom: var(--docs-space-1);
+}
+
+.docs-nav-empty {
+  font-size: var(--docs-text-xs);
+  color: var(--docs-ink-subtle);
+  padding: 0 var(--docs-space-2) var(--docs-space-1);
+}
+
+body.theme-dark .docs-nav-section {
+  background: rgba(15, 23, 42, 0.35);
+}
+
 .docs-link {
   color: var(--docs-ink-muted);
   text-decoration: none;
@@ -226,6 +267,42 @@ body.theme-dark .docs-nav {
   margin: 0 0 var(--docs-space-4);
   color: var(--docs-ink);
   letter-spacing: -0.025em;
+}
+
+.docs-review-banner {
+  max-width: var(--docs-content-width);
+  margin: 0 0 var(--docs-space-4);
+  padding: var(--docs-space-3) var(--docs-space-4);
+  border: 1px solid #f59e0b;
+  border-radius: var(--docs-radius-md);
+  background: #fef3c7;
+  color: #78350f;
+  font-weight: 600;
+  line-height: var(--docs-leading-snug);
+}
+
+body.theme-dark .docs-review-banner {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.75);
+}
+
+.docs-idea-banner {
+  max-width: var(--docs-content-width);
+  margin: 0 0 var(--docs-space-4);
+  padding: var(--docs-space-3) var(--docs-space-4);
+  border: 1px solid #2563eb;
+  border-radius: var(--docs-radius-md);
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 600;
+  line-height: var(--docs-leading-snug);
+}
+
+body.theme-dark .docs-idea-banner {
+  background: rgba(37, 99, 235, 0.22);
+  color: #bfdbfe;
+  border-color: rgba(147, 197, 253, 0.8);
 }
 
 /* --------------------------------------------------------------------------

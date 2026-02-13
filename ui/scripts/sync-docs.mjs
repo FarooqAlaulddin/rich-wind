@@ -1,3 +1,4 @@
+import { watch } from "node:fs";
 import { mkdir, rm, cp } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,4 +20,60 @@ async function syncDocs() {
   }
 }
 
-await syncDocs();
+async function watchDocs() {
+  await syncDocs();
+  console.log("Watching docs for changes...");
+
+  let timer = null;
+  let running = false;
+  let queued = false;
+
+  const runSync = async () => {
+    if (running) {
+      queued = true;
+      return;
+    }
+    running = true;
+    await syncDocs();
+    running = false;
+    if (queued) {
+      queued = false;
+      await runSync();
+    }
+  };
+
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      runSync();
+    }, 100);
+  };
+
+  let watcher;
+  try {
+    watcher = watch(docsSource, { persistent: true, recursive: true }, () => {
+      schedule();
+    });
+  } catch {
+    watcher = watch(docsSource, { persistent: true }, () => {
+      schedule();
+    });
+  }
+
+  const shutdown = () => {
+    try {
+      watcher.close();
+    } catch {}
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+const watchMode = process.argv.includes("--watch");
+if (watchMode) {
+  await watchDocs();
+} else {
+  await syncDocs();
+}

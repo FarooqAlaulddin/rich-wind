@@ -2,6 +2,14 @@
 
 A stateless runtime Tailwind CSS compiler. Send HTML or class lists, get compiled CSS back on demand — no build step, no file system, no config files.
 
+## Documentation Map
+
+Core library docs:
+
+- [API Reference](/docs/api-reference) — endpoint contract and config keys
+- [Runtime Spec](/docs/runtime-spec) — deterministic behavior, cache semantics, limits, and hooks
+- [Integration Cookbook](/docs/integration-cookbook) — production integration patterns and checklists
+
 ## Quick Start
 
 ### Install and run
@@ -235,6 +243,9 @@ RW_CORE_URL=http://localhost:3001 npm run dev
 
 ## Further Reading
 
-- [Plugin System](plugin-system.md) — extend the core with lifecycle hooks
-- [CSS Strategies](css-strategies.md) — bundling patterns for CMS integration
-- [Persistence Layer](persistence-layer.md) — design report for database-backed caching
+- [API Reference](/docs/api-reference) — endpoint contract and config keys
+- [Runtime Spec](/docs/runtime-spec) — deterministic behavior, cache semantics, limits, and hooks
+- [Integration Cookbook](/docs/integration-cookbook) — production integration patterns and checklists
+- [Plugin System](/docs/plugin-system) — extend the core with lifecycle hooks
+- [CSS Strategies](/docs/css-strategies) — bundling patterns for CMS integration
+- [Persistence Layer](/docs/persistence-layer) — design report for database-backed caching
