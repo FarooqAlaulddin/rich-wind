@@ -158,6 +158,8 @@ body.theme-dark .docs-nav {
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--docs-ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .docs-nav nav {
@@ -195,6 +197,8 @@ body.theme-dark .docs-nav {
   letter-spacing: 0.08em;
   color: var(--docs-ink-subtle);
   margin-bottom: var(--docs-space-1);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .docs-nav-empty {
@@ -216,6 +220,8 @@ body.theme-dark .docs-nav-section {
   border-radius: var(--docs-radius-md);
   transition: background-color 0.15s ease, color 0.15s ease;
   position: relative;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .docs-link:where(:hover, :focus-visible) {
@@ -269,6 +275,9 @@ body.theme-dark .docs-nav-section {
   margin: 0 0 var(--docs-space-4);
   color: var(--docs-ink);
   letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-wrap: balance;
 }
 
 .docs-review-banner {
@@ -281,6 +290,8 @@ body.theme-dark .docs-nav-section {
   color: #78350f;
   font-weight: 600;
   line-height: var(--docs-leading-snug);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 body.theme-dark .docs-review-banner {
@@ -299,6 +310,8 @@ body.theme-dark .docs-review-banner {
   color: #1e3a8a;
   font-weight: 600;
   line-height: var(--docs-leading-snug);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 body.theme-dark .docs-idea-banner {
@@ -322,6 +335,8 @@ body.theme-dark .docs-idea-banner {
   padding: var(--docs-space-8) var(--docs-space-10);
   box-shadow: 0 24px 50px var(--docs-shadow-md);
   backdrop-filter: blur(8px);
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 /* --------------------------------------------------------------------------
@@ -541,6 +556,31 @@ body.theme-dark .docs-idea-banner {
   border-radius: var(--docs-radius-sm);
   border: 1px solid var(--docs-border);
   white-space: nowrap;
+}
+
+.docs-content :where(
+  p,
+  li,
+  dd,
+  dt,
+  blockquote,
+  th,
+  td,
+  a,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6
+) {
+  overflow-wrap: anywhere;
+}
+
+.docs-content :where(p code, li code, dd code, dt code, blockquote code, th code, td code) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* --------------------------------------------------------------------------
@@ -877,6 +917,10 @@ body.theme-dark .docs-content :where(tbody tr):hover {
 
   .docs-content :where(th, td) {
     padding: var(--docs-space-2) var(--docs-space-3);
+  }
+
+  .docs-header h1 {
+    text-wrap: pretty;
   }
 }
 
