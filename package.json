@@ -16,6 +16,7 @@
   "scripts": {
     "start": "node ./services/index.js",
     "dev": "RW_SUGGEST_LIMIT=99 node --watch ./services/index.js",
+    "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

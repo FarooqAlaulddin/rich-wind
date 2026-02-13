@@ -349,6 +349,21 @@ Environment variables (UI):
 npm test
 ```
 
+## Production
+
+Core:
+
+```bash
+npm run prod
+```
+
+UI (from the `ui/` folder):
+
+```bash
+cd ui
+npm run prod
+```
+
 ## Docs
 
 Docs live in `/docs` (Markdown) and are rendered inside the UI at `/docs`:

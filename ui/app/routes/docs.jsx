@@ -90,6 +90,12 @@ export default function DocsRoute() {
             );
           })}
         </nav>
+        <div className="docs-controls">
+          <label className="docs-toggle">
+            <input id="theme-toggle" type="checkbox" aria-label="Toggle dark mode" />
+            <span>Dark mode</span>
+          </label>
+        </div>
         <div className="docs-nav-footer">
           <a href="/" className="docs-meta-link">Demo</a>
           <a
