@@ -109,7 +109,7 @@ body.docs-page {
   margin: 0;
   font-family: var(--font-sans);
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: clip;
   background: linear-gradient(to right, rgba(15, 23, 42, 0.045) 1px, transparent 1px) 0 0 / 48px 48px repeat, linear-gradient(to bottom, rgba(15, 23, 42, 0.045) 1px, transparent 1px) 0 0 / 48px 48px repeat, url("data:image/svg+xml,%3Csvg width='180' height='180' viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000000' fill-opacity='0.04'%3E%3Ccircle cx='1' cy='1' r='1'/%3E%3Ccircle cx='91' cy='31' r='1'/%3E%3Ccircle cx='61' cy='91' r='1'/%3E%3Ccircle cx='151' cy='121' r='1'/%3E%3C/g%3E%3C/svg%3E") 0 0 / 180px 180px repeat, radial-gradient(circle at top right, rgba(255, 106, 61, 0.18), transparent 35%), radial-gradient(circle at 20% 20%, rgba(76, 139, 245, 0.18), transparent 40%), linear-gradient(130deg, #f8f4ee 10%, #f2efe9 50%, #f8f4ee 90%);
   color: var(--docs-ink);
   font-size: var(--docs-text-base);
@@ -126,6 +126,9 @@ body.docs-page.theme-dark {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -145,6 +148,8 @@ body.docs-page.theme-dark {
   flex-direction: column;
   gap: var(--docs-space-4);
   overflow-y: auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 body.theme-dark .docs-nav {
@@ -166,6 +171,7 @@ body.theme-dark .docs-nav {
   display: flex;
   flex-direction: column;
   gap: var(--docs-space-2);
+  min-width: 0;
 }
 
 .docs-nav-section {
@@ -266,6 +272,8 @@ body.theme-dark .docs-nav-section {
 .docs-main {
   padding: var(--docs-space-8) var(--docs-space-12) var(--docs-space-20);
   max-width: 1400px;
+  width: 100%;
+  min-width: 0;
 }
 
 .docs-header h1 {
@@ -325,6 +333,7 @@ body.theme-dark .docs-idea-banner {
    This is the main scoped container for all Markdown-rendered HTML
    -------------------------------------------------------------------------- */
 .docs-content {
+  width: 100%;
   max-width: var(--docs-content-width);
   line-height: var(--docs-leading-loose);
   font-size: var(--docs-text-base);
@@ -337,6 +346,7 @@ body.theme-dark .docs-idea-banner {
   backdrop-filter: blur(8px);
   overflow-wrap: anywhere;
   word-break: normal;
+  min-width: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -575,6 +585,8 @@ body.theme-dark .docs-idea-banner {
   h6
 ) {
   overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 .docs-content :where(p code, li code, dd code, dt code, blockquote code, th code, td code) {
@@ -869,6 +881,7 @@ body.theme-dark .docs-content :where(tbody tr):hover {
 
   .docs-main {
     padding: var(--docs-space-6) var(--docs-space-5) var(--docs-space-12);
+    max-width: 100%;
   }
 
   .docs-content {
@@ -905,8 +918,8 @@ body.theme-dark .docs-content :where(tbody tr):hover {
   .docs-content :where(pre) {
     font-size: var(--docs-text-xs);
     padding: var(--docs-space-3);
-    margin-left: calc(-1 * var(--docs-space-4));
-    margin-right: calc(-1 * var(--docs-space-4));
+    margin-left: 0;
+    margin-right: 0;
     border-radius: 0;
   }
 
