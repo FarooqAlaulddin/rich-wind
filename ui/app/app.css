@@ -789,21 +789,16 @@ main {
     max-height: none;
     height: auto !important;
   }
-  .editor-form {
-    overflow: visible;
-  }
   .editor-body {
-    min-height: 220px;
+    min-height: clamp(260px, 42vh, 520px);
   }
   .tab-panel,
   .tab-panel.is-active {
-    height: auto;
+    height: 100%;
   }
   .tab-panel .editor-shell {
-    min-height: 220px;
-  }
-  .preview-body {
-    overflow: visible;
+    height: 100%;
+    min-height: 0;
   }
   .preview-frame {
     min-height: 300px;
