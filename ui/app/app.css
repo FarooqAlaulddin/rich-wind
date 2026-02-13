@@ -53,6 +53,10 @@ body.allow-scroll .studio-grid {
   align-items: start;
 }
 
+body:not(.docs-page) {
+  overflow-x: clip;
+}
+
 body.theme-dark {
   color: #e2e8f0;
   background:
@@ -766,13 +770,43 @@ main {
   }
   .play-body {
     overflow: visible;
+    padding: 10px;
   }
   .studio-grid {
     grid-template-columns: 1fr;
     height: auto;
+    min-width: 0;
   }
   .splitter {
     display: none;
+  }
+  .pane-resizer {
+    display: none;
+  }
+  .editor-pane,
+  .preview-pane {
+    min-height: 0;
+    max-height: none;
+    height: auto !important;
+  }
+  .editor-form {
+    overflow: visible;
+  }
+  .editor-body {
+    min-height: 220px;
+  }
+  .tab-panel,
+  .tab-panel.is-active {
+    height: auto;
+  }
+  .tab-panel .editor-shell {
+    min-height: 220px;
+  }
+  .preview-body {
+    overflow: visible;
+  }
+  .preview-frame {
+    min-height: 300px;
   }
   .preview-pane {
     margin-top: 12px;
@@ -792,11 +826,56 @@ main {
   .topbar-group {
     width: 100%;
     justify-content: flex-start;
+    border-radius: 14px;
+    padding: 6px;
   }
   .layout-btn {
     font-size: 0.62rem;
     letter-spacing: 0.14em;
     padding: 6px 8px;
+  }
+  .play-body {
+    padding: 8px;
+  }
+  .editor-header,
+  .preview-header {
+    padding: 12px 14px 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .suggest-debug {
+    margin: 0 14px 8px;
+    letter-spacing: 0.14em;
+  }
+  .editor-form {
+    padding: 0 14px 14px;
+    gap: 10px;
+  }
+  .editor-identifiers {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .editor-tabs,
+  .preview-tabs {
+    padding-left: 14px;
+    padding-right: 14px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .preview-panel {
+    padding: 0 14px 14px;
+  }
+  .action-btn,
+  .tab-btn,
+  .preview-tab-btn,
+  .layout-btn {
+    letter-spacing: 0.12em;
+  }
+  #status-pill,
+  #preview-badge {
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    padding: 6px 10px;
   }
 }
 
