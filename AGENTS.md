@@ -112,6 +112,11 @@ If you change preview behavior:
 - More specific local rules should override broader repository defaults for that subtree.
 - Avoid duplicating the same rule in multiple layers unless intentional.
 
+## Git Workflow Expectations
+- For every meaningful code/documentation change, create a commit with a clear, specific message that explains intent.
+- After pushing to `dev`, maintain a pull request from `dev` to `main`.
+- PR title and body must clearly cover what changed, why it changed, and how it was validated.
+
 ## Idea Architecture Checks
 - Before proposing architecture ideas, validate assumptions against current behavior in `services/index.js`.
 - Explicitly distinguish "current" vs "proposed" behavior.

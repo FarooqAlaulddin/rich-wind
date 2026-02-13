@@ -1,0 +1,114 @@
+name: Auto PR Dev to Main
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-dev-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  open-or-update-pr:
+    name: Open/Update PR (dev -> main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare PR metadata
+        id: prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main dev --no-tags
+
+          if git diff --quiet origin/main...origin/dev; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+          latest_subject="$(git log origin/main..origin/dev -1 --pretty=%s)"
+          echo "title=dev -> main: ${latest_subject}" >> "$GITHUB_OUTPUT"
+
+          commit_lines="$(git log origin/main..origin/dev --pretty='- %h %s' -n 30)"
+          if [ -z "$commit_lines" ]; then
+            commit_lines="- (no commit details available)"
+          fi
+
+          area_lines="$(git diff --name-only origin/main...origin/dev | awk -F/ '{print $1}' | sort -u | sed 's/^/- `/' | sed 's/$/`/' )"
+          if [ -z "$area_lines" ]; then
+            area_lines="- `(no file paths detected)`"
+          fi
+
+          cat > pr_body.md <<EOF
+          ## Summary
+          Automated PR from \`dev\` to \`main\` after push to \`dev\`.
+
+          ## Commit Highlights
+          ${commit_lines}
+
+          ## Areas Touched
+          ${area_lines}
+
+          ## Validation
+          - CI gate: \`Run Tests (Node 20)\`
+          - Additional checks should be listed here if performed outside CI.
+          EOF
+
+      - name: Create or update pull request
+        if: steps.prep.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_TITLE: ${{ steps.prep.outputs.title }}
+        with:
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const base = 'main';
+            const head = `${owner}:dev`;
+            const title = process.env.PR_TITLE;
+            const body = fs.readFileSync('pr_body.md', 'utf8');
+
+            const { data: prs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              base,
+              head
+            });
+
+            if (prs.length > 0) {
+              const pr = prs[0];
+              await github.rest.pulls.update({
+                owner,
+                repo,
+                pull_number: pr.number,
+                title,
+                body
+              });
+              core.info(`Updated PR #${pr.number}`);
+            } else {
+              const { data: created } = await github.rest.pulls.create({
+                owner,
+                repo,
+                base,
+                head: 'dev',
+                title,
+                body
+              });
+              core.info(`Created PR #${created.number}`);
+            }
