@@ -130,7 +130,12 @@ export function Layout({ children }) {
                 }
 
                 function syncScrollMode() {
+                  if (document.body.classList.contains('docs-page')) {
+                    document.body.classList.add('allow-scroll');
+                    return;
+                  }
                   var grid = document.getElementById('studio-grid');
+                  if (!grid) return;
                   var mode = getLayoutMode(grid);
                   var isStacked = false;
                   try {

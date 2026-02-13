@@ -14,21 +14,6 @@ export default defineConfig({
     minify: "esbuild",
     cssCodeSplit: true,
     reportCompressedSize: true,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("node_modules/monaco-editor") || id.includes("@monaco-editor/react")) {
-            return "monaco";
-          }
-          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router")) {
-            return "react-vendor";
-          }
-          if (id.includes("node_modules")) {
-            return "vendor";
-          }
-        },
-      },
-    },
   },
   ssr: {
     noExternal: ["@monaco-editor/react", "monaco-editor"],

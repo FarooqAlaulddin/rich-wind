@@ -74,6 +74,7 @@ jobs:
         env:
           PR_TITLE: ${{ steps.prep.outputs.title }}
         with:
+          github-token: ${{ secrets.AUTO_PR_TOKEN || github.token }}
           script: |
             const fs = require('fs');
             const owner = context.repo.owner;
@@ -82,33 +83,45 @@ jobs:
             const head = `${owner}:dev`;
             const title = process.env.PR_TITLE;
             const body = fs.readFileSync('pr_body.md', 'utf8');
-
-            const { data: prs } = await github.rest.pulls.list({
-              owner,
-              repo,
-              state: 'open',
-              base,
-              head
-            });
-
-            if (prs.length > 0) {
-              const pr = prs[0];
-              await github.rest.pulls.update({
+            try {
+              const { data: prs } = await github.rest.pulls.list({
                 owner,
                 repo,
-                pull_number: pr.number,
-                title,
-                body
-              });
-              core.info(`Updated PR #${pr.number}`);
-            } else {
-              const { data: created } = await github.rest.pulls.create({
-                owner,
-                repo,
+                state: 'open',
                 base,
-                head: 'dev',
-                title,
-                body
+                head
               });
-              core.info(`Created PR #${created.number}`);
+
+              if (prs.length > 0) {
+                const pr = prs[0];
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: pr.number,
+                  title,
+                  body
+                });
+                core.info(`Updated PR #${pr.number}`);
+              } else {
+                const { data: created } = await github.rest.pulls.create({
+                  owner,
+                  repo,
+                  base,
+                  head: 'dev',
+                  title,
+                  body
+                });
+                core.info(`Created PR #${created.number}`);
+              }
+            } catch (error) {
+              const message = error?.message || '';
+              const forbidden = error?.status === 403
+                && message.includes('not permitted to create or approve pull requests');
+
+              if (forbidden) {
+                core.warning('Auto PR skipped: GitHub Actions is blocked from creating/updating PRs for this repository.');
+                core.notice('Enable repository setting "Allow GitHub Actions to create and approve pull requests" OR add secret AUTO_PR_TOKEN (classic PAT with repo scope or fine-grained token with Pull requests: Read and write).');
+              } else {
+                throw error;
+              }
             }

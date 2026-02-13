@@ -6,7 +6,7 @@ services:
     rootDir: .
     buildCommand: npm ci --omit=dev
     startCommand: npm run prod
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production
@@ -40,7 +40,7 @@ services:
     rootDir: ui
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: NODE_ENV
         value: production
