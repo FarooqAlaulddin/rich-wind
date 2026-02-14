@@ -177,8 +177,8 @@ Common responses and action:
 
 ## 11. File system cacheStore adapter
 
-If you want persistence without introducing a database, use a host-owned filesystem adapter.
-This keeps core auth-agnostic and lets your host app own data layout and retention policy.
+Filesystem implementation of `cacheStore` for host-managed persistence.
+The same interface can be backed by a database, cache, object storage, or another service.
 
 ```js
 import fs from "node:fs/promises";

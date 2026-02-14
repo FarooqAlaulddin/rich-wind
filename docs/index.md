@@ -1,6 +1,13 @@
 # Rich Wind
 
-A stateless runtime Tailwind CSS compiler. Send HTML or class lists, get compiled CSS back on demand — no build step, no file system, no config files.
+A stateless runtime Tailwind CSS compiler. Send HTML or class lists, get compiled CSS back on demand — no build step and no required storage setup.
+
+## Overview
+
+- Runtime compile API for Tailwind classes/HTML.
+- In-memory cache by default.
+- Optional `cacheStore` adapter for read-through/write-through persistence (database, filesystem, cache, object storage, etc.).
+- Bundle support: `full`, `base`, `theme`, and `utilities`.
 
 ## Documentation Map
 
