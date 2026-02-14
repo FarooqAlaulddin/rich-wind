@@ -185,6 +185,7 @@ const app = createCore({
 | `maxClassChars` | Max class string length |
 | `maxClassCount` | Max class count per request |
 | `maxIdLength` | Max `projectId` / `pageId` length |
+| `maxCssChars` | Max CSS length accepted from cacheStore artifacts |
 | `cacheMaxPages` | Max pages held in cache |
 | `cacheTtlMs` | Page cache TTL |
 | `projectCacheTtlMs` | Project CSS cache TTL |
@@ -200,6 +201,8 @@ Additional top-level options (not part of `config`):
 | Option | Description |
 | --- | --- |
 | `pluginTimeoutMs` | Default plugin hook timeout (ms) |
+| `cacheStore` | Optional read-through/write-through persistence adapter |
+| `cacheStoreTimeoutMs` | Per-operation cache store timeout (ms) |
 
 ### Environment variables
 
@@ -214,6 +217,7 @@ Additional top-level options (not part of `config`):
 | `RW_MAX_CLASS_CHARS` | `10000` | Max class string length |
 | `RW_MAX_CLASS_COUNT` | `1500` | Max class count |
 | `RW_MAX_ID_LENGTH` | `64` | Max ID length |
+| `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts |
 | `RW_SUGGEST_LIMIT` | `100` | Max suggestions |
 | `RW_SUGGEST_FALLBACK` | `true` | Include static Tailwind list |
 | `RW_RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window (ms) |
@@ -221,10 +225,12 @@ Additional top-level options (not part of `config`):
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
 | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default plugin hook timeout (ms) |
+| `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Cache store operation timeout (ms) |
 
 **Notes**
 - `PORT` only affects the CLI entry (`node services/index.js`). When you embed the core, you call `app.listen(...)` yourself.
 - `RW_PLUGIN_TIMEOUT_MS` maps to the top-level `pluginTimeoutMs` option, not `config`.
+- `RW_CACHE_STORE_TIMEOUT_MS` maps to the top-level `cacheStoreTimeoutMs` option, not `config`.
 - Precedence: JS options win over env vars. Invalid values fall back to defaults.
 
 ### UI environment

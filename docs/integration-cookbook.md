@@ -175,7 +175,72 @@ Common responses and action:
 - `500`: retry with jitter and trigger incident alerts if sustained
 
 
-## 11. Related docs
+## 11. File system cacheStore adapter
+
+If you want persistence without introducing a database, use a host-owned filesystem adapter.
+This keeps core auth-agnostic and lets your host app own data layout and retention policy.
+
+```js
+import fs from "node:fs/promises";
+import path from "node:path";
+import { createCore } from "rich-wind";
+
+const CACHE_ROOT = path.resolve(".rw-cache");
+
+const safe = (value) => String(value).replace(/[^a-zA-Z0-9._-]/g, "_");
+const pagePath = ({ projectId, pageId, bundle }) =>
+  path.join(CACHE_ROOT, "pages", safe(projectId), `${safe(pageId)}.${safe(bundle)}.json`);
+const projectPath = ({ projectId, bundle }) =>
+  path.join(CACHE_ROOT, "projects", safe(projectId), `${safe(bundle)}.json`);
+
+async function readJson(file) {
+  try {
+    const raw = await fs.readFile(file, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeJson(file, payload) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify(payload), "utf8");
+}
+
+const cacheStore = {
+  async readPageArtifact(input) {
+    return readJson(pagePath(input));
+  },
+  async upsertPageArtifact(input) {
+    await writeJson(pagePath(input), input);
+  },
+  async readProjectArtifact(input) {
+    return readJson(projectPath(input));
+  },
+  async upsertProjectArtifact(input) {
+    await writeJson(projectPath(input), input);
+  }
+};
+
+const app = createCore({
+  cacheStore,
+  cacheStoreTimeoutMs: 150,
+  config: {
+    cacheTtlMs: 10 * 60 * 1000,
+    projectCacheTtlMs: 10 * 60 * 1000
+  }
+});
+
+app.listen(3001);
+```
+
+Operational notes:
+
+- keep cache files on local disk only for single-node or sticky-node setups
+- for multi-replica deployments, use shared storage or a network store adapter
+- prune expired files out-of-band (cron/job) to cap disk growth
+
+## 12. Related docs
 
 - [API Reference](/docs/api-reference)
 - [Runtime Spec](/docs/runtime-spec)

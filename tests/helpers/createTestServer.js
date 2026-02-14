@@ -7,7 +7,13 @@ export async function createTestServer(envOverrides = {}, options = {}) {
   vi.resetModules();
   const moduleUrl = new URL('../../services/index.js', import.meta.url).href;
   const { createCore } = await import(moduleUrl);
-  const app = createCore({ plugins: options.plugins || [], config: options.config || {} });
+  const app = createCore({
+    plugins: options.plugins || [],
+    config: options.config || {},
+    pluginTimeoutMs: options.pluginTimeoutMs,
+    cacheStore: options.cacheStore,
+    cacheStoreTimeoutMs: options.cacheStoreTimeoutMs,
+  });
 
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

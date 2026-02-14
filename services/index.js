@@ -99,6 +99,11 @@ function buildConfig(overrides = {}) {
             overrides.projectCacheTtlMs ?? process.env.RW_PROJECT_CACHE_TTL_MS,
             cacheTtlMs,
             0
+        ),
+        maxCssChars: parseIntWithDefault(
+            overrides.maxCssChars ?? process.env.RW_MAX_CSS_CHARS,
+            2000000,
+            1
         )
     };
 }
@@ -180,19 +185,10 @@ function evictPageByKey(state, key) {
     const page = project.pages.get(pageId);
     if (!page) return;
 
-    for (const className of page.classes) {
-        const count = project.classCounts.get(className) ?? 0;
-        if (count <= 1) {
-            project.classCounts.delete(className);
-        } else {
-            project.classCounts.set(className, count - 1);
-        }
-    }
+    updateClassCounts(project, page.classes, new Set());
 
     project.pages.delete(pageId);
-    project.cssCache = null;
-    project.utilitiesCssCache = null;
-    project.themeCssCache = null;
+    clearProjectAggregateCache(project);
 
     if (project.pages.size === 0) {
         state.projects.delete(projectId);
@@ -247,6 +243,230 @@ function hashClasses(classes) {
 
 function isExpired(entry) {
     return entry?.expiresAt && entry.expiresAt <= Date.now();
+}
+
+function normalizeTimestamp(value, fallback) {
+    return Number.isFinite(value) ? value : fallback;
+}
+
+function classSetEquals(a = new Set(), b = new Set()) {
+    if (a.size !== b.size) return false;
+    for (const value of a) {
+        if (!b.has(value)) return false;
+    }
+    return true;
+}
+
+function updateClassCounts(project, prev = new Set(), next = new Set()) {
+    for (const className of prev) {
+        if (next.has(className)) continue;
+        const count = project.classCounts.get(className) ?? 0;
+        if (count <= 1) {
+            project.classCounts.delete(className);
+        } else {
+            project.classCounts.set(className, count - 1);
+        }
+    }
+    for (const className of next) {
+        if (prev.has(className)) continue;
+        const count = project.classCounts.get(className) ?? 0;
+        project.classCounts.set(className, count + 1);
+    }
+}
+
+function clearProjectAggregateCache(project) {
+    project.cssCache = null;
+    project.utilitiesCssCache = null;
+    project.themeCssCache = null;
+}
+
+function normalizeHydratedClasses(input, config) {
+    if (input === undefined || input === null) return null;
+    if (!Array.isArray(input) && typeof input !== 'string') return null;
+    const normalized = Array.from(new Set(normalizeClassList(input))).sort();
+    if (normalized.length > config.maxClassCount) return null;
+    return normalized;
+}
+
+function sanitizePageArtifact(artifact, config, now = Date.now()) {
+    if (!artifact || typeof artifact !== 'object') return null;
+    if (typeof artifact.css !== 'string') return null;
+    if (artifact.css.length > config.maxCssChars) return null;
+
+    const expiresAt = normalizeTimestamp(artifact.expiresAt, now + config.cacheTtlMs);
+    if (expiresAt <= now) return null;
+
+    const classesProvided = artifact.classes !== undefined && artifact.classes !== null;
+    const classes = normalizeHydratedClasses(artifact.classes, config);
+    if (classesProvided && classes === null) return null;
+
+    const hash = Array.isArray(classes)
+        ? hashClasses(classes)
+        : (typeof artifact.hash === 'string' && artifact.hash ? artifact.hash : null);
+    return {
+        css: artifact.css,
+        classes,
+        hash,
+        updatedAt: normalizeTimestamp(artifact.updatedAt, now),
+        expiresAt,
+        source: typeof artifact.source === 'string' ? artifact.source : null
+    };
+}
+
+function sanitizeProjectArtifact(artifact, config, now = Date.now()) {
+    if (!artifact || typeof artifact !== 'object') return null;
+    if (typeof artifact.css !== 'string') return null;
+    if (artifact.css.length > config.maxCssChars) return null;
+
+    const expiresAt = normalizeTimestamp(artifact.expiresAt, now + config.projectCacheTtlMs);
+    if (expiresAt <= now) return null;
+
+    const hash =
+        artifact.hash === null || artifact.hash === undefined
+            ? null
+            : (typeof artifact.hash === 'string' ? artifact.hash : null);
+    if (artifact.hash !== undefined && artifact.hash !== null && hash === null) {
+        return null;
+    }
+
+    return {
+        css: artifact.css,
+        hash,
+        updatedAt: normalizeTimestamp(artifact.updatedAt, now),
+        expiresAt,
+        source: typeof artifact.source === 'string' ? artifact.source : null
+    };
+}
+
+function hydratePageFromArtifact(state, config, projectId, pageId, bundle, sanitizedArtifact, options = {}) {
+    const requireClasses = Boolean(options.requireClasses);
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') return false;
+
+    const project = getProject(state, projectId);
+    let page = project.pages.get(pageId);
+    const hasClasses = Array.isArray(sanitizedArtifact.classes);
+
+    if (requireClasses && !hasClasses) {
+        return false;
+    }
+    if (!page && !hasClasses) {
+        return false;
+    }
+
+    if (!page) {
+        page = {
+            css: null,
+            utilitiesCss: null,
+            themeCss: null,
+            classes: new Set(),
+            hash: '',
+            updatedAt: sanitizedArtifact.updatedAt,
+            expiresAt: sanitizedArtifact.expiresAt
+        };
+        project.pages.set(pageId, page);
+    }
+
+    if (hasClasses) {
+        const nextClasses = new Set(sanitizedArtifact.classes);
+        const nextHash = sanitizedArtifact.hash || hashClasses(sanitizedArtifact.classes);
+        const prevClasses = page.classes || new Set();
+
+        if (!classSetEquals(prevClasses, nextClasses) || page.hash !== nextHash) {
+            updateClassCounts(project, prevClasses, nextClasses);
+            clearProjectAggregateCache(project);
+        }
+        page.classes = nextClasses;
+        page.hash = nextHash;
+    }
+
+    if (normalizedBundle === 'full') {
+        page.css = sanitizedArtifact.css;
+    } else if (normalizedBundle === 'utilities') {
+        page.utilitiesCss = sanitizedArtifact.css;
+    } else if (normalizedBundle === 'theme') {
+        page.themeCss = sanitizedArtifact.css;
+    }
+
+    page.updatedAt = sanitizedArtifact.updatedAt;
+    page.expiresAt = sanitizedArtifact.expiresAt;
+
+    const pageKey = makePageKey(projectId, pageId);
+    state.pageLru.set(pageKey, { projectId, pageId });
+    touchPageKey(state, pageKey);
+    evictIfNeeded(state, config);
+
+    return true;
+}
+
+function createCacheStoreRunner(cacheStore, options = {}) {
+    const defaultTimeout = parseIntWithDefault(
+        options.timeoutMs ?? process.env.RW_CACHE_STORE_TIMEOUT_MS,
+        150,
+        1
+    );
+    const onError = typeof options.onError === 'function' ? options.onError : null;
+    const store = cacheStore && typeof cacheStore === 'object' ? cacheStore : null;
+
+    const withTimeout = (promise, method) => {
+        if (!defaultTimeout || defaultTimeout <= 0) return promise;
+        let timer;
+        const timeout = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const error = new Error(`Cache store timeout after ${defaultTimeout}ms`);
+                error.code = 'CACHE_STORE_TIMEOUT';
+                error.method = method;
+                reject(error);
+            }, defaultTimeout);
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    };
+
+    const reportError = async (error, op, input) => {
+        if (!onError) return;
+        await onError({
+            error,
+            stage: 'cache-store',
+            op,
+            timedOut: Boolean(error && error.code === 'CACHE_STORE_TIMEOUT'),
+            context: {
+                projectId: input?.projectId ?? null,
+                pageId: input?.pageId ?? null,
+                bundle: input?.bundle ?? null
+            }
+        });
+    };
+
+    const read = async (op, input) => {
+        const fn = store && typeof store[op] === 'function' ? store[op] : null;
+        if (!fn) return null;
+        try {
+            return await withTimeout(Promise.resolve(fn(input)), op);
+        } catch (error) {
+            await reportError(error, op, input);
+            return null;
+        }
+    };
+
+    const write = async (op, input) => {
+        const fn = store && typeof store[op] === 'function' ? store[op] : null;
+        if (!fn) return false;
+        try {
+            await withTimeout(Promise.resolve(fn(input)), op);
+            return true;
+        } catch (error) {
+            await reportError(error, op, input);
+            return false;
+        }
+    };
+
+    return {
+        enabled: Boolean(store),
+        readPageArtifact: (input) => read('readPageArtifact', input),
+        upsertPageArtifact: (input) => write('upsertPageArtifact', input),
+        readProjectArtifact: (input) => read('readProjectArtifact', input),
+        upsertProjectArtifact: (input) => write('upsertProjectArtifact', input)
+    };
 }
 
 // =============================================================================
@@ -571,28 +791,8 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
     const newClassSet = new Set(resolvedClasses);
     const classesChanged = !existing || existing.hash !== classHash;
 
-    if (classesChanged && existing) {
-        for (const className of existing.classes) {
-            if (!newClassSet.has(className)) {
-                const count = project.classCounts.get(className) ?? 0;
-                if (count <= 1) {
-                    project.classCounts.delete(className);
-                } else {
-                    project.classCounts.set(className, count - 1);
-                }
-            }
-        }
-        for (const className of newClassSet) {
-            if (!existing.classes.has(className)) {
-                const count = project.classCounts.get(className) ?? 0;
-                project.classCounts.set(className, count + 1);
-            }
-        }
-    } else if (!existing && newClassSet.size) {
-        for (const className of newClassSet) {
-            const count = project.classCounts.get(className) ?? 0;
-            project.classCounts.set(className, count + 1);
-        }
+    if (classesChanged) {
+        updateClassCounts(project, existing?.classes ?? new Set(), newClassSet);
     }
 
     if (existing) {
@@ -618,11 +818,7 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
             expiresAt: now + config.cacheTtlMs
         });
     }
-    if (classesChanged) {
-        project.cssCache = null;
-        project.utilitiesCssCache = null;
-        project.themeCssCache = null;
-    }
+    if (classesChanged) clearProjectAggregateCache(project);
 
     const pageKey = makePageKey(projectId, pageId);
     state.pageLru.set(pageKey, { projectId, pageId });
@@ -707,6 +903,54 @@ async function getProjectCss(state, config, projectId, bundle = 'full') {
     return { css, hash, cached: false };
 }
 
+async function readPageArtifactFromStore(cacheStoreRunner, config, projectId, pageId, bundle) {
+    if (!cacheStoreRunner?.enabled) return null;
+    const raw = await cacheStoreRunner.readPageArtifact({
+        projectId,
+        pageId,
+        bundle: normalizeBundle(bundle),
+        now: Date.now()
+    });
+    return sanitizePageArtifact(raw, config, Date.now());
+}
+
+async function readProjectArtifactFromStore(cacheStoreRunner, config, projectId, bundle) {
+    if (!cacheStoreRunner?.enabled) return null;
+    const raw = await cacheStoreRunner.readProjectArtifact({
+        projectId,
+        bundle: normalizeBundle(bundle),
+        now: Date.now()
+    });
+    return sanitizeProjectArtifact(raw, config, Date.now());
+}
+
+async function hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle) {
+    if (!cacheStoreRunner?.enabled) return false;
+    const project = state.projects.get(projectId);
+    if (project?.pages?.has(pageId)) return true;
+
+    const normalizedBundle = normalizeBundle(bundle);
+    if (normalizedBundle === 'base') return false;
+    const bundleTryOrder = Array.from(
+        new Set([normalizedBundle, 'full', 'utilities', 'theme'])
+    );
+
+    for (const candidateBundle of bundleTryOrder) {
+        const artifact = await readPageArtifactFromStore(
+            cacheStoreRunner,
+            config,
+            projectId,
+            pageId,
+            candidateBundle
+        );
+        if (!artifact || !Array.isArray(artifact.classes)) continue;
+        if (hydratePageFromArtifact(state, config, projectId, pageId, candidateBundle, artifact, { requireClasses: true })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // =============================================================================
 // Plugin system
 // =============================================================================
@@ -783,7 +1027,7 @@ function createPluginRunner(plugins = [], options = {}) {
 // =============================================================================
 // HTTP routes
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state) {
+function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner) {
     const withRequestHooks = (req, res, context) => {
         const start = Date.now();
         pluginRunner.runHook('onRequestStart', context);
@@ -793,6 +1037,11 @@ function registerRoutes(app, pluginRunner, config, state) {
                 status: res.statusCode,
                 durationMs: Date.now() - start
             });
+        });
+    };
+    const queueStoreWrite = (fn) => {
+        queueMicrotask(() => {
+            Promise.resolve(fn()).catch(() => {});
         });
     };
 // API Routes
@@ -838,6 +1087,14 @@ app.post('/api/compile', async (req, res) => {
         }
 
         await pluginRunner.runHook('onCompileStart', hookContext);
+        await hydrateMissingCompilePageFromStore(
+            state,
+            config,
+            cacheStoreRunner,
+            projectId,
+            pageId,
+            bundle
+        );
 
         if (!html && !classes && bundle === 'base') {
             const css = await generateBaseCss();
@@ -903,6 +1160,23 @@ app.post('/api/compile', async (req, res) => {
             cached: result.cached
         });
 
+        if (cacheStoreRunner?.enabled && (result.bundle ?? bundle) !== 'base') {
+            const now = Date.now();
+            queueStoreWrite(() =>
+                cacheStoreRunner.upsertPageArtifact({
+                    projectId,
+                    pageId,
+                    bundle: result.bundle ?? bundle,
+                    css: result.css,
+                    hash: result.hash,
+                    classes: Array.isArray(result.classes) ? result.classes : [],
+                    cached: result.cached,
+                    updatedAt: now,
+                    expiresAt: now + config.cacheTtlMs
+                })
+            );
+        }
+
         res.json({
             success: true,
             projectId,
@@ -949,6 +1223,30 @@ app.get('/api/css', async (req, res) => {
 
         const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
         if (!cached) {
+            const storeArtifact = await readPageArtifactFromStore(
+                cacheStoreRunner,
+                config,
+                projectId,
+                pageId,
+                bundle
+            );
+            if (storeArtifact) {
+                hydratePageFromArtifact(
+                    state,
+                    config,
+                    projectId,
+                    pageId,
+                    bundle,
+                    storeArtifact
+                );
+                await pluginRunner.runHook('onCacheHit', {
+                    projectId,
+                    pageId,
+                    bundle,
+                    source: 'page-store'
+                });
+                return res.type('text/css').send(storeArtifact.css);
+            }
             await pluginRunner.runHook('onCacheMiss', {
                 projectId,
                 pageId,
@@ -987,12 +1285,42 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
                 error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
             });
         }
-        const project = state.projects.get(projectId);
-        if (!project && bundle !== 'base') {
+        let result = await getProjectCss(state, config, projectId, bundle);
+        if (!result && bundle !== 'base') {
+            const storeArtifact = await readProjectArtifactFromStore(
+                cacheStoreRunner,
+                config,
+                projectId,
+                bundle
+            );
+            if (storeArtifact) {
+                result = {
+                    css: storeArtifact.css,
+                    hash: storeArtifact.hash ?? null,
+                    cached: true,
+                    source: 'store'
+                };
+            }
+        }
+        if (!result) {
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
-        const result = await getProjectCss(state, config, projectId, bundle);
+        if (cacheStoreRunner?.enabled && bundle !== 'base' && result.source !== 'store') {
+            const now = Date.now();
+            queueStoreWrite(() =>
+                cacheStoreRunner.upsertProjectArtifact({
+                    projectId,
+                    bundle,
+                    css: result.css,
+                    hash: result.hash ?? null,
+                    cached: result.cached,
+                    updatedAt: now,
+                    expiresAt: now + config.projectCacheTtlMs
+                })
+            );
+        }
+
         await pluginRunner.runHook('onProjectCss', {
             projectId,
             bundle,
@@ -1105,7 +1433,13 @@ app.use((err, req, res, next) => {
 // =============================================================================
 // Core factory
 // =============================================================================
-export function createCore({ plugins = [], pluginTimeoutMs, config: configOverrides } = {}) {
+export function createCore({
+    plugins = [],
+    pluginTimeoutMs,
+    config: configOverrides,
+    cacheStore,
+    cacheStoreTimeoutMs
+} = {}) {
     const config = buildConfig(configOverrides);
     const state = createCacheState();
     const app = express();
@@ -1125,7 +1459,11 @@ export function createCore({ plugins = [], pluginTimeoutMs, config: configOverri
     app.use(rateLimiter.middleware);
 
     const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs });
-    registerRoutes(app, pluginRunner, config, state);
+    const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
+        timeoutMs: cacheStoreTimeoutMs,
+        onError: (context) => pluginRunner.runHook('onError', context)
+    });
+    registerRoutes(app, pluginRunner, config, state, cacheStoreRunner);
     return app;
 }
 

@@ -212,6 +212,13 @@ import { createCore } from "rich-wind";
 const app = createCore({
   config: { cacheTtlMs: 600000 },
   pluginTimeoutMs: 200,
+  cacheStoreTimeoutMs: 150,
+  cacheStore: {
+    async readPageArtifact() { return null; },
+    async upsertPageArtifact() {},
+    async readProjectArtifact() { return null; },
+    async upsertProjectArtifact() {},
+  },
   plugins: []
 });
 
@@ -223,6 +230,8 @@ app.listen(3001);
 - `config`: core limits/cache/rate-limit settings
 - `plugins`: plugin or plugin array
 - `pluginTimeoutMs`: default plugin hook timeout
+- `cacheStore`: optional read-through/write-through persistence adapter
+- `cacheStoreTimeoutMs`: per-operation cache store timeout
 
 ## Config keys
 
@@ -233,6 +242,7 @@ app.listen(3001);
 - `maxClassChars`
 - `maxClassCount`
 - `maxIdLength`
+- `maxCssChars`
 - `cacheMaxPages`
 - `cacheTtlMs`
 - `projectCacheTtlMs`
@@ -246,6 +256,8 @@ app.listen(3001);
 Top-level option:
 
 - `pluginTimeoutMs`
+- `cacheStore`
+- `cacheStoreTimeoutMs`
 
 See also:
 
