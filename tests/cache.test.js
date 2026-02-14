@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
-const app = createCore();
 
 let server;
 let baseUrl;
 
 beforeAll(async () => {
+  const { app } = await createCore();
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();

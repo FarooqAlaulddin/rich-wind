@@ -13,6 +13,20 @@ const docsRoot = path.resolve(__dirname, "../../public/docs");
 
 const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
 
+md.renderer.rules.heading_open = function (tokens, idx) {
+  const token = tokens[idx];
+  const tag = token.tag;
+  const inline = tokens[idx + 1];
+  const text = inline?.children?.map((t) => t.content).join("") ?? "";
+  const id = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `<${tag} id="${id}">`;
+};
+
 function wrapTables(html) {
   const source = String(html || "");
   if (!source.includes("<table")) {
@@ -113,6 +127,13 @@ export default function DocsRoute() {
       document.body.classList.remove("allow-scroll", "docs-page");
     };
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (location.hash) {
+      const el = document.getElementById(location.hash.slice(1));
+      if (el) el.scrollIntoView();
+    }
+  }, [location.hash, html]);
 
   return (
     <div className="docs-shell">

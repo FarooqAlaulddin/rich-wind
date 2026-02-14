@@ -15,7 +15,7 @@ describe('Plugin hooks', () => {
       onSuggest: (ctx) => events.push({ type: 'suggest', prefix: ctx.prefix })
     };
 
-    const app = createCore({ plugins: [plugin] });
+    const { app } = await createCore({ plugins: [plugin] });
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
@@ -80,7 +80,7 @@ describe('Plugin hooks', () => {
       onError: (info) => errors.push(info)
     };
 
-    const app = createCore({ plugins: [plugin] });
+    const { app } = await createCore({ plugins: [plugin] });
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
@@ -112,7 +112,7 @@ describe('Plugin hooks', () => {
       onError: (info) => errors.push(info),
     };
 
-    const app = createCore({ plugins: [plugin] });
+    const { app } = await createCore({ plugins: [plugin] });
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
@@ -154,7 +154,7 @@ describe('Plugin hooks', () => {
         ),
     };
 
-    const app = createCore({ plugins: [plugin] });
+    const { app } = await createCore({ plugins: [plugin] });
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();

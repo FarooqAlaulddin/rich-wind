@@ -13,11 +13,12 @@ Runtime Tailwind CSS compiler and suggestion API. Feed it HTML or class lists, g
 - License
 
 ## Background
-Rich Wind focuses on the “compile at request time” workflow without persisting CSS or class state. It’s intentionally auth‑agnostic and expects callers to scope `projectId` within their own tenant model.
+Rich Wind focuses on the “compile at request time” workflow. By default cache state is in-process memory, and host apps can optionally plug in a `cacheStore` adapter for read-through/write-through persistence. It’s intentionally auth‑agnostic and expects callers to scope `projectId` within their own tenant model.
 
 ## Features
 - Compile CSS from HTML, class strings, or both.
 - In‑memory page cache plus aggregated project CSS.
+- Optional pluggable cache store (`cacheStore`) for memory-first read-through and best-effort write-through persistence.
 - Optional output bundles: full (preflight + theme + utilities), preflight‑only, theme‑only, or utilities‑only.
   - When using `bundle=utilities`, load the matching `bundle=theme` output first so the CSS variables exist.
 - Class suggestions from cached data and Tailwind’s static design system.
@@ -37,6 +38,17 @@ npm install
 import { createCore } from "rich-wind";
 
 const app = createCore({
+  cacheStore: {
+    async readPageArtifact({ projectId, pageId, bundle, now }) {
+      return null;
+    },
+    async upsertPageArtifact(input) {},
+    async readProjectArtifact({ projectId, bundle, now }) {
+      return null;
+    },
+    async upsertProjectArtifact(input) {},
+  },
+  cacheStoreTimeoutMs: 150,
   plugins: [
     {
       name: "logger",
@@ -70,6 +82,7 @@ Plugin options:
 - `timeoutMs` (number) — per‑hook timeout before `onError` is called.
 
 Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
+Cache store timeout can be set via `createCore({ cacheStoreTimeoutMs })` or `RW_CACHE_STORE_TIMEOUT_MS`.
 
 ### Run the core API
 
@@ -296,6 +309,7 @@ Supported config keys:
 | `maxClassChars` | Max class string length |
 | `maxClassCount` | Max class count |
 | `maxIdLength` | Max `projectId`/`pageId` length |
+| `maxCssChars` | Max CSS payload length accepted from cacheStore artifacts |
 | `cacheMaxPages` | Max cached pages |
 | `cacheTtlMs` | Page cache TTL |
 | `projectCacheTtlMs` | Project CSS TTL |
@@ -311,6 +325,8 @@ Additional top-level options:
 | Option | Purpose |
 | --- | --- |
 | `pluginTimeoutMs` | Default plugin hook timeout (ms) |
+| `cacheStore` | Optional read-through/write-through persistence adapter |
+| `cacheStoreTimeoutMs` | Per-operation cacheStore timeout (ms) |
 
 Environment variables (core):
 
@@ -325,16 +341,20 @@ Environment variables (core):
 | `RW_MAX_CLASS_CHARS` | `10000` | Max class string length |
 | `RW_MAX_CLASS_COUNT` | `1500` | Max class count |
 | `RW_MAX_ID_LENGTH` | `64` | Max `projectId`/`pageId` length |
+| `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts |
 | `RW_SUGGEST_LIMIT` | `100` | Max suggestions |
 | `RW_SUGGEST_FALLBACK` | `true` | Include Tailwind static list |
 | `RW_RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window |
 | `RW_RATE_LIMIT_MAX` | `60` | Requests per window |
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
+| `RW_PLUGIN_TIMEOUT_MS` | `200` | Default plugin hook timeout (ms) |
+| `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Cache store operation timeout (ms) |
 
 Notes:
 - `PORT` only applies when running `node services/index.js`. In embedded mode, you call `app.listen(...)`.
 - `RW_PLUGIN_TIMEOUT_MS` maps to the top-level `pluginTimeoutMs` option, not `config`.
+- `RW_CACHE_STORE_TIMEOUT_MS` maps to the top-level `cacheStoreTimeoutMs` option, not `config`.
 - Precedence: JS options win over env vars. Invalid values fall back to defaults.
 
 Environment variables (UI):
