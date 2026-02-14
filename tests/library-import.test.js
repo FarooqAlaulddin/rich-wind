@@ -6,13 +6,16 @@ describe('Library import tests', () => {
     expect(createCore).toBeDefined();
   });
 
-  it('createCore returns an Express app', () => {
-    const app = createCore();
-    expect(typeof app).toBe('function');
+  it('createCore returns a promise that resolves to { app, close }', async () => {
+    const result = await createCore();
+    expect(result).toHaveProperty('app');
+    expect(result).toHaveProperty('close');
+    expect(typeof result.app).toBe('function');
+    expect(typeof result.close).toBe('function');
   });
 
-  it('app has .get, .post, .listen, .use methods', () => {
-    const app = createCore();
+  it('app has .get, .post, .listen, .use methods', async () => {
+    const { app } = await createCore();
     expect(typeof app.get).toBe('function');
     expect(typeof app.post).toBe('function');
     expect(typeof app.listen).toBe('function');
@@ -20,7 +23,7 @@ describe('Library import tests', () => {
   });
 
   it('can call app.listen(0) and get a running server that responds to /health', async () => {
-    const app = createCore();
+    const { app } = await createCore();
     const server = app.listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
@@ -35,8 +38,8 @@ describe('Library import tests', () => {
   });
 
   it('createCore returns separate instances', async () => {
-    const app1 = createCore();
-    const app2 = createCore();
-    expect(app1).not.toBe(app2);
+    const result1 = await createCore();
+    const result2 = await createCore();
+    expect(result1.app).not.toBe(result2.app);
   });
 });

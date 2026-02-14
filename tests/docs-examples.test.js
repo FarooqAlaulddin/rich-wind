@@ -21,7 +21,7 @@ describe("Docs examples", () => {
   let baseUrl;
 
   beforeAll(async () => {
-    const app = createCore({ config: { rateLimitDisabled: true } });
+    const { app } = await createCore({ config: { rateLimitDisabled: true } });
     core = await startServer(app);
     baseUrl = core.baseUrl;
   });
@@ -177,7 +177,7 @@ describe("Docs examples", () => {
   });
 
   it("api-reference library snippet works", async () => {
-    const app = createCore({
+    const { app } = await createCore({
       config: { cacheTtlMs: 600000, rateLimitDisabled: true },
       pluginTimeoutMs: 200,
       plugins: [],
@@ -192,7 +192,7 @@ describe("Docs examples", () => {
   });
 
   it("integration cookbook minimal embedded core snippet works", async () => {
-    const app = createCore({
+    const { app } = await createCore({
       config: {
         cacheMaxPages: 500,
         cacheTtlMs: 10 * 60 * 1000,
@@ -221,7 +221,7 @@ describe("Docs examples", () => {
   });
 
   it("integration cookbook wrapper snippet works", async () => {
-    const coreApp = createCore({ config: { rateLimitDisabled: true } });
+    const { app: coreApp } = await createCore({ config: { rateLimitDisabled: true } });
     const coreServer = await startServer(coreApp);
 
     const wrapper = express();
@@ -333,7 +333,7 @@ describe("Docs examples", () => {
       },
     };
 
-    const app = createCore({
+    const { app } = await createCore({
       config: { rateLimitDisabled: true },
       plugins: [plugin],
       pluginTimeoutMs: 200,

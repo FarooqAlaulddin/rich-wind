@@ -1,181 +1,203 @@
 # Runtime Spec
 
-This document describes Rich Wind runtime behavior in implementation terms.
+This document explains how Rich Wind works under the hood — how it compiles CSS, how the cache behaves, what the cacheStore adapter interface looks like, and how bundle splitting works.
 
-## 1. Compilation model
+## Compilation Pipeline
 
-Rich Wind compiles CSS on demand from request input:
+When a request hits `/api/compile`, Rich Wind goes through these steps:
 
-- HTML scanned for class candidates
-- explicit class lists
-- merged, deduplicated, validated candidates
+**Class extraction.** If the request includes `html`, it's scanned for class candidates using Tailwind's `Scanner` (from `@tailwindcss/oxide`). Each candidate is checked against the Tailwind design system to confirm it's a real utility class. Invalid candidates are discarded.
 
-Compilation uses Tailwind runtime APIs (`@tailwindcss/node`, `@tailwindcss/oxide`) and builds CSS from `@source inline(...)` directives.
+**Class normalization.** If the request includes a `classes` field, it's normalized into an array. Strings are split on whitespace. Arrays are flattened (nested strings are split too). Empty tokens are removed.
 
-## 2. Input normalization
+**Merging.** Classes from HTML extraction and the `classes` field are combined into a `Set` (removing duplicates), validated again, and sorted alphabetically. This sorted list is the canonical representation of the page's classes.
 
-### Class normalization
+**Hashing.** The sorted class list is joined with `|` and hashed with SHA-256. This hash is the cache key — two requests with the same set of classes will always produce the same hash, regardless of the order they were sent in.
 
-- `classes` accepts:
-  - string (`"bg-red-500 p-4"`)
-  - array (`["bg-red-500", "p-4"]`)
-- arrays are flattened/split on whitespace.
-- empty/falsey tokens are removed.
+**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system is loaded once at startup and reused for all requests.
 
-### HTML extraction
+## Cache
 
-- HTML is scanned with Tailwind oxide `Scanner`.
-- candidate list is filtered by `designSystem.candidatesToCss(...)` to keep valid classes.
+All cache state lives in process memory. Restarting the process clears it.
 
-### Combined class list
+### Page Cache
 
-- classes from HTML + `classes` input are merged via `Set`.
-- final list is validated again and sorted lexicographically.
+Each compiled page is stored by `projectId + pageId`. A page entry holds:
 
-## 3. Determinism
+- The set of classes on that page
+- The content hash
+- Compiled CSS for each bundle type (`full`, `utilities`, `theme`) — only the ones that have been requested
+- `updatedAt` and `expiresAt` timestamps
 
-- class order in request does not affect output hash.
-- hash = SHA-256 of sorted class list joined by `|`.
-- equivalent class sets produce stable hash and cache identity.
+The cache uses a **sliding TTL**: every time a page is accessed (compiled, read via `/api/css`, etc.), its `expiresAt` is reset to `now + cacheTtlMs`. Pages that go untouched for longer than the TTL are considered expired and evicted on next access.
 
-## 4. Bundles
+There's also a **global page cap** (`cacheMaxPages`, default 200) across all projects. When the cap is reached, the least-recently-used page is evicted. This is tracked with an LRU map — every access moves the page to the end of the queue.
 
-Supported normalized bundles:
+When a page is evicted, its classes are decremented from the project's class count map. If a project has no pages left, the project is removed entirely.
 
-- `full`: preflight + theme + utilities
-- `base`: preflight only
-- `theme`: theme token variables only
-- `utilities`: utility rules only
+### Project Cache
 
-Bundle aliases are normalized (for example `preflight -> base`, `tokens -> theme`, `util -> utilities`).
+`GET /api/projects/:projectId/css` returns a stylesheet compiled from the union of all classes across all cached pages in a project. This aggregated CSS has its own cache entry with its own TTL (`projectCacheTtlMs`).
 
-### Theme/utilities split behavior
+The project cache is automatically invalidated whenever a page in that project is added, removed, or changes its class set. So you don't need to worry about staleness — the next project CSS request after a page change will recompile.
 
-`theme` and `utilities` are generated together and split by extracting/removing `:root, :host` blocks.
+### Base CSS
 
-Consumption rule: load `theme` before `utilities`.
+The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It's compiled once at first request and cached for the entire process lifetime.
 
-## 5. Cache model
+## cacheStore
 
-State is per process:
+By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
 
-- `projects: Map<projectId, projectState>`
-- `pageLru: Map<projectId::pageId, meta>`
+A cacheStore is an object you pass to `createCore()`. It has four methods — two for page artifacts, two for project artifacts:
 
-Project state contains:
+### readPageArtifact
 
-- `pages` map
-- `classCounts` map
-- cached aggregated CSS per bundle (`cssCache`, `themeCssCache`, `utilitiesCssCache`)
+Called when a page isn't found in memory and Rich Wind checks the store before recompiling.
 
-Page entry contains:
+**Receives:**
 
-- per-bundle CSS (`css`, `themeCss`, `utilitiesCss`)
-- `classes` set
-- `hash`
-- `updatedAt`
-- `expiresAt`
+```js
+{
+  projectId: "my-app",   // which project
+  pageId: "hero",        // which page
+  bundle: "full",        // normalized bundle type
+  now: 1707800000000     // current timestamp in ms
+}
+```
 
-### TTL and LRU
+**Should return** an artifact object or `null`. An artifact looks like:
 
-- page entries use sliding TTL (`cacheTtlMs`).
-- project aggregated cache uses `projectCacheTtlMs`.
-- page cap (`cacheMaxPages`) is global across all projects.
-- LRU eviction removes oldest page and decrements project class usage counts.
+```js
+{
+  css: "/* compiled CSS */",
+  classes: ["p-4", "text-red-500"],  // the class list (needed to rebuild project aggregates)
+  hash: "a1b2c3...",                 // content hash
+  updatedAt: 1707799000000,          // when this was last compiled
+  expiresAt: 1707800600000,          // when this artifact expires
+  source: "compile"                  // optional metadata
+}
+```
 
-### Base CSS cache
+The `classes` array is important — without it, Rich Wind can't reconstruct the project's class count map, so it can't generate project-level CSS. If your store returns an artifact without `classes`, the page CSS will be served but the page won't contribute to project aggregation.
 
-`base` bundle is generated once and cached process-wide.
+### upsertPageArtifact
 
-## 6. Project aggregation semantics
+Called after a successful compile to persist the result. Fires asynchronously after the response is sent, so it never adds latency.
 
-`GET /api/projects/:projectId/css` compiles from sorted unique keys of `project.classCounts`.
+**Receives:**
 
-This is the union of currently cached page classes in that project after TTL and LRU effects.
+```js
+{
+  projectId: "my-app",
+  pageId: "hero",
+  bundle: "full",
+  css: "/* compiled CSS */",
+  hash: "a1b2c3...",
+  classes: ["p-4", "text-red-500"],
+  cached: false,
+  updatedAt: 1707800000000,
+  expiresAt: 1707800600000
+}
+```
 
-## 7. Suggestion pipeline
+Your implementation should write this to whatever storage you're using. The `expiresAt` field tells you when this artifact can be pruned.
 
-`POST /api/suggest` fills suggestions in this order:
+### readProjectArtifact
 
-1. classes from request body
-2. project class list sorted by frequency desc, then name asc
-3. static fallback classes (if enabled and prefix provided)
+Called when project-level CSS (`GET /api/projects/:id/css`) isn't found in memory.
 
-Fallback path:
+**Receives:**
 
-- first tries Tailwind design-system static class list
-- if no static matches, uses local compact fallback data (`services/tailwind-suggestions.json`)
+```js
+{
+  projectId: "my-app",
+  bundle: "full",
+  now: 1707800000000
+}
+```
 
-Notes:
+**Should return** an artifact object or `null`:
 
-- suggestions are unique and prefix-filtered.
-- fallback only runs when `prefix` is non-empty.
-- arbitrary values are not enumerated by fallback generation.
+```js
+{
+  css: "/* aggregated CSS */",
+  hash: "d4e5f6...",
+  updatedAt: 1707799000000,
+  expiresAt: 1707800600000
+}
+```
 
-## 8. Validation and limits
+### upsertProjectArtifact
 
-Core validations:
+Called after project-level CSS is compiled, to persist the aggregate. Also fires asynchronously.
 
-- ID format and length
-- body JSON size (`maxBodyBytes`)
-- HTML char length (`maxHtmlChars`)
-- class string char length (`maxClassChars`) for string input
-- resolved class count (`maxClassCount`)
+**Receives:**
 
-Rate limiter:
+```js
+{
+  projectId: "my-app",
+  bundle: "full",
+  css: "/* aggregated CSS */",
+  hash: "d4e5f6...",
+  cached: false,
+  updatedAt: 1707800000000,
+  expiresAt: 1707800600000
+}
+```
 
-- per-IP fixed window
-- `rateLimitWindowMs`, `rateLimitMax`
-- returns `429` with `Retry-After`
+### Failure behavior
 
-## 9. Error semantics
+The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](/docs/plugin-system#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
 
-- `400`: validation/no-valid-classes conditions
-- `404`: cache misses/project not found
-- `413`: size/class count limits
-- `429`: rate limit
-- `500`: unexpected error
+This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
 
-## 10. Plugin runtime semantics
+### Artifact validation
 
-Plugins are lifecycle hooks around request, compile, cache, suggest, and errors.
+Rich Wind validates every artifact returned by the store before using it. An artifact is rejected (treated as a cache miss) if:
 
-Hook behavior:
+- `css` is missing or not a string
+- `css` exceeds `maxCssChars`
+- `expiresAt` is in the past
+- `classes` is provided but can't be normalized (not a string or array, or exceeds `maxClassCount`)
 
-- hooks run in plugin registration order
-- per-hook timeout enforced
-- hook errors do not crash the server
-- `onError` is invoked for hook failures/timeouts
-- deferred hooks (`defer`/`deferHooks`) run asynchronously via microtask queue
+This protects against stale or corrupt data in the store.
 
-See [Plugin System](/docs/plugin-system) for API shape and examples.
+## Bundle Splitting
 
-## 11. Config precedence
+When you request `theme` or `utilities` bundles, Rich Wind compiles the full set of classes (minus preflight) and then splits the output:
 
-Config resolution order:
+- **Theme** — everything inside `:root, :host { ... }` blocks. These are the CSS custom properties that define colors, spacing, font sizes, etc.
+- **Utilities** — everything else. The actual utility rules like `.bg-red-500 { ... }`.
 
-1. `createCore({ config })` / top-level options
-2. environment variables
-3. internal defaults
+Both are generated from a single Tailwind compile and split by pattern-matching the CSS output. This means requesting `theme` and `utilities` separately is not slower than requesting `full` — the compilation happens once and the result is cached per bundle.
 
-Invalid values fall back to defaults.
+The `base` bundle (preflight) is compiled separately since it doesn't depend on any classes.
 
-## 12. Non-goals in current core
+## Rate Limiting
 
-- no built-in auth/session/tenant enforcement
-- no built-in persistent storage or cross-node cache
-- no request-time Tailwind config/theme file ingestion API
-- no streaming compile responses
+Rich Wind includes a per-IP rate limiter using a fixed-window algorithm. Each IP address gets `rateLimitMax` requests (default 60) per `rateLimitWindowMs` (default 60 seconds). When the limit is hit, the response is `429` with a `Retry-After` header indicating how many seconds until the window resets.
 
-## 13. Operational implications
+The rate limiter runs per-process. If you're running multiple replicas behind a load balancer, each replica tracks its own counters — so the effective limit per IP is `rateLimitMax * replicaCount`.
 
-- restart clears in-memory page/project caches.
-- horizontal scaling creates cache fragmentation without external persistence.
-- cold paths (first compile/suggest) are slower than warmed paths.
-- production systems should layer:
-  - auth and tenant scoping
-  - observability
-  - queueing/backpressure
-  - optional artifact persistence
+Set `rateLimitDisabled: true` if you handle rate limiting at the gateway level. If Rich Wind is behind a reverse proxy, set `trustProxy: true` so it reads the real client IP from `X-Forwarded-For` instead of seeing the proxy's IP.
 
-See [Integration Cookbook](/docs/integration-cookbook) for deployment patterns.
+## Security Headers
+
+Every response includes these headers:
+
+| Header | Value | Purpose |
+| --- | --- | --- |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing |
+| `Referrer-Policy` | `no-referrer` | No referrer sent on navigation |
+| `X-Frame-Options` | `DENY` | Prevents embedding in iframes |
+| `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
+
+## What the Core Doesn't Do
+
+Rich Wind is intentionally limited in scope. It doesn't include:
+
+- **Authentication or tenant enforcement.** It trusts whatever `projectId` you send. In production, put it behind a gateway that maps authenticated users to safe project IDs.
+- **Persistent storage.** Cache is in-memory by default. Use the `cacheStore` adapter if you need persistence.
+- **Custom Tailwind configuration.** It uses the default Tailwind design system. There's no API to upload a custom `tailwind.config.js` at request time.
+- **Streaming responses.** Compilation finishes before the response is sent.

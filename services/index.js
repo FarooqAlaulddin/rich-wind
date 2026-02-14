@@ -4,6 +4,7 @@ import { Scanner } from '@tailwindcss/oxide';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 
 
@@ -742,22 +743,59 @@ async function resolveClassesFromInput({ html, classes }) {
     return valid.sort();
 }
 
-async function compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle = 'full' }) {
+async function compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle = 'full', pluginRunner, cacheStoreRunner, skipHooks = false, source = 'http', request = null }) {
     const normalizedBundle = normalizeBundle(bundle);
+
+    // Base bundle handling
     if (normalizedBundle === 'base') {
-        return { css: await generateBaseCss(), classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
+        const css = await generateBaseCss();
+        if (!skipHooks && pluginRunner) {
+            await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: 'base', source, request });
+            await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: 'base', classes: [], css, hash: 'base', cached: true, source, request });
+        }
+        return { css, classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
     }
-    const resolvedClasses = await resolveClassesFromInput({ html, classes });
+
+    // Fire onCompileStart
+    if (!skipHooks && pluginRunner) {
+        await pluginRunner.runHook('onCompileStart', { projectId, pageId, bundle: normalizedBundle, html, classes, source, request });
+    }
+
+    // Pre-hydrate from cacheStore
+    if (!skipHooks) {
+        await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle);
+    }
+
+    let resolvedClasses = await resolveClassesFromInput({ html, classes });
+
+    // transformClasses pipeline
+    if (!skipHooks && pluginRunner) {
+        const transformed = await pluginRunner.runPipeline('transformClasses', { projectId, pageId, bundle: normalizedBundle, source, request }, resolvedClasses);
+        if (Array.isArray(transformed)) {
+            const deduped = Array.from(new Set(transformed));
+            const valid = await filterValidClasses(deduped);
+            resolvedClasses = valid.sort();
+        }
+    }
+
     if (resolvedClasses.length === 0) {
-        return { error: 'No valid classes found.', classes: [], css: '', status: 400 };
+        const err = { error: 'No valid classes found.', classes: [], css: '', status: 400 };
+        if (!skipHooks && pluginRunner) {
+            await pluginRunner.runHook('onError', { error: new Error(err.error), stage: 'compile', source, request, context: { projectId, pageId, bundle: normalizedBundle } });
+        }
+        return err;
     }
     if (resolvedClasses.length > config.maxClassCount) {
-        return {
+        const err = {
             error: `Too many classes (${resolvedClasses.length}). Limit is ${config.maxClassCount}.`,
             classes: [],
             css: '',
             status: 413
         };
+        if (!skipHooks && pluginRunner) {
+            await pluginRunner.runHook('onError', { error: new Error(err.error), stage: 'compile', source, request, context: { projectId, pageId, bundle: normalizedBundle } });
+        }
+        return err;
     }
 
     const now = Date.now();
@@ -777,6 +815,10 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
         const pageKey = makePageKey(projectId, pageId);
         touchPageKey(state, pageKey);
         if (existing[bundleKey]) {
+            if (!skipHooks && pluginRunner) {
+                await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: normalizedBundle, source, request });
+                await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css: existing[bundleKey], hash: classHash, cached: true, source, request });
+            }
             return { css: existing[bundleKey], classes: resolvedClasses, hash: classHash, cached: true, bundle: normalizedBundle };
         }
     }
@@ -788,6 +830,23 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
     } else {
         css = await generateCssForClasses(resolvedClasses);
     }
+
+    // transformCss pipeline
+    if (!skipHooks && pluginRunner) {
+        const transformedCss = await pluginRunner.runPipeline('transformCss', { projectId, pageId, bundle: normalizedBundle, source, request }, css);
+        if (typeof transformedCss === 'string') {
+            if (transformedCss.length <= config.maxCssChars) {
+                css = transformedCss;
+            } else {
+                await pluginRunner.runHook('onError', {
+                    error: new Error(`transformCss output exceeds maxCssChars (${transformedCss.length} > ${config.maxCssChars})`),
+                    stage: 'transform', hook: 'transformCss', source, request,
+                    context: { projectId, pageId, bundle: normalizedBundle }
+                });
+            }
+        }
+    }
+
     const newClassSet = new Set(resolvedClasses);
     const classesChanged = !existing || existing.hash !== classHash;
 
@@ -824,6 +883,24 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
     state.pageLru.set(pageKey, { projectId, pageId });
     touchPageKey(state, pageKey);
     evictIfNeeded(state, config);
+
+    // Fire observer hooks
+    if (!skipHooks && pluginRunner) {
+        await pluginRunner.runHook('onCacheMiss', { projectId, pageId, bundle: normalizedBundle, source, request });
+        await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css, hash: classHash, cached: false, source, request });
+    }
+
+    // CacheStore write-through
+    if (cacheStoreRunner?.enabled && normalizedBundle !== 'base') {
+        const writeNow = Date.now();
+        queueMicrotask(() => {
+            cacheStoreRunner.upsertPageArtifact({
+                projectId, pageId, bundle: normalizedBundle,
+                css, hash: classHash, classes: resolvedClasses,
+                cached: false, updatedAt: writeNow, expiresAt: writeNow + config.cacheTtlMs
+            }).catch(() => {});
+        });
+    }
 
     return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
 }
@@ -954,6 +1031,11 @@ async function hydrateMissingCompilePageFromStore(state, config, cacheStoreRunne
 // =============================================================================
 // Plugin system
 // =============================================================================
+const hookStore = new AsyncLocalStorage();
+
+const PLUGIN_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+const MAX_PLUGIN_NAME_LENGTH = 64;
+
 function createPluginRunner(plugins = [], options = {}) {
     const defaultTimeoutMs = parseIntWithDefault(
         options.timeoutMs ?? process.env.RW_PLUGIN_TIMEOUT_MS,
@@ -962,18 +1044,42 @@ function createPluginRunner(plugins = [], options = {}) {
     );
     const list = (Array.isArray(plugins) ? plugins : [plugins])
         .filter(Boolean)
-        .map((plugin, index) => ({
-            name: plugin.name || `plugin-${index + 1}`,
-            instance: plugin,
-            defer: Boolean(plugin.defer),
-            deferHooks: Array.isArray(plugin.deferHooks) ? plugin.deferHooks : null,
-            timeoutMs: Number.isFinite(plugin.timeoutMs)
-                ? Math.max(0, plugin.timeoutMs)
-                : defaultTimeoutMs
-        }));
+        .map((plugin, index) => {
+            const name = plugin.name || `plugin-${index + 1}`;
+            return {
+                name,
+                routeName: name.toLowerCase(),
+                instance: plugin,
+                defer: Boolean(plugin.defer),
+                deferHooks: Array.isArray(plugin.deferHooks) ? plugin.deferHooks : null,
+                timeoutMs: Number.isFinite(plugin.timeoutMs)
+                    ? Math.max(0, plugin.timeoutMs)
+                    : defaultTimeoutMs,
+                active: typeof plugin.setup !== 'function',
+                failed: false
+            };
+        });
+
+    // Validate plugin names
+    const seenRouteNames = new Map();
+    for (const plugin of list) {
+        if (!PLUGIN_NAME_RE.test(plugin.name) || plugin.name.length > MAX_PLUGIN_NAME_LENGTH) {
+            throw new Error(`Invalid plugin name "${plugin.name}": must match [a-zA-Z0-9_-]+ and be ≤64 chars`);
+        }
+        const existing = seenRouteNames.get(plugin.routeName);
+        if (existing) {
+            throw new Error(`Plugin name "${plugin.name}" collides with existing plugin "${existing}" (route segment "${plugin.routeName}")`);
+        }
+        seenRouteNames.set(plugin.routeName, plugin.name);
+    }
+
+    const NEVER_DEFER_HOOKS = new Set([
+        'onError', 'transformClasses', 'transformCss', 'transformSuggestions',
+        'resolvePageCss', 'resolveProjectCss'
+    ]);
 
     const shouldDefer = (plugin, hook) => {
-        if (hook === 'onError') return false;
+        if (NEVER_DEFER_HOOKS.has(hook)) return false;
         if (plugin.deferHooks) return plugin.deferHooks.includes(hook);
         return plugin.defer;
     };
@@ -992,6 +1098,7 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runSingle = async (plugin, hook, context) => {
+        if (!plugin.active || plugin.failed) return;
         const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
         if (!fn) return;
         try {
@@ -1012,16 +1119,79 @@ function createPluginRunner(plugins = [], options = {}) {
     const runHook = async (hook, context) => {
         for (const plugin of list) {
             if (shouldDefer(plugin, hook)) {
+                const p = plugin;
+                const parentStore = hookStore.getStore();
+                const chainDepth = parentStore?.compileChainDepth ?? 0;
                 queueMicrotask(() => {
-                    runSingle(plugin, hook, context);
+                    hookStore.run(
+                        { inHook: false, deferred: true, compileChainDepth: chainDepth },
+                        () => runSingle(p, hook, context)
+                    );
                 });
                 continue;
             }
-            await runSingle(plugin, hook, context);
+            await hookStore.run(
+                { inHook: true },
+                () => runSingle(plugin, hook, context)
+            );
         }
     };
 
-    return { runHook };
+    const runPipeline = async (hook, context, initialValue) => {
+        let value = initialValue;
+        for (const plugin of list) {
+            if (!plugin.active || plugin.failed) continue;
+            const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
+            if (!fn) continue;
+            try {
+                const result = await hookStore.run(
+                    { inHook: true },
+                    () => withTimeout(Promise.resolve(fn({ ...context, value })), plugin.timeoutMs)
+                );
+                if (result !== undefined) {
+                    value = result;
+                }
+            } catch (error) {
+                const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
+                await runHook('onError', {
+                    error, hook, plugin: plugin.name, timedOut, context
+                });
+            }
+        }
+        return value;
+    };
+
+    const runResolve = async (hook, context, resolveConfig) => {
+        for (const plugin of list) {
+            if (!plugin.active || plugin.failed) continue;
+            const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
+            if (!fn) continue;
+            try {
+                const result = await hookStore.run(
+                    { inHook: true },
+                    () => withTimeout(Promise.resolve(fn(context)), plugin.timeoutMs)
+                );
+                if (result == null) continue;
+                if (typeof result.css !== 'string') continue;
+                if (result.css.length > resolveConfig.maxCssChars) {
+                    await runHook('onError', {
+                        error: new Error(`Resolve hook "${hook}" returned CSS exceeding maxCssChars (${result.css.length} > ${resolveConfig.maxCssChars})`),
+                        hook, plugin: plugin.name, stage: 'resolve'
+                    });
+                    continue;
+                }
+                return result;
+            } catch (error) {
+                const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
+                await runHook('onError', {
+                    error, hook, plugin: plugin.name, timedOut, context
+                });
+            }
+        }
+        return null;
+    };
+
+    return { runHook, runPipeline, runResolve, list };
 }
 
 // =============================================================================
@@ -1086,95 +1256,13 @@ app.post('/api/compile', async (req, res) => {
             return res.status(413).json({ error: `classes is too large. Limit is ${config.maxClassChars} chars.` });
         }
 
-        await pluginRunner.runHook('onCompileStart', hookContext);
-        await hydrateMissingCompilePageFromStore(
-            state,
-            config,
-            cacheStoreRunner,
-            projectId,
-            pageId,
-            bundle
-        );
-
-        if (!html && !classes && bundle === 'base') {
-            const css = await generateBaseCss();
-            await pluginRunner.runHook('onCacheHit', {
-                projectId,
-                pageId,
-                bundle,
-                source: 'compile'
-            });
-            await pluginRunner.runHook('onCompileResult', {
-                projectId,
-                pageId,
-                bundle: 'base',
-                classes: [],
-                css,
-                hash: 'base',
-                cached: true
-            });
-            return res.json({
-                success: true,
-                projectId,
-                pageId,
-                bundle: 'base',
-                hash: 'base',
-                classes: [],
-                cached: true,
-                css
-            });
-        }
-
-        const result = await compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle });
-        if (result.error) {
-            await pluginRunner.runHook('onError', {
-                error: new Error(result.error),
-                stage: 'compile',
-                context: hookContext
-            });
-            return res.status(result.status || 400).json({ error: result.error });
-        }
-
-        if (result.cached) {
-            await pluginRunner.runHook('onCacheHit', {
-                projectId,
-                pageId,
-                bundle: result.bundle ?? bundle,
-                source: 'compile'
-            });
-        } else {
-            await pluginRunner.runHook('onCacheMiss', {
-                projectId,
-                pageId,
-                bundle: result.bundle ?? bundle,
-                source: 'compile'
-            });
-        }
-        await pluginRunner.runHook('onCompileResult', {
-            projectId,
-            pageId,
-            bundle: result.bundle ?? bundle,
-            classes: result.classes,
-            css: result.css,
-            hash: result.hash,
-            cached: result.cached
+        const result = await compileAndCachePage({
+            state, config, projectId, pageId, html, classes, bundle,
+            pluginRunner, cacheStoreRunner,
+            skipHooks: false, source: 'http', request: hookContext.request
         });
-
-        if (cacheStoreRunner?.enabled && (result.bundle ?? bundle) !== 'base') {
-            const now = Date.now();
-            queueStoreWrite(() =>
-                cacheStoreRunner.upsertPageArtifact({
-                    projectId,
-                    pageId,
-                    bundle: result.bundle ?? bundle,
-                    css: result.css,
-                    hash: result.hash,
-                    classes: Array.isArray(result.classes) ? result.classes : [],
-                    cached: result.cached,
-                    updatedAt: now,
-                    expiresAt: now + config.cacheTtlMs
-                })
-            );
+        if (result.error) {
+            return res.status(result.status || 400).json({ error: result.error });
         }
 
         res.json({
@@ -1188,7 +1276,7 @@ app.post('/api/compile', async (req, res) => {
             css: result.css
         });
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'compile' });
+        await pluginRunner.runHook('onError', { error: err, stage: 'compile', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
         res.status(500).json({ error: err.message });
     }
 });
@@ -1243,7 +1331,8 @@ app.get('/api/css', async (req, res) => {
                     projectId,
                     pageId,
                     bundle,
-                    source: 'page-store'
+                    source: 'page-store',
+                    request: hookContext.request
                 });
                 return res.type('text/css').send(storeArtifact.css);
             }
@@ -1251,8 +1340,18 @@ app.get('/api/css', async (req, res) => {
                 projectId,
                 pageId,
                 bundle,
-                source: 'page'
+                source: 'page',
+                request: hookContext.request
             });
+
+            // Resolve hook: let plugins provide CSS on cache miss
+            const resolved = await pluginRunner.runResolve('resolvePageCss', {
+                projectId, pageId, bundle, source: 'http', request: hookContext.request
+            }, config);
+            if (resolved) {
+                return res.type('text/css').send(resolved.css);
+            }
+
             return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
         }
 
@@ -1260,11 +1359,12 @@ app.get('/api/css', async (req, res) => {
             projectId,
             pageId,
             bundle,
-            source: 'page'
+            source: 'page',
+            request: hookContext.request
         });
         res.type('text/css').send(cached.css);
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'cache' });
+        await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: hookContext.request });
         res.status(500).json({ error: err.message });
     }
 });
@@ -1303,6 +1403,13 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             }
         }
         if (!result) {
+            // Resolve hook: let plugins provide project CSS on cache miss
+            const resolved = await pluginRunner.runResolve('resolveProjectCss', {
+                projectId, bundle, source: 'http', request: hookContext.request
+            }, config);
+            if (resolved) {
+                return res.type('text/css').send(resolved.css);
+            }
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
@@ -1326,11 +1433,13 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             bundle,
             css: result?.css ?? '',
             hash: result?.hash ?? null,
-            cached: result?.cached ?? false
+            cached: result?.cached ?? false,
+            source: 'http',
+            request: hookContext.request
         });
         return res.type('text/css').send(result?.css ?? '');
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'project-css' });
+        await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: hookContext.request });
         res.status(500).json({ error: err.message });
     }
 });
@@ -1357,56 +1466,42 @@ app.post('/api/suggest', async (req, res) => {
             });
         }
 
-        const suggestions = new Map();
-
-        const finalize = async () => {
-            const payload = {
-                success: true,
-                projectId,
-                prefix,
-                count: suggestions.size,
-                suggestions: Array.from(suggestions.keys())
-            };
-            await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions: payload.suggestions });
-            return res.json(payload);
-        };
-
-        const pushList = (list) => {
+        // Phase 1: Collect ALL candidates (no limit enforcement yet)
+        const seen = new Set();
+        const allSuggestions = [];
+        const push = (list) => {
             for (const item of list) {
                 if (!item) continue;
                 if (prefix && !item.startsWith(prefix)) continue;
-                if (!suggestions.has(item)) {
-                    suggestions.set(item, true);
-                    if (suggestions.size >= limit) return true;
-                }
+                if (!seen.has(item)) { seen.add(item); allSuggestions.push(item); }
             }
-            return false;
         };
 
-        if (includeInput.length) {
-            if (pushList(includeInput)) {
-                return finalize();
-            }
-        }
-
-        if (projectId) {
-            if (pushList(getProjectSuggestionList(state, projectId))) {
-                return finalize();
-            }
-        }
-
+        if (includeInput.length) push(includeInput);
+        if (projectId) push(getProjectSuggestionList(state, projectId));
         if (config.suggestFallback && prefix) {
             const staticList = await getStaticClassSuggestions(prefix);
-            if (!staticList.length) {
-                pushList(getFallbackSuggestions(prefix));
-            } else {
-                pushList(staticList);
-            }
+            push(staticList.length ? staticList : getFallbackSuggestions(prefix));
         }
 
-        return finalize();
+        // Phase 2: Run transform pipeline
+        let suggestions = await pluginRunner.runPipeline('transformSuggestions',
+            { projectId, prefix, limit, source: 'http', request: hookContext.request },
+            allSuggestions
+        );
+
+        // Phase 3: Post-validation
+        if (!Array.isArray(suggestions)) suggestions = allSuggestions;
+        suggestions = suggestions.filter(s => typeof s === 'string');
+        suggestions = [...new Map(suggestions.map(s => [s, true])).keys()];
+        const effectiveLimit = Math.min(limit, config.suggestLimit);
+        suggestions = suggestions.slice(0, effectiveLimit);
+
+        // Phase 4: Respond
+        await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions, source: 'http' });
+        return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'suggest' });
+        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: hookContext.request });
         res.status(500).json({ error: err.message });
     }
 });
@@ -1431,15 +1526,146 @@ app.use((err, req, res, next) => {
 }
 
 // =============================================================================
+// Plugin context + lifecycle
+// =============================================================================
+function buildPluginContext(state, config) {
+    const ctx = {
+        getProjectIds() {
+            return Array.from(state.projects.keys());
+        },
+        getClassCounts(projectId) {
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            return Object.freeze(Object.fromEntries(project.classCounts));
+        },
+        getPageIds(projectId) {
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            return Array.from(project.pages.keys());
+        },
+        getPageClasses(projectId, pageId) {
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            const page = project.pages.get(pageId);
+            if (!page) return null;
+            return Array.from(page.classes).sort();
+        },
+        getPageMeta(projectId, pageId) {
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            const page = project.pages.get(pageId);
+            if (!page) return null;
+            return Object.freeze({ hash: page.hash, updatedAt: page.updatedAt, expiresAt: page.expiresAt });
+        },
+        getCss(projectId, pageId, bundle) {
+            const normalizedBundle = normalizeBundle(bundle);
+            if (normalizedBundle === 'base') return cachedBaseCss || null;
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            const page = project.pages.get(pageId);
+            if (!page) return null;
+            const key = normalizedBundle === 'utilities' ? 'utilitiesCss'
+                : normalizedBundle === 'theme' ? 'themeCss' : 'css';
+            return page[key] || null;
+        },
+        getProjectCss(projectId, bundle) {
+            const normalizedBundle = normalizeBundle(bundle);
+            if (normalizedBundle === 'base') return cachedBaseCss || null;
+            const project = state.projects.get(projectId);
+            if (!project) return null;
+            const key = normalizedBundle === 'utilities' ? 'utilitiesCssCache'
+                : normalizedBundle === 'theme' ? 'themeCssCache' : 'cssCache';
+            const entry = project[key];
+            return entry?.css || null;
+        },
+        getCacheStats() {
+            return Object.freeze({
+                totalPages: state.pageLru.size,
+                maxPages: config.cacheMaxPages,
+                projectCount: state.projects.size
+            });
+        },
+        getConfig() {
+            return Object.freeze({ ...config });
+        },
+        async validateClasses(classes) {
+            const input = normalizeClassList(
+                typeof classes === 'string' ? classes : (Array.isArray(classes) ? classes : [])
+            );
+            return filterValidClasses(input);
+        }
+    };
+    return ctx;
+}
+
+function withTimeoutGeneric(promise, timeoutMs, label = 'Operation') {
+    if (!timeoutMs || timeoutMs <= 0) return promise;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(`${label} timeout after ${timeoutMs}ms`);
+            error.code = 'PLUGIN_SETUP_TIMEOUT';
+            reject(error);
+        }, timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function mountPluginRoutes(app, pluginList, pluginContext, globalSetupTimeoutMs) {
+    for (const plugin of pluginList) {
+        if (typeof plugin.instance.setup !== 'function') {
+            plugin.active = true;
+            continue;
+        }
+
+        const router = express.Router();
+        let setupDone = false;
+
+        const addRoute = (method, routePath, handler) => {
+            if (setupDone) throw new Error('addRoute is only available during setup().');
+            const m = String(method).toLowerCase();
+            if (!['get', 'post', 'put', 'delete', 'patch'].includes(m)) {
+                throw new Error(`Invalid HTTP method "${method}".`);
+            }
+            if (!routePath || !/^\/[a-zA-Z0-9/_:.\-]*$/.test(routePath) || routePath.includes('..')) {
+                throw new Error(`Invalid route path "${routePath}".`);
+            }
+            if (typeof handler !== 'function') {
+                throw new Error('Route handler must be a function.');
+            }
+            router[m](routePath, handler);
+        };
+
+        try {
+            const perPluginTimeout = plugin.instance.setupTimeoutMs ?? globalSetupTimeoutMs;
+            await withTimeoutGeneric(
+                Promise.resolve(plugin.instance.setup({ ...pluginContext, addRoute })),
+                perPluginTimeout,
+                `Plugin "${plugin.name}" setup`
+            );
+            plugin.active = true;
+            app.use(`/plugins/${plugin.routeName}`, router);
+        } catch (error) {
+            console.error(`Plugin "${plugin.name}" setup failed:`, error.message);
+            plugin.failed = true;
+        }
+        setupDone = true;
+    }
+}
+
+// =============================================================================
 // Core factory
 // =============================================================================
-export function createCore({
+export async function createCore({
     plugins = [],
     pluginTimeoutMs,
+    setupTimeoutMs,
+    maxPluginCompileChainDepth,
     config: configOverrides,
     cacheStore,
     cacheStoreTimeoutMs
 } = {}) {
+    const chainDepthLimit = Math.max(1, parseIntWithDefault(maxPluginCompileChainDepth, 2, 1));
     const config = buildConfig(configOverrides);
     const state = createCacheState();
     const app = express();
@@ -1458,13 +1684,117 @@ export function createCore({
     const rateLimiter = createRateLimiter(config);
     app.use(rateLimiter.middleware);
 
+    const pluginContext = buildPluginContext(state, config);
     const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs });
     const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
     });
+
+    // Wire mutation functions onto pluginContext
+    pluginContext.evictPage = (projectId, pageId) => {
+        evictPageByKey(state, makePageKey(projectId, pageId));
+    };
+
+    pluginContext.evictProject = (projectId) => {
+        const project = state.projects.get(projectId);
+        if (!project) return;
+        for (const pageId of Array.from(project.pages.keys())) {
+            evictPageByKey(state, makePageKey(projectId, pageId));
+        }
+        state.projects.delete(projectId);
+    };
+
+    pluginContext.compile = async (input) => {
+        const { projectId, pageId, html, classes, bundle } = input || {};
+        if (!projectId || !isValidId(projectId, config)) return { error: 'Invalid projectId.', status: 400 };
+        if (!pageId || !isValidId(pageId, config)) return { error: 'Invalid pageId.', status: 400 };
+        if (html && typeof html === 'string' && html.length > config.maxHtmlChars) return { error: 'html too large.', status: 413 };
+        if (classes && typeof classes === 'string' && classes.length > config.maxClassChars) return { error: 'classes too large.', status: 413 };
+
+        const store = hookStore.getStore();
+        const skipHooks = store?.inHook ?? false;
+        const currentDepth = store?.compileChainDepth ?? 0;
+
+        if (currentDepth >= chainDepthLimit) {
+            const err = { error: 'Plugin compile chain depth exceeded.', status: 429 };
+            if (!skipHooks) {
+                await pluginRunner.runHook('onError', {
+                    error: new Error(err.error), stage: 'compile', source: 'plugin',
+                    code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context: { projectId, pageId, bundle }
+                });
+            }
+            return err;
+        }
+
+        return hookStore.run(
+            { inHook: skipHooks, compileChainDepth: currentDepth + 1 },
+            () => compileAndCachePage({
+                state, config, projectId, pageId, html, classes, bundle,
+                pluginRunner, cacheStoreRunner,
+                skipHooks,
+                source: 'plugin',
+                request: null
+            })
+        );
+    };
+
+    pluginContext.hydratePageArtifact = (input) => {
+        const { projectId, pageId, bundle, ...rest } = input || {};
+        if (!projectId || !isValidId(projectId, config)) return false;
+        if (!pageId || !isValidId(pageId, config)) return false;
+        const sanitized = sanitizePageArtifact(rest, config);
+        if (!sanitized) return false;
+        return hydratePageFromArtifact(state, config, projectId, pageId, bundle, sanitized, { requireClasses: false });
+    };
+
+    pluginContext.hydrateProjectArtifact = (input) => {
+        const { projectId, bundle, ...rest } = input || {};
+        if (!projectId || !isValidId(projectId, config)) return false;
+        const project = state.projects.get(projectId);
+        if (!project) return false;
+        const sanitized = sanitizeProjectArtifact(rest, config);
+        if (!sanitized) return false;
+        const normalizedBundle = normalizeBundle(bundle);
+        if (normalizedBundle === 'base') return false;
+        const cacheKey = normalizedBundle === 'utilities' ? 'utilitiesCssCache'
+            : normalizedBundle === 'theme' ? 'themeCssCache' : 'cssCache';
+        project[cacheKey] = {
+            css: sanitized.css,
+            hash: sanitized.hash,
+            updatedAt: sanitized.updatedAt,
+            expiresAt: sanitized.expiresAt
+        };
+        return true;
+    };
+
+    Object.freeze(pluginContext);
+
+    const defaultSetupTimeout = Math.max((pluginTimeoutMs ?? 200) * 5, 1000);
+    await mountPluginRoutes(app, pluginRunner.list, pluginContext, setupTimeoutMs ?? defaultSetupTimeout);
+
     registerRoutes(app, pluginRunner, config, state, cacheStoreRunner);
-    return app;
+
+    let closePromise = null;
+    const close = () => {
+        if (closePromise) return closePromise;
+        closePromise = (async () => {
+            for (const plugin of [...pluginRunner.list].reverse()) {
+                if (typeof plugin.instance.teardown === 'function') {
+                    try {
+                        await withTimeoutGeneric(
+                            Promise.resolve(plugin.instance.teardown()),
+                            plugin.timeoutMs,
+                            `Plugin "${plugin.name}" teardown`
+                        );
+                    } catch { /* teardown errors are silent */ }
+                }
+            }
+        })();
+        return closePromise;
+    };
+
+    return { app, close };
 }
 
 // =============================================================================
@@ -1475,9 +1805,16 @@ const isDirectRun =
     process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 
 if (isDirectRun) {
-    const app = createCore();
-    app.listen(PORT, () => {
-        console.log(`🚀 Server running at http://localhost:${PORT}`);
-        console.log('🧠 In-memory cache enabled (no DB).');
+    createCore().then(({ app, close }) => {
+        const server = app.listen(PORT, () => {
+            console.log(`Server running at http://localhost:${PORT}`);
+            console.log('In-memory cache enabled (no DB).');
+        });
+        const shutdown = async () => {
+            await new Promise((resolve) => server.close(resolve));
+            await close();
+        };
+        process.on('SIGTERM', shutdown);
+        process.on('SIGINT', shutdown);
     });
 }

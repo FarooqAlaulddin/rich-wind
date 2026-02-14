@@ -7,7 +7,7 @@ export async function createTestServer(envOverrides = {}, options = {}) {
   vi.resetModules();
   const moduleUrl = new URL('../../services/index.js', import.meta.url).href;
   const { createCore } = await import(moduleUrl);
-  const app = createCore({
+  const { app } = await createCore({
     plugins: options.plugins || [],
     config: options.config || {},
     pluginTimeoutMs: options.pluginTimeoutMs,
