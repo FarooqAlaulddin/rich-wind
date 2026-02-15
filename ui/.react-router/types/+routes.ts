@@ -28,12 +28,17 @@ type Pages = {
       "*": string;
     };
   };
+  "/plugins/*": {
+    params: {
+      "*": string;
+    };
+  };
 };
 
 type RouteFiles = {
   "root.jsx": {
     id: "root";
-    page: "/" | "/htmx/compile" | "/api/suggest" | "/preview" | "/docs/*";
+    page: "/" | "/htmx/compile" | "/api/suggest" | "/preview" | "/docs/*" | "/plugins/*";
   };
   "./routes/home.jsx": {
     id: "routes/home";
@@ -55,6 +60,10 @@ type RouteFiles = {
     id: "routes/docs";
     page: "/docs/*";
   };
+  "./routes/plugins.$.jsx": {
+    id: "routes/plugins.$";
+    page: "/plugins/*";
+  };
 };
 
 type RouteModules = {
@@ -64,4 +73,5 @@ type RouteModules = {
   "routes/api.suggest": typeof import("./app/./routes/api.suggest.jsx");
   "routes/preview": typeof import("./app/./routes/preview.jsx");
   "routes/docs": typeof import("./app/./routes/docs.jsx");
+  "routes/plugins.$": typeof import("./app/./routes/plugins.$.jsx");
 };

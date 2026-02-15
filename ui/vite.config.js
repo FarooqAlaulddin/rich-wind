@@ -29,6 +29,18 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false
+      },
+      '/plugins': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+        // Only proxy sub-paths (e.g. /plugins/analytics/data).
+        // Root plugin paths (e.g. /plugins/analytics) fall through to React Router.
+        bypass(req) {
+          const after = req.url.slice('/plugins/'.length);
+          const segments = after.split('/').filter(Boolean);
+          if (segments.length <= 1) return req.url;
+        }
       }
     }
   },

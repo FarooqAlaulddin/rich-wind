@@ -395,11 +395,6 @@ main {
   padding: 0 16px 14px;
 }
 
-.compact-mode .editor-identifiers {
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
 .compact-mode .editor-tabs {
   gap: 6px;
 }
@@ -485,12 +480,6 @@ main {
   color: rgba(226, 232, 240, 0.8);
   background: rgba(15, 23, 42, 0.5);
   border: 1px solid rgba(148, 163, 184, 0.2);
-}
-
-.editor-identifiers {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
 }
 
 .editor-bundle {
@@ -846,10 +835,6 @@ main {
   .editor-form {
     padding: 0 14px 14px;
     gap: 10px;
-  }
-  .editor-identifiers {
-    grid-template-columns: 1fr;
-    gap: 8px;
   }
   .editor-tabs,
   .preview-tabs {

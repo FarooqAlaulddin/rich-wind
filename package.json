@@ -16,6 +16,7 @@
   "scripts": {
     "start": "node ./services/index.js",
     "dev": "node --watch ./services/index.js",
+    "dev:demo": "node --watch ./scripts/dev-server.js",
     "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest"

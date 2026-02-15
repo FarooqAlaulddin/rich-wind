@@ -1,7 +1,5 @@
-const rawCoreUrl = (process.env.RW_CORE_URL || "http://localhost:3001").trim();
-const CORE_URL = /^https?:\/\//i.test(rawCoreUrl)
-  ? rawCoreUrl
-  : `http://${rawCoreUrl}`;
+import { CORE_URL } from "../lib/core-url.server.js";
+import { getUserId } from "../lib/user-id.server.js";
 
 export async function action({ request }) {
   if (request.method && request.method.toUpperCase() !== "POST") {
@@ -12,6 +10,11 @@ export async function action({ request }) {
     payload = await request.json();
   } catch (error) {
     payload = {};
+  }
+
+  const userId = getUserId(request);
+  if (userId && payload.projectId) {
+    payload.projectId = `${userId}_${payload.projectId}`;
   }
 
   const response = await fetch(`${CORE_URL}/api/suggest`, {

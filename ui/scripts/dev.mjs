@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uiRoot = path.resolve(__dirname, "..");
+const projectRoot = path.resolve(uiRoot, "..");
 
 const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 
@@ -32,9 +33,9 @@ function stopAll(exitCode = 0) {
   setTimeout(() => process.exit(exitCode), 10);
 }
 
-function spawnChild(command, args, name) {
+function spawnChild(command, args, name, { cwd = uiRoot } = {}) {
   const child = spawn(command, args, {
-    cwd: uiRoot,
+    cwd,
     stdio: "inherit",
     env: process.env,
   });
@@ -62,3 +63,4 @@ process.on("SIGTERM", () => stopAll(0));
 
 spawnChild(process.execPath, ["./scripts/sync-docs.mjs", "--watch"], "docs-sync");
 spawnChild(npmCmd, ["run", "dev:app"], "react-router-dev");
+spawnChild(process.execPath, ["--watch", "./scripts/dev-server.js"], "plugin-server", { cwd: projectRoot });

@@ -324,3 +324,30 @@ const metrics = {
   }
 };
 ```
+
+## Example: Auto-Promote (Real-World Demo)
+
+The auto-promote plugin tracks which CSS classes appear across pages. When a class is used on enough pages (default: 5), it's "promoted" to a shared stylesheet — reducing per-page CSS duplication. This demo exercises nearly every plugin capability: `setup` seeding, `transformClasses` pipeline, deferred `onCompileResult`, custom routes, and `ctx.compile()`.
+
+```js
+import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote.js";
+
+const { app, close } = await createCore({
+  plugins: [createAutoPromotePlugin({ threshold: 5 })],
+  maxPluginCompileChainDepth: 3
+});
+
+app.listen(3001);
+// GET /plugins/auto-promote/css/:projectId  → promoted CSS bundle
+// GET /plugins/auto-promote/stats            → usage statistics
+```
+
+**How it works:**
+
+1. **`setup()`** seeds tracking state from any pages already in cache, and registers two custom routes (promoted CSS bundle, usage stats).
+2. **`transformClasses`** runs on every compile. It records which classes appear on which pages (before stripping), then removes promoted classes from the output so per-page CSS only contains unique utilities. If *all* classes would be stripped, it returns `undefined` to keep the original list (avoiding a 400 error).
+3. **`onCompileResult`** (deferred) recalculates the promoted set after each compile. When the set changes, it calls `ctx.compile()` to pre-generate CSS for a synthetic `__auto_promote__` page, caching the result for the custom route.
+
+The plugin uses `deferHooks: ["onCompileResult"]` so the promoted-CSS regeneration happens asynchronously and doesn't slow down the HTTP response. The synthetic `__auto_promote__` page ID is excluded from stripping logic, so the promoted CSS compile always receives the full class list.
+
+See `plugins/auto-promote.js` for the full implementation and `tests/auto-promote.test.js` for test coverage.
