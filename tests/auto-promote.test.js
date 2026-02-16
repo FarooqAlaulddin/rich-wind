@@ -30,6 +30,23 @@ async function stopServer({ server, close }) {
   await close();
 }
 
+function createPluginDataStore() {
+  const map = new Map();
+  return {
+    async readPluginData({ pluginName, key }) {
+      const raw = map.get(`${pluginName}:${key}`);
+      if (raw === undefined) return null;
+      return JSON.parse(JSON.stringify(raw));
+    },
+    async writePluginData({ pluginName, key, value }) {
+      map.set(`${pluginName}:${key}`, JSON.parse(JSON.stringify(value)));
+    },
+    async deletePluginData({ pluginName, key }) {
+      map.delete(`${pluginName}:${key}`);
+    }
+  };
+}
+
 describe('Auto-Promote Plugin', () => {
   describe('basic promotion tracking', () => {
     it('classes below threshold are NOT promoted', async () => {
@@ -267,6 +284,51 @@ describe('Auto-Promote Plugin', () => {
       expect(stats.sp.promoted).toContain('text-red-500');
 
       await stopServer({ server, close });
+    });
+  });
+
+  describe('storage persistence', () => {
+    it('restores promoted stats and CSS on a fresh core instance', async () => {
+      const cacheStore = createPluginDataStore();
+
+      const plugin1 = createAutoPromotePlugin({ threshold: 2 });
+      const s1 = await startServer({
+        plugins: [plugin1],
+        cacheStore,
+        maxPluginCompileChainDepth: 3
+      });
+
+      await compileViaHttp(s1.port, 'persist-proj', 'p1', 'text-red-500 p-4');
+      await compileViaHttp(s1.port, 'persist-proj', 'p2', 'text-red-500 bg-blue-500');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const cssRes1 = await fetch(`http://localhost:${s1.port}/plugins/auto-promote/css/persist-proj`);
+      expect(cssRes1.status).toBe(200);
+      const css1 = await cssRes1.text();
+      expect(css1.length).toBeGreaterThan(0);
+
+      await stopServer(s1);
+
+      const plugin2 = createAutoPromotePlugin({ threshold: 2 });
+      const s2 = await startServer({
+        plugins: [plugin2],
+        cacheStore,
+        maxPluginCompileChainDepth: 3
+      });
+
+      const statsRes = await fetch(`http://localhost:${s2.port}/plugins/auto-promote/stats`);
+      expect(statsRes.status).toBe(200);
+      const stats = await statsRes.json();
+      expect(stats['persist-proj']).toBeDefined();
+      expect(stats['persist-proj'].promoted).toContain('text-red-500');
+
+      const cssRes2 = await fetch(`http://localhost:${s2.port}/plugins/auto-promote/css/persist-proj`);
+      expect(cssRes2.status).toBe(200);
+      const css2 = await cssRes2.text();
+      expect(css2.length).toBeGreaterThan(0);
+      expect(css2).toContain('.text-red-500');
+
+      await stopServer(s2);
     });
   });
 });

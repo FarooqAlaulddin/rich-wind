@@ -23,9 +23,120 @@ function createRingBuffer(capacity) {
       total++;
     },
     toArray() { return buf.slice(); },
+    hydrate(items, totalPushed) {
+      buf.length = 0;
+      const source = Array.isArray(items) ? items.slice(-capacity) : [];
+      for (const item of source) buf.push(item);
+      const normalizedTotal = Number.isFinite(totalPushed) ? Math.max(totalPushed, buf.length) : buf.length;
+      total = normalizedTotal;
+    },
     get length() { return buf.length; },
     get totalPushed() { return total; }
   };
+}
+
+const STORAGE_KEY = 'metrics_v1';
+const PERSIST_DEBOUNCE_MS = 250;
+
+function toSafeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function toSafeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function toNumber(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function serializeMetrics(metrics) {
+  return {
+    version: 1,
+    requests: {
+      total: metrics.requests.total,
+      byAction: { ...metrics.requests.byAction }
+    },
+    responses: {
+      byStatus: { ...metrics.responses.byStatus },
+      latencies: {
+        items: metrics.responses.latencies.toArray(),
+        totalPushed: metrics.responses.latencies.totalPushed
+      }
+    },
+    compiles: {
+      total: metrics.compiles.total,
+      fresh: metrics.compiles.fresh,
+      cached: metrics.compiles.cached,
+      byBundle: { ...metrics.compiles.byBundle },
+      byProject: { ...metrics.compiles.byProject },
+      bySource: { ...metrics.compiles.bySource }
+    },
+    css: {
+      totalBytes: metrics.css.totalBytes,
+      sizes: {
+        items: metrics.css.sizes.toArray(),
+        totalPushed: metrics.css.sizes.totalPushed
+      }
+    },
+    classes: {
+      totalSeen: metrics.classes.totalSeen,
+      frequency: Array.from(metrics.classes.frequency.entries())
+    },
+    cache: {
+      hits: metrics.cache.hits,
+      misses: metrics.cache.misses
+    },
+    errors: {
+      items: metrics.errors.toArray(),
+      totalPushed: metrics.errors.totalPushed
+    }
+  };
+}
+
+function restoreMetrics(metrics, snapshot) {
+  if (!snapshot || snapshot.version !== 1) return false;
+
+  metrics.requests.total = toNumber(snapshot.requests?.total, 0);
+  metrics.requests.byAction = { ...toSafeObject(snapshot.requests?.byAction) };
+
+  metrics.responses.byStatus = { ...toSafeObject(snapshot.responses?.byStatus) };
+  metrics.responses.latencies.hydrate(
+    toSafeArray(snapshot.responses?.latencies?.items).map((n) => toNumber(n, 0)),
+    toNumber(snapshot.responses?.latencies?.totalPushed, 0)
+  );
+
+  metrics.compiles.total = toNumber(snapshot.compiles?.total, 0);
+  metrics.compiles.fresh = toNumber(snapshot.compiles?.fresh, 0);
+  metrics.compiles.cached = toNumber(snapshot.compiles?.cached, 0);
+  metrics.compiles.byBundle = { ...toSafeObject(snapshot.compiles?.byBundle) };
+  metrics.compiles.byProject = { ...toSafeObject(snapshot.compiles?.byProject) };
+  metrics.compiles.bySource = { ...toSafeObject(snapshot.compiles?.bySource) };
+
+  metrics.css.totalBytes = toNumber(snapshot.css?.totalBytes, 0);
+  metrics.css.sizes.hydrate(
+    toSafeArray(snapshot.css?.sizes?.items).map((n) => toNumber(n, 0)),
+    toNumber(snapshot.css?.sizes?.totalPushed, 0)
+  );
+
+  metrics.classes.totalSeen = toNumber(snapshot.classes?.totalSeen, 0);
+  metrics.classes.frequency.clear();
+  for (const entry of toSafeArray(snapshot.classes?.frequency)) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue;
+    const [className, count] = entry;
+    if (typeof className !== 'string') continue;
+    metrics.classes.frequency.set(className, toNumber(count, 0));
+  }
+
+  metrics.cache.hits = toNumber(snapshot.cache?.hits, 0);
+  metrics.cache.misses = toNumber(snapshot.cache?.misses, 0);
+
+  metrics.errors.hydrate(
+    toSafeArray(snapshot.errors?.items),
+    toNumber(snapshot.errors?.totalPushed, 0)
+  );
+
+  return true;
 }
 
 export function createAnalyticsPlugin() {
@@ -41,6 +152,21 @@ export function createAnalyticsPlugin() {
   };
 
   let ctx = null;
+  let persistTimer = null;
+
+  const persist = async () => {
+    if (!ctx?.storage) return false;
+    return ctx.storage.set(STORAGE_KEY, serializeMetrics(metrics));
+  };
+
+  const schedulePersist = () => {
+    if (!ctx?.storage || persistTimer) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      persist().catch(() => {});
+    }, PERSIST_DEBOUNCE_MS);
+    if (typeof persistTimer.unref === 'function') persistTimer.unref();
+  };
 
   return {
     name: 'analytics',
@@ -51,16 +177,21 @@ export function createAnalyticsPlugin() {
       ctx = context;
       metrics.startedAt = Date.now();
 
-      // Seed class frequency from existing cache state
-      for (const projectId of ctx.getProjectIds()) {
-        const counts = ctx.getClassCounts(projectId);
-        if (!counts) continue;
-        for (const [cls, count] of Object.entries(counts)) {
-          metrics.classes.frequency.set(
-            cls,
-            (metrics.classes.frequency.get(cls) || 0) + count
-          );
-          metrics.classes.totalSeen++;
+      const restored = await ctx.storage.get(STORAGE_KEY);
+      const didRestore = restoreMetrics(metrics, restored);
+
+      if (!didRestore) {
+        // Seed class frequency from existing cache state
+        for (const projectId of ctx.getProjectIds()) {
+          const counts = ctx.getClassCounts(projectId);
+          if (!counts) continue;
+          for (const [cls, count] of Object.entries(counts)) {
+            metrics.classes.frequency.set(
+              cls,
+              (metrics.classes.frequency.get(cls) || 0) + count
+            );
+            metrics.classes.totalSeen++;
+          }
         }
       }
 
@@ -155,11 +286,20 @@ export function createAnalyticsPlugin() {
 
     },
 
+    async teardown() {
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      await persist();
+    },
+
     onRequestStart({ action, request }) {
       metrics.requests.total++;
       if (action) {
         metrics.requests.byAction[action] = (metrics.requests.byAction[action] || 0) + 1;
       }
+      schedulePersist();
     },
 
     onResponseSent({ status, durationMs }) {
@@ -168,6 +308,7 @@ export function createAnalyticsPlugin() {
       if (typeof durationMs === 'number') {
         metrics.responses.latencies.push(durationMs);
       }
+      schedulePersist();
     },
 
     onCompileResult({ projectId, bundle, classes, css, cached, source }) {
@@ -203,14 +344,17 @@ export function createAnalyticsPlugin() {
           metrics.classes.frequency.set(cls, prev + 1);
         }
       }
+      schedulePersist();
     },
 
     onCacheHit() {
       metrics.cache.hits++;
+      schedulePersist();
     },
 
     onCacheMiss() {
       metrics.cache.misses++;
+      schedulePersist();
     },
 
     onError({ error, stage, hook, plugin, timedOut, context: errCtx }) {
@@ -223,6 +367,7 @@ export function createAnalyticsPlugin() {
         timedOut: Boolean(timedOut),
         projectId: errCtx?.projectId || null
       });
+      schedulePersist();
     }
   };
 }

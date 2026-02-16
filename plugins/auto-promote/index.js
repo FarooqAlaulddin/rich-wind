@@ -12,6 +12,45 @@
  */
 
 const SYNTHETIC_PAGE = '__auto_promote__';
+const STORAGE_KEY = 'state_v1';
+const PERSIST_DEBOUNCE_MS = 250;
+
+function isObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mapOfSetToObject(input) {
+  const out = {};
+  for (const [outerKey, innerMap] of input) {
+    const inner = {};
+    for (const [innerKey, set] of innerMap) {
+      inner[innerKey] = Array.from(set);
+    }
+    out[outerKey] = inner;
+  }
+  return out;
+}
+
+function objectToMapOfSet(input) {
+  const outer = new Map();
+  if (!isObject(input)) return outer;
+  for (const [outerKey, innerObj] of Object.entries(input)) {
+    if (!isObject(innerObj)) continue;
+    const innerMap = new Map();
+    for (const [innerKey, list] of Object.entries(innerObj)) {
+      if (!Array.isArray(list)) continue;
+      innerMap.set(innerKey, new Set(list.filter((item) => typeof item === 'string')));
+    }
+    outer.set(outerKey, innerMap);
+  }
+  return outer;
+}
+
+function mapToObject(input) {
+  const out = {};
+  for (const [key, value] of input) out[key] = value;
+  return out;
+}
 
 export function createAutoPromotePlugin(options = {}) {
   const threshold = Number.isFinite(options.threshold) && options.threshold >= 1
@@ -28,6 +67,8 @@ export function createAutoPromotePlugin(options = {}) {
   const promotedCssCache = new Map();
 
   let ctx = null;
+  let storage = null;
+  let persistTimer = null;
 
   function getProjectMap(projectId) {
     let map = classPageMap.get(projectId);
@@ -96,6 +137,82 @@ export function createAutoPromotePlugin(options = {}) {
     return set;
   }
 
+  function seedFromCacheState() {
+    for (const projectId of ctx.getProjectIds()) {
+      const pageIds = ctx.getPageIds(projectId);
+      if (!pageIds) continue;
+      for (const pageId of pageIds) {
+        if (pageId === SYNTHETIC_PAGE) continue;
+        const classes = ctx.getPageClasses(projectId, pageId);
+        if (classes) {
+          trackClasses(projectId, pageId, classes);
+        }
+      }
+      recalcPromoted(projectId);
+    }
+  }
+
+  function serializeState() {
+    return {
+      version: 1,
+      threshold,
+      classPageMap: mapOfSetToObject(classPageMap),
+      pageClassMap: mapOfSetToObject(pageClassMap),
+      promotedCssCache: mapToObject(promotedCssCache)
+    };
+  }
+
+  function clearState() {
+    classPageMap.clear();
+    pageClassMap.clear();
+    promoted.clear();
+    promotedCssCache.clear();
+  }
+
+  function restoreState(snapshot) {
+    if (!isObject(snapshot) || snapshot.version !== 1) return false;
+
+    clearState();
+
+    const restoredClassPageMap = objectToMapOfSet(snapshot.classPageMap);
+    const restoredPageClassMap = objectToMapOfSet(snapshot.pageClassMap);
+
+    for (const [projectId, classMap] of restoredClassPageMap) {
+      classPageMap.set(projectId, classMap);
+    }
+    for (const [projectId, pageMap] of restoredPageClassMap) {
+      pageClassMap.set(projectId, pageMap);
+    }
+
+    for (const projectId of classPageMap.keys()) {
+      recalcPromoted(projectId);
+    }
+
+    const thresholdMatches = snapshot.threshold === threshold;
+    if (thresholdMatches && isObject(snapshot.promotedCssCache)) {
+      for (const [projectId, css] of Object.entries(snapshot.promotedCssCache)) {
+        if (typeof css !== 'string') continue;
+        promotedCssCache.set(projectId, css);
+      }
+    }
+
+    return true;
+  }
+
+  const persist = async () => {
+    if (!storage) return false;
+    return storage.set(STORAGE_KEY, serializeState());
+  };
+
+  const schedulePersist = () => {
+    if (!storage || persistTimer) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      persist().catch(() => {});
+    }, PERSIST_DEBOUNCE_MS);
+    if (typeof persistTimer.unref === 'function') persistTimer.unref();
+  };
+
   return {
     name: 'auto-promote',
     deferHooks: ['onCompileResult'],
@@ -103,19 +220,21 @@ export function createAutoPromotePlugin(options = {}) {
 
     async setup(context) {
       ctx = context;
+      storage = context.storage;
 
-      // Seed tracking from existing cache state
-      for (const projectId of ctx.getProjectIds()) {
-        const pageIds = ctx.getPageIds(projectId);
-        if (!pageIds) continue;
-        for (const pageId of pageIds) {
-          if (pageId === SYNTHETIC_PAGE) continue;
-          const classes = ctx.getPageClasses(projectId, pageId);
-          if (classes) {
-            trackClasses(projectId, pageId, classes);
-          }
-        }
-        recalcPromoted(projectId);
+      const hasCachePages = ctx.getProjectIds().some((projectId) => {
+        const pageIds = ctx.getPageIds(projectId) || [];
+        return pageIds.some((pageId) => pageId !== SYNTHETIC_PAGE);
+      });
+
+      let restored = false;
+      if (!hasCachePages) {
+        const snapshot = await storage.get(STORAGE_KEY);
+        restored = restoreState(snapshot);
+      }
+
+      if (!restored) {
+        seedFromCacheState();
       }
 
       // Custom routes
@@ -143,10 +262,19 @@ export function createAutoPromotePlugin(options = {}) {
       });
     },
 
+    async teardown() {
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      await persist();
+    },
+
     transformClasses({ projectId, pageId, value }) {
       // Always track the original classes (before stripping)
       if (pageId !== SYNTHETIC_PAGE) {
         trackClasses(projectId, pageId, value);
+        schedulePersist();
       }
 
       // Don't strip classes from the synthetic promoted page
@@ -176,6 +304,7 @@ export function createAutoPromotePlugin(options = {}) {
 
       const oldPromoted = promoted.get(projectId);
       const newPromoted = recalcPromoted(projectId);
+      let shouldPersist = false;
 
       // Check if promoted set changed
       const changed = !oldPromoted ||
@@ -192,10 +321,20 @@ export function createAutoPromotePlugin(options = {}) {
         });
         if (result && !result.error && result.css) {
           promotedCssCache.set(projectId, result.css);
+          shouldPersist = true;
         }
       } else if (newPromoted.size === 0) {
         promotedCssCache.delete(projectId);
+        shouldPersist = true;
+      } else if (changed) {
+        shouldPersist = true;
       }
+
+      if (changed && !shouldPersist) {
+        // Promotion state changed but CSS generation failed; persist trackers anyway.
+        shouldPersist = true;
+      }
+      if (shouldPersist) schedulePersist();
     }
   };
 }
