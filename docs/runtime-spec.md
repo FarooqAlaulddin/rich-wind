@@ -49,7 +49,7 @@ The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It
 
 By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
 
-A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
+A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus two optional delete-through artifact methods used by plugin purge mutations, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
 
 ### readPageArtifact
 
@@ -103,6 +103,22 @@ Called after a successful compile to persist the result. Fires asynchronously af
 
 Your implementation should write this to whatever storage you're using. The `expiresAt` field tells you when this artifact can be pruned.
 
+### deletePageArtifact (optional)
+
+Called by `purgePage(projectId, pageId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app",
+  pageId: "hero",
+  bundle: "full" // called separately for full/utilities/theme
+}
+```
+
+If implemented, it should remove the artifact for that page + bundle from persistence.
+
 ### readProjectArtifact
 
 Called when project-level CSS (`GET /api/projects/:id/css`) isn't found in memory.
@@ -145,6 +161,21 @@ Called after project-level CSS is compiled, to persist the aggregate. Also fires
   expiresAt: 1707800600000
 }
 ```
+
+### deleteProjectArtifact (optional)
+
+Called by `purgeProject(projectId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app",
+  bundle: "full" // called separately for full/utilities/theme
+}
+```
+
+If implemented, it should remove the project aggregate artifact for that bundle from persistence.
 
 ### Plugin data methods (optional)
 
@@ -221,6 +252,10 @@ For plugin storage specifically:
 - `ctx.storage.get(key)` falls back to `null`
 - `ctx.storage.set(key, value)` and `ctx.storage.delete(key)` fall back to `false`
 - `ctx.storage.list(prefix?)` falls back to `[]`
+
+For purge mutations specifically:
+- `ctx.purgePage(projectId, pageId)` and `ctx.purgeProject(projectId)` return `false` if required delete operations fail, time out, or are missing
+- local in-memory eviction still happens, so the process remains healthy and operational
 
 This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
 

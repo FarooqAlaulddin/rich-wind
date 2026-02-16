@@ -106,7 +106,7 @@ The `cacheStore` option accepts any object that implements the core artifact met
 
 For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore).
 
-The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. Here are two examples:
+The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact` and `deleteProjectArtifact` as well. Here are two examples:
 
 ### Redis
 
@@ -121,6 +121,9 @@ const cacheStore = {
     const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
     await redis.set(key, JSON.stringify(input), "EX", ttl);
   },
+  async deletePageArtifact({ projectId, pageId, bundle }) {
+    await redis.del(`rw:${projectId}:${pageId}:${bundle}`);
+  },
   async readProjectArtifact({ projectId, bundle }) {
     const raw = await redis.get(`rw:${projectId}:_project:${bundle}`);
     return raw ? JSON.parse(raw) : null;
@@ -129,6 +132,9 @@ const cacheStore = {
     const key = `rw:${input.projectId}:_project:${input.bundle}`;
     const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
     await redis.set(key, JSON.stringify(input), "EX", ttl);
+  },
+  async deleteProjectArtifact({ projectId, bundle }) {
+    await redis.del(`rw:${projectId}:_project:${bundle}`);
   },
   async readPluginData({ pluginName, key }) {
     const raw = await redis.get(`rw:plugin:${pluginName}:${key}`);
@@ -162,8 +168,18 @@ const writeJson = async (f, d) => { await fs.mkdir(path.dirname(f), { recursive:
 const cacheStore = {
   readPageArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`)),
   upsertPageArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`), i),
+  deletePageArtifact: async (i) => {
+    try {
+      await fs.unlink(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`));
+    } catch {}
+  },
   readProjectArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`)),
   upsertProjectArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`), i),
+  deleteProjectArtifact: async (i) => {
+    try {
+      await fs.unlink(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`));
+    } catch {}
+  },
   readPluginData: ({ pluginName, key }) =>
     readJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`)),
   writePluginData: ({ pluginName, key, value }) =>
