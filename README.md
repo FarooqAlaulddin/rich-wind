@@ -90,13 +90,14 @@ Plugin options:
 - `deferHooks` (string[]) — defer only specific hooks.
 - `timeoutMs` (number) — per‑hook timeout before `onError` is called.
 
-Plugin setup context includes `storage` when `cacheStore` is configured:
+Plugin setup context includes `storage`:
 - `ctx.storage.get(key)` -> value | `null`
 - `ctx.storage.set(key, value)` -> `true` | `false`
 - `ctx.storage.delete(key)` -> `true` | `false`
 
 Storage keys must match `[a-zA-Z0-9._:-]{1,128}` and are automatically namespaced per plugin.
-Cache-store failures and timeouts are fail-open and reported through `onError`.
+Durability requires `cacheStore` to implement `readPluginData` / `writePluginData` / `deletePluginData`.
+Missing methods, failures, and timeouts are fail-open and reported through `onError`.
 
 Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
 Cache store timeout can be set via `createCore({ cacheStoreTimeoutMs })` or `RW_CACHE_STORE_TIMEOUT_MS`.
