@@ -105,6 +105,8 @@ All query functions return copies or frozen snapshots — never live references.
 
 **`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it automatically skips hooks to prevent infinite recursion (reentrancy guard).
 
+When `nodeRole` is `reader`, mutation helpers are blocked: `compile()` returns `{ error, status: 409, code: "READ_ONLY_REPLICA" }`, `purge*`/`hydrate*` return `false`, and `evict*` are no-ops.
+
 **`hydratePageArtifact()`** is useful for fast restart from persistence — a plugin reads artifacts from Redis/DB in `setup()` and populates the cache without recompilation. Returns `true` if hydrated, `false` if rejected. New pages require `classes`; existing pages can update CSS only.
 
 **`hydrateProjectArtifact()`** injects project-level aggregate CSS. The project must already exist (hydrate pages first). Returns `true` if hydrated, `false` if rejected.
@@ -125,6 +127,7 @@ All query functions return copies or frozen snapshots — never live references.
 - Namespacing is automatic per plugin route name (lowercased plugin name)
 - Storage methods are always available (even without `cacheStore`) and fail open: `get` returns `null`, `set/delete` return `false`, `list` returns `[]`
 - Adapters are responsible for value serialization; JSON-serializable values are recommended for portability
+- On `nodeRole: "reader"`, `storage.set/delete` are blocked and return `false` with `onError` reporting (`stage: "replica-role"`, code `READ_ONLY_REPLICA`)
 
 ```js
 function createAnalyticsPlugin() {

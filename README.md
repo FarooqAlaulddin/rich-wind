@@ -353,6 +353,7 @@ Supported config keys:
 | `rateLimitMax` | Requests per window |
 | `rateLimitDisabled` | Disable rate limiting |
 | `trustProxy` | Trust proxy IPs |
+| `nodeRole` | Replica role: `hybrid` (default), `writer`, or `reader` |
 
 Additional top-level options:
 
@@ -382,6 +383,7 @@ Environment variables (core):
 | `RW_RATE_LIMIT_MAX` | `60` | Requests per window |
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
+| `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, `reader` |
 | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default plugin hook timeout (ms) |
 | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Cache store operation timeout (ms) |
 
@@ -389,6 +391,7 @@ Notes:
 - `PORT` only applies when running `node services/index.js`. In embedded mode, you call `app.listen(...)`.
 - `RW_PLUGIN_TIMEOUT_MS` maps to the top-level `pluginTimeoutMs` option, not `config`.
 - `RW_CACHE_STORE_TIMEOUT_MS` maps to the top-level `cacheStoreTimeoutMs` option, not `config`.
+- Recommended single-writer deployment: run write replicas with `nodeRole=writer`, read replicas with `nodeRole=reader`, and point both at the same `cacheStore`.
 - Precedence: JS options win over env vars. Invalid values fall back to defaults.
 
 Environment variables (UI):

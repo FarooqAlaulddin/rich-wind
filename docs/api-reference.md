@@ -171,6 +171,7 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `rateLimitMax` | `RW_RATE_LIMIT_MAX` | `60` | Max requests per IP per window |
 | `rateLimitDisabled` | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting entirely |
 | `trustProxy` | `RW_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for IP detection |
+| `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
 
 These options live outside `config` — they're top-level arguments to `createCore()`:
 
@@ -184,3 +185,5 @@ These options live outside `config` — they're top-level arguments to `createCo
 | `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation |
 
 `PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you call `app.listen()` yourself.
+
+For single-writer deployments, set write nodes to `nodeRole: "writer"` and read nodes to `nodeRole: "reader"` while using a shared `cacheStore`.

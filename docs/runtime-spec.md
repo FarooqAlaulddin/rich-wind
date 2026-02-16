@@ -274,6 +274,23 @@ For purge mutations specifically:
 
 This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
 
+## Replica Roles
+
+Rich Wind supports explicit replica roles through `config.nodeRole` (or `RW_NODE_ROLE`):
+
+- `hybrid` (default) — read + write behavior (current single-node default)
+- `writer` — same write behavior as `hybrid`, intended for mutation pool replicas
+- `reader` — blocks core/plugin mutation helpers and write endpoints
+
+On `reader` replicas:
+
+- `POST /api/compile` returns `409` with code `READ_ONLY_REPLICA`
+- plugin mutation helpers (`ctx.compile`, `ctx.purge*`, `ctx.hydrate*`, `ctx.evict*`) are blocked
+- plugin storage writes (`ctx.storage.set/delete`) are blocked; reads (`get/list`) still work
+- when `cacheStore` is enabled, page/project CSS reads prefer store artifacts as source-of-truth
+
+This enables a single-writer/many-readers topology while keeping core storage-agnostic.
+
 ### Artifact validation
 
 Rich Wind validates every artifact returned by the store before using it. An artifact is rejected (treated as a cache miss) if:

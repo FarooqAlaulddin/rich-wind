@@ -29,6 +29,24 @@ const parseBoolean = (value, fallback = false) => {
     return fallback;
 };
 
+const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
+const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
+
+function normalizeNodeRole(value) {
+    if (typeof value !== 'string') return 'hybrid';
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'read') return 'reader';
+    if (normalized === 'write') return 'writer';
+    return NODE_ROLES.has(normalized) ? normalized : 'hybrid';
+}
+
+function createReadOnlyError(action) {
+    const error = new Error(`"${action}" is not allowed on read-only replicas.`);
+    error.code = READ_ONLY_ERROR_CODE;
+    error.action = action;
+    return error;
+}
+
 function buildConfig(overrides = {}) {
     const cacheTtlMs = parseIntWithDefault(
         overrides.cacheTtlMs ?? process.env.RW_CACHE_TTL_MS,
@@ -105,6 +123,9 @@ function buildConfig(overrides = {}) {
             overrides.maxCssChars ?? process.env.RW_MAX_CSS_CHARS,
             2000000,
             1
+        ),
+        nodeRole: normalizeNodeRole(
+            overrides.nodeRole ?? process.env.RW_NODE_ROLE
         )
     };
 }
@@ -1242,7 +1263,7 @@ function createPluginRunner(plugins = [], options = {}) {
 // =============================================================================
 // HTTP routes
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner) {
+function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}) {
     const withRequestHooks = (req, res, context) => {
         const start = Date.now();
         pluginRunner.runHook('onRequestStart', context);
@@ -1259,6 +1280,12 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner) {
             Promise.resolve(fn()).catch(() => {});
         });
     };
+    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
+        ? roleHelpers.isWriteAllowed
+        : (() => true);
+    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
+        ? roleHelpers.reportWriteBlocked
+        : (async () => {});
 // API Routes
 
 // Compile CSS for a project/page (in-memory cache)
@@ -1277,6 +1304,20 @@ app.post('/api/compile', async (req, res) => {
             request: { ip: getClientIp(req), method: req.method, path: req.path }
         };
         withRequestHooks(req, res, { ...hookContext, action: 'compile' });
+
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('http-compile', {
+                source: 'http',
+                request: hookContext.request,
+                projectId,
+                pageId,
+                bundle
+            });
+            return res.status(409).json({
+                error: 'This replica is read-only. Route compile writes to a writer replica.',
+                code: READ_ONLY_ERROR_CODE
+            });
+        }
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
@@ -1354,8 +1395,57 @@ app.get('/api/css', async (req, res) => {
             });
         }
 
-        const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
-        if (!cached) {
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+
+        if (readerStoreFirst) {
+            const storeArtifact = await readPageArtifactFromStore(
+                cacheStoreRunner,
+                config,
+                projectId,
+                pageId,
+                bundle
+            );
+            if (storeArtifact) {
+                hydratePageFromArtifact(
+                    state,
+                    config,
+                    projectId,
+                    pageId,
+                    bundle,
+                    storeArtifact
+                );
+                await pluginRunner.runHook('onCacheHit', {
+                    projectId,
+                    pageId,
+                    bundle,
+                    source: 'page-store',
+                    request: hookContext.request
+                });
+                return res.type('text/css').send(storeArtifact.css);
+            }
+            await pluginRunner.runHook('onCacheMiss', {
+                projectId,
+                pageId,
+                bundle,
+                source: 'page-store',
+                request: hookContext.request
+            });
+        } else {
+            const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
+            if (cached) {
+                await pluginRunner.runHook('onCacheHit', {
+                    projectId,
+                    pageId,
+                    bundle,
+                    source: 'page',
+                    request: hookContext.request
+                });
+                return res.type('text/css').send(cached.css);
+            }
+
             const storeArtifact = await readPageArtifactFromStore(
                 cacheStoreRunner,
                 config,
@@ -1388,26 +1478,17 @@ app.get('/api/css', async (req, res) => {
                 source: 'page',
                 request: hookContext.request
             });
-
-            // Resolve hook: let plugins provide CSS on cache miss
-            const resolved = await pluginRunner.runResolve('resolvePageCss', {
-                projectId, pageId, bundle, source: 'http', request: hookContext.request
-            }, config);
-            if (resolved) {
-                return res.type('text/css').send(resolved.css);
-            }
-
-            return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
         }
 
-        await pluginRunner.runHook('onCacheHit', {
-            projectId,
-            pageId,
-            bundle,
-            source: 'page',
-            request: hookContext.request
-        });
-        res.type('text/css').send(cached.css);
+        // Resolve hook: let plugins provide CSS on cache miss
+        const resolved = await pluginRunner.runResolve('resolvePageCss', {
+            projectId, pageId, bundle, source: 'http', request: hookContext.request
+        }, config);
+        if (resolved) {
+            return res.type('text/css').send(resolved.css);
+        }
+
+        return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
     } catch (err) {
         await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: hookContext.request });
         res.status(500).json({ error: err.message });
@@ -1430,8 +1511,13 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
                 error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
             });
         }
-        let result = await getProjectCss(state, config, projectId, bundle);
-        if (!result && bundle !== 'base') {
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+        let result = null;
+
+        if (readerStoreFirst) {
             const storeArtifact = await readProjectArtifactFromStore(
                 cacheStoreRunner,
                 config,
@@ -1446,6 +1532,24 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
                     source: 'store'
                 };
             }
+        } else {
+            result = await getProjectCss(state, config, projectId, bundle);
+            if (!result && bundle !== 'base') {
+                const storeArtifact = await readProjectArtifactFromStore(
+                    cacheStoreRunner,
+                    config,
+                    projectId,
+                    bundle
+                );
+                if (storeArtifact) {
+                    result = {
+                        css: storeArtifact.css,
+                        hash: storeArtifact.hash ?? null,
+                        cached: true,
+                        source: 'store'
+                    };
+                }
+            }
         }
         if (!result) {
             // Resolve hook: let plugins provide project CSS on cache miss
@@ -1458,7 +1562,12 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
-        if (cacheStoreRunner?.enabled && bundle !== 'base' && result.source !== 'store') {
+        if (
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base' &&
+            result.source !== 'store' &&
+            isWriteAllowed()
+        ) {
             const now = Date.now();
             queueStoreWrite(() =>
                 cacheStoreRunner.upsertProjectArtifact({
@@ -1656,7 +1765,21 @@ function withTimeoutGeneric(promise, timeoutMs, label = 'Operation') {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function mountPluginRoutes(app, pluginList, pluginContext, cacheStoreRunner, globalSetupTimeoutMs) {
+async function mountPluginRoutes(
+    app,
+    pluginList,
+    pluginContext,
+    cacheStoreRunner,
+    globalSetupTimeoutMs,
+    roleHelpers = {}
+) {
+    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
+        ? roleHelpers.isWriteAllowed
+        : (() => true);
+    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
+        ? roleHelpers.reportWriteBlocked
+        : (async () => {});
+
     for (const plugin of pluginList) {
         if (typeof plugin.instance.setup !== 'function') {
             plugin.active = true;
@@ -1695,6 +1818,14 @@ async function mountPluginRoutes(app, pluginList, pluginContext, cacheStoreRunne
                 if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
                     throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
                 }
+                if (!isWriteAllowed()) {
+                    await reportWriteBlocked('plugin-storage-set', {
+                        source: 'plugin',
+                        pluginName: plugin.name,
+                        key
+                    });
+                    return false;
+                }
                 return cacheStoreRunner.writePluginData({
                     pluginName: plugin.routeName,
                     key,
@@ -1704,6 +1835,14 @@ async function mountPluginRoutes(app, pluginList, pluginContext, cacheStoreRunne
             async delete(key) {
                 if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
                     throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                if (!isWriteAllowed()) {
+                    await reportWriteBlocked('plugin-storage-delete', {
+                        source: 'plugin',
+                        pluginName: plugin.name,
+                        key
+                    });
+                    return false;
                 }
                 return cacheStoreRunner.deletePluginData({
                     pluginName: plugin.routeName,
@@ -1789,6 +1928,27 @@ export async function createCore({
         onError: (context) => pluginRunner.runHook('onError', context)
     });
     const persistedBundles = ['full', 'utilities', 'theme'];
+    const readOnlyWriteMessage = 'This replica is read-only. Route writes to a writer replica.';
+    const isWriteAllowed = () => config.nodeRole !== 'reader';
+    const reportWriteBlocked = async (action, context = {}) => {
+        await pluginRunner.runHook('onError', {
+            error: createReadOnlyError(action),
+            stage: 'replica-role',
+            code: READ_ONLY_ERROR_CODE,
+            source: context.source ?? 'core',
+            request: context.request ?? null,
+            context: {
+                ...context,
+                nodeRole: config.nodeRole,
+                action
+            }
+        });
+    };
+    const reportWriteBlockedAsync = (action, context = {}) => {
+        queueMicrotask(() => {
+            reportWriteBlocked(action, context).catch(() => {});
+        });
+    };
 
     // Wire mutation functions onto pluginContext
     const evictProjectLocal = (projectId) => {
@@ -1828,20 +1988,36 @@ export async function createCore({
     };
 
     pluginContext.evictPage = (projectId, pageId) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-evict-page', { source: 'plugin', projectId, pageId });
+            return;
+        }
         evictPageByKey(state, makePageKey(projectId, pageId));
     };
 
     pluginContext.evictProject = (projectId) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-evict-project', { source: 'plugin', projectId });
+            return;
+        }
         evictProjectLocal(projectId);
     };
 
     pluginContext.purgePage = async (projectId, pageId) => {
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-purge-page', { source: 'plugin', projectId, pageId });
+            return false;
+        }
         if (!isValidId(projectId, config) || !isValidId(pageId, config)) return false;
         evictPageByKey(state, makePageKey(projectId, pageId));
         return purgePageArtifactsFromStore(projectId, pageId);
     };
 
     pluginContext.purgeProject = async (projectId) => {
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-purge-project', { source: 'plugin', projectId });
+            return false;
+        }
         if (!isValidId(projectId, config)) return false;
         const pageIds = evictProjectLocal(projectId);
         let pageResult = true;
@@ -1863,6 +2039,18 @@ export async function createCore({
     };
 
     pluginContext.compile = async (input) => {
+        const blockedProjectId = input?.projectId ?? null;
+        const blockedPageId = input?.pageId ?? null;
+        const blockedBundle = normalizeBundle(input?.bundle);
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-compile', {
+                source: 'plugin',
+                projectId: blockedProjectId,
+                pageId: blockedPageId,
+                bundle: blockedBundle
+            });
+            return { error: readOnlyWriteMessage, status: 409, code: READ_ONLY_ERROR_CODE };
+        }
         const { projectId, pageId, html, classes, bundle } = input || {};
         if (!projectId || !isValidId(projectId, config)) return { error: 'Invalid projectId.', status: 400 };
         if (!pageId || !isValidId(pageId, config)) return { error: 'Invalid pageId.', status: 400 };
@@ -1897,6 +2085,15 @@ export async function createCore({
     };
 
     pluginContext.hydratePageArtifact = (input) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-hydrate-page-artifact', {
+                source: 'plugin',
+                projectId: input?.projectId ?? null,
+                pageId: input?.pageId ?? null,
+                bundle: normalizeBundle(input?.bundle)
+            });
+            return false;
+        }
         const { projectId, pageId, bundle, ...rest } = input || {};
         if (!projectId || !isValidId(projectId, config)) return false;
         if (!pageId || !isValidId(pageId, config)) return false;
@@ -1906,6 +2103,14 @@ export async function createCore({
     };
 
     pluginContext.hydrateProjectArtifact = (input) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-hydrate-project-artifact', {
+                source: 'plugin',
+                projectId: input?.projectId ?? null,
+                bundle: normalizeBundle(input?.bundle)
+            });
+            return false;
+        }
         const { projectId, bundle, ...rest } = input || {};
         if (!projectId || !isValidId(projectId, config)) return false;
         const project = state.projects.get(projectId);
@@ -1933,10 +2138,18 @@ export async function createCore({
         pluginRunner.list,
         pluginContext,
         cacheStoreRunner,
-        setupTimeoutMs ?? defaultSetupTimeout
+        setupTimeoutMs ?? defaultSetupTimeout,
+        { isWriteAllowed, reportWriteBlocked }
     );
 
-    registerRoutes(app, pluginRunner, config, state, cacheStoreRunner);
+    registerRoutes(
+        app,
+        pluginRunner,
+        config,
+        state,
+        cacheStoreRunner,
+        { isWriteAllowed, reportWriteBlocked }
+    );
 
     let closePromise = null;
     const close = () => {

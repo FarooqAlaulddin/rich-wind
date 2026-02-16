@@ -98,6 +98,7 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 
 - **Sticky sessions** — route requests from the same editing session to the same replica. This keeps the cache warm for active users.
 - **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore) for the adapter interface.
+- **Single writer, many readers** — run writer replicas with `RW_NODE_ROLE=writer` and read replicas with `RW_NODE_ROLE=reader`. Route compile/purge/storage writes to writers only.
 - **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
 - **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
 
