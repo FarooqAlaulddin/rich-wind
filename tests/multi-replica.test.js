@@ -128,6 +128,33 @@ function createSharedCounterPlugin() {
   };
 }
 
+function createSharedKvPlugin() {
+  return {
+    name: 'shared-kv',
+    setup(ctx) {
+      ctx.addRoute('post', '/kv/:key', async (req, res) => {
+        const { key } = req.params;
+        const hasValue = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'value');
+        const value = hasValue ? req.body.value : true;
+        const ok = await ctx.storage.set(key, value);
+        return res.json({ ok, value });
+      });
+
+      ctx.addRoute('get', '/kv/:key', async (req, res) => {
+        const { key } = req.params;
+        const value = await ctx.storage.get(key);
+        return res.json({ exists: value !== null, value });
+      });
+
+      ctx.addRoute('delete', '/kv/:key', async (req, res) => {
+        const { key } = req.params;
+        const ok = await ctx.storage.delete(key);
+        return res.json({ ok });
+      });
+    }
+  };
+}
+
 function createRestoreProbePlugin() {
   let localCount = 0;
 
@@ -374,6 +401,118 @@ describe('Multi-replica cacheStore behavior', () => {
       expect((await valueA.json()).count).toBe(2);
 
       expect(store.getSnapshot().pluginDataCount).toBe(1);
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('supports plugin storage insert/update/delete across replicas', async () => {
+    const store = createSharedCacheStore();
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({
+        cacheStore: store,
+        plugins: [createSharedKvPlugin()]
+      });
+      const replicaB = await startReplica({
+        cacheStore: store,
+        plugins: [createSharedKvPlugin()]
+      });
+      replicas.push(replicaA, replicaB);
+
+      const insert = await fetch(`${replicaA.baseUrl}/plugins/shared-kv/kv/state`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ value: { version: 1, enabled: true } })
+      });
+      expect(insert.status).toBe(200);
+      expect((await insert.json()).ok).toBe(true);
+
+      const readAfterInsert = await fetch(`${replicaB.baseUrl}/plugins/shared-kv/kv/state`);
+      expect(readAfterInsert.status).toBe(200);
+      const insertedBody = await readAfterInsert.json();
+      expect(insertedBody.exists).toBe(true);
+      expect(insertedBody.value).toEqual({ version: 1, enabled: true });
+
+      const update = await fetch(`${replicaB.baseUrl}/plugins/shared-kv/kv/state`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ value: { version: 2, enabled: false } })
+      });
+      expect(update.status).toBe(200);
+      expect((await update.json()).ok).toBe(true);
+
+      const readAfterUpdate = await fetch(`${replicaA.baseUrl}/plugins/shared-kv/kv/state`);
+      expect(readAfterUpdate.status).toBe(200);
+      const updatedBody = await readAfterUpdate.json();
+      expect(updatedBody.exists).toBe(true);
+      expect(updatedBody.value).toEqual({ version: 2, enabled: false });
+
+      const remove = await fetch(`${replicaA.baseUrl}/plugins/shared-kv/kv/state`, {
+        method: 'DELETE'
+      });
+      expect(remove.status).toBe(200);
+      expect((await remove.json()).ok).toBe(true);
+
+      const readAfterDelete = await fetch(`${replicaB.baseUrl}/plugins/shared-kv/kv/state`);
+      expect(readAfterDelete.status).toBe(200);
+      const deletedBody = await readAfterDelete.json();
+      expect(deletedBody.exists).toBe(false);
+      expect(deletedBody.value).toBeNull();
+      expect(store.getSnapshot().pluginDataCount).toBe(0);
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('propagates page artifact updates across replicas', async () => {
+    const store = createSharedCacheStore();
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({ cacheStore: store });
+      const replicaB = await startReplica({ cacheStore: store });
+      replicas.push(replicaA, replicaB);
+
+      const first = await compile(replicaA.baseUrl, {
+        projectId: 'update-proj',
+        pageId: 'hero',
+        classes: 'bg-red-500'
+      });
+      expect(first.status).toBe(200);
+      expect(first.body.cached).toBe(false);
+
+      const wroteFirst = await waitFor(
+        () => store.getSnapshot().calls.upsertPageArtifact >= 1,
+        { timeoutMs: 2000 }
+      );
+      expect(wroteFirst).toBe(true);
+
+      const second = await compile(replicaB.baseUrl, {
+        projectId: 'update-proj',
+        pageId: 'hero',
+        classes: 'bg-emerald-500'
+      });
+      expect(second.status).toBe(200);
+      expect(second.body.cached).toBe(false);
+
+      const wroteSecond = await waitFor(
+        () => store.getSnapshot().calls.upsertPageArtifact >= 2,
+        { timeoutMs: 2000 }
+      );
+      expect(wroteSecond).toBe(true);
+
+      const replicaC = await startReplica({ cacheStore: store });
+      replicas.push(replicaC);
+
+      const cssResponse = await fetch(
+        `${replicaC.baseUrl}/api/css?projectId=update-proj&pageId=hero`
+      );
+      expect(cssResponse.status).toBe(200);
+      const css = await cssResponse.text();
+      expect(css).toContain('bg-emerald-500');
+      expect(css).not.toContain('bg-red-500');
     } finally {
       await closeReplicas(replicas);
     }
