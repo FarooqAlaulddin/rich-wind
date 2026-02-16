@@ -25,7 +25,7 @@ Plugins have an optional `setup()` and `teardown()` lifecycle.
 
 ### setup(context)
 
-Called once during `createCore()`, before routes are registered. Receives the full [plugin context](#plugin-context) including query functions, mutation functions, and `addRoute()` for registering custom HTTP routes. Can be async.
+Called once during `createCore()`, before routes are registered. Receives the full [plugin context](#plugin-context) including query functions, mutation functions, plugin storage, and `addRoute()` for registering custom HTTP routes. Can be async.
 
 ```js
 const dashboard = {
@@ -68,7 +68,7 @@ await close();                                         // 2. teardown plugins
 
 ## Plugin Context
 
-Every plugin's `setup()` receives a context object with query functions, mutation functions, and `addRoute()`. The same query and mutation functions are also available in hook contexts.
+Every plugin's `setup()` receives a context object with query functions, mutation functions, plugin storage, and `addRoute()`. The same query and mutation functions are also available in hook contexts. Storage is setup-scoped (not injected into hook context objects), so plugins should keep a local reference if hooks or teardown need it.
 
 ### Query Functions (read-only)
 
@@ -102,6 +102,46 @@ All query functions return copies or frozen snapshots — never live references.
 **`hydratePageArtifact()`** is useful for fast restart from persistence — a plugin reads artifacts from Redis/DB in `setup()` and populates the cache without recompilation. Returns `true` if hydrated, `false` if rejected. New pages require `classes`; existing pages can update CSS only.
 
 **`hydrateProjectArtifact()`** injects project-level aggregate CSS. The project must already exist (hydrate pages first). Returns `true` if hydrated, `false` if rejected.
+
+### Plugin Storage
+
+`setup()` also receives `storage`, a plugin-scoped key/value API backed by `cacheStore` when available.
+
+| Function | Returns | Effect |
+| --- | --- | --- |
+| `storage.get(key)` | `value` or `null` | Read a plugin-owned key |
+| `storage.set(key, value)` | `true` or `false` | Write a plugin-owned key |
+| `storage.delete(key)` | `true` or `false` | Delete a plugin-owned key |
+| `storage.list(prefix?)` | `string[]` | List plugin-owned keys (optionally filtered by prefix) |
+
+- Keys must match `[a-zA-Z0-9._:-]{1,128}`
+- `list(prefix)` prefixes must match `[a-zA-Z0-9._:-]{0,128}`
+- Namespacing is automatic per plugin route name (lowercased plugin name)
+- Storage methods are always available (even without `cacheStore`) and fail open: `get` returns `null`, `set/delete` return `false`, `list` returns `[]`
+- Adapters are responsible for value serialization; JSON-serializable values are recommended for portability
+
+```js
+function createAnalyticsPlugin() {
+  let storage;
+  let metrics = { compileCount: 0 };
+
+  return {
+    name: "analytics",
+    async setup(ctx) {
+      storage = ctx.storage;
+      const saved = await storage.get("metrics_v1");
+      if (saved && typeof saved === "object") metrics = saved;
+    },
+    onCompileResult() {
+      metrics.compileCount += 1;
+      storage.set("metrics_v1", metrics); // fail-open fire-and-forget is fine
+    },
+    async teardown() {
+      await storage.set("metrics_v1", metrics);
+    }
+  };
+}
+```
 
 ### Route Registration
 

@@ -102,11 +102,11 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 
 ## cacheStore Adapters
 
-The `cacheStore` option accepts any object that implements four async methods. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
+The `cacheStore` option accepts any object that implements the core artifact methods (page + project). It can also implement plugin-data methods so plugin `ctx.storage` state is durable across restarts. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
 
 For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore).
 
-The pattern is the same regardless of backend: map `projectId + pageId + bundle` to a storage key, serialize the artifact as JSON, and return `null` on miss. Here are two examples:
+The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. Here are two examples:
 
 ### Redis
 
@@ -129,6 +129,21 @@ const cacheStore = {
     const key = `rw:${input.projectId}:_project:${input.bundle}`;
     const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
     await redis.set(key, JSON.stringify(input), "EX", ttl);
+  },
+  async readPluginData({ pluginName, key }) {
+    const raw = await redis.get(`rw:plugin:${pluginName}:${key}`);
+    return raw ? JSON.parse(raw) : null;
+  },
+  async writePluginData({ pluginName, key, value }) {
+    await redis.set(`rw:plugin:${pluginName}:${key}`, JSON.stringify(value));
+  },
+  async deletePluginData({ pluginName, key }) {
+    await redis.del(`rw:plugin:${pluginName}:${key}`);
+  },
+  async listPluginData({ pluginName, prefix = "" }) {
+    // For large keyspaces, prefer SCAN over KEYS.
+    const keys = await redis.keys(`rw:plugin:${pluginName}:${prefix}*`);
+    return keys.map((fullKey) => fullKey.slice(`rw:plugin:${pluginName}:`.length));
   }
 };
 ```
@@ -149,6 +164,28 @@ const cacheStore = {
   upsertPageArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`), i),
   readProjectArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`)),
   upsertProjectArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`), i),
+  readPluginData: ({ pluginName, key }) =>
+    readJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`)),
+  writePluginData: ({ pluginName, key, value }) =>
+    writeJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`), value),
+  deletePluginData: async ({ pluginName, key }) => {
+    try {
+      await fs.unlink(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`));
+    } catch {}
+  },
+  async listPluginData({ pluginName, prefix = "" }) {
+    const dir = path.join(DIR, "_plugins", safe(pluginName));
+    let names = [];
+    try {
+      names = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return names
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name.slice(0, -5))
+      .filter((key) => key.startsWith(prefix));
+  },
 };
 ```
 

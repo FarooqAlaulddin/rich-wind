@@ -49,7 +49,7 @@ The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It
 
 By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
 
-A cacheStore is an object you pass to `createCore()`. It has four methods — two for page artifacts, two for project artifacts:
+A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
 
 ### readPageArtifact
 
@@ -146,9 +146,81 @@ Called after project-level CSS is compiled, to persist the aggregate. Also fires
 }
 ```
 
+### Plugin data methods (optional)
+
+These methods back the plugin storage API described in [Plugin System](/docs/plugin-system#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
+
+#### readPluginData
+
+Called by `ctx.storage.get(key)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics", // plugin route name (lowercased plugin name)
+  key: "metrics_v1"
+}
+```
+
+**Should return** the stored value or `null`.
+
+#### writePluginData
+
+Called by `ctx.storage.set(key, value)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  key: "metrics_v1",
+  value: { compileCount: 42 } // adapter-defined serialization
+}
+```
+
+#### deletePluginData
+
+Called by `ctx.storage.delete(key)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  key: "metrics_v1"
+}
+```
+
+#### listPluginData
+
+Called by `ctx.storage.list(prefix?)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  prefix: "metrics" // optional; empty string when omitted
+}
+```
+
+**Should return** an array of keys for that plugin namespace, for example:
+
+```js
+["metrics_v1", "metrics_daily_2026_02_16"]
+```
+
+Rich Wind sanitizes list output before returning it to plugins: non-string keys are dropped, invalid keys are dropped, keys are deduplicated, and `prefix` filtering is enforced again defensively.
+
 ### Failure behavior
 
 The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](/docs/plugin-system#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
+
+For plugin storage specifically:
+- `ctx.storage.get(key)` falls back to `null`
+- `ctx.storage.set(key, value)` and `ctx.storage.delete(key)` fall back to `false`
+- `ctx.storage.list(prefix?)` falls back to `[]`
 
 This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
 
