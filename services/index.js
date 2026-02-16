@@ -468,8 +468,10 @@ function createCacheStoreRunner(cacheStore, options = {}) {
         enabled: Boolean(store),
         readPageArtifact: (input) => read('readPageArtifact', input),
         upsertPageArtifact: (input) => write('upsertPageArtifact', input),
+        deletePageArtifact: (input) => write('deletePageArtifact', input),
         readProjectArtifact: (input) => read('readProjectArtifact', input),
         upsertProjectArtifact: (input) => write('upsertProjectArtifact', input),
+        deleteProjectArtifact: (input) => write('deleteProjectArtifact', input),
         readPluginData: (input) => read('readPluginData', input),
         writePluginData: (input) => write('writePluginData', input),
         deletePluginData: (input) => write('deletePluginData', input),
@@ -1754,19 +1756,62 @@ export async function createCore({
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
     });
+    const persistedBundles = ['full', 'utilities', 'theme'];
 
     // Wire mutation functions onto pluginContext
+    const evictProjectLocal = (projectId) => {
+        const project = state.projects.get(projectId);
+        if (!project) return [];
+        const pageIds = Array.from(project.pages.keys());
+        for (const pageId of pageIds) {
+            evictPageByKey(state, makePageKey(projectId, pageId));
+        }
+        state.projects.delete(projectId);
+        return pageIds;
+    };
+
+    const purgePageArtifactsFromStore = async (projectId, pageId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        const results = await Promise.all(
+            persistedBundles.map((bundle) =>
+                cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle })
+            )
+        );
+        return results.every(Boolean);
+    };
+
+    const purgeProjectArtifactsFromStore = async (projectId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        const results = await Promise.all(
+            persistedBundles.map((bundle) =>
+                cacheStoreRunner.deleteProjectArtifact({ projectId, bundle })
+            )
+        );
+        return results.every(Boolean);
+    };
+
     pluginContext.evictPage = (projectId, pageId) => {
         evictPageByKey(state, makePageKey(projectId, pageId));
     };
 
     pluginContext.evictProject = (projectId) => {
-        const project = state.projects.get(projectId);
-        if (!project) return;
-        for (const pageId of Array.from(project.pages.keys())) {
-            evictPageByKey(state, makePageKey(projectId, pageId));
-        }
-        state.projects.delete(projectId);
+        evictProjectLocal(projectId);
+    };
+
+    pluginContext.purgePage = async (projectId, pageId) => {
+        if (!isValidId(projectId, config) || !isValidId(pageId, config)) return false;
+        evictPageByKey(state, makePageKey(projectId, pageId));
+        return purgePageArtifactsFromStore(projectId, pageId);
+    };
+
+    pluginContext.purgeProject = async (projectId) => {
+        if (!isValidId(projectId, config)) return false;
+        const pageIds = evictProjectLocal(projectId);
+        const pageResults = await Promise.all(
+            pageIds.map((pageId) => purgePageArtifactsFromStore(projectId, pageId))
+        );
+        const projectResult = await purgeProjectArtifactsFromStore(projectId);
+        return [projectResult, ...pageResults].every(Boolean);
     };
 
     pluginContext.compile = async (input) => {

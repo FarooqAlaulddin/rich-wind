@@ -26,8 +26,10 @@ function createSharedCacheStore(options = {}) {
   const calls = {
     readPageArtifact: 0,
     upsertPageArtifact: 0,
+    deletePageArtifact: 0,
     readProjectArtifact: 0,
     upsertProjectArtifact: 0,
+    deleteProjectArtifact: 0,
     readPluginData: 0,
     writePluginData: 0,
     deletePluginData: 0,
@@ -60,6 +62,11 @@ function createSharedCacheStore(options = {}) {
       await withDelay();
       pageArtifacts.set(pageKey(input), clone(input));
     },
+    async deletePageArtifact(input) {
+      calls.deletePageArtifact += 1;
+      await withDelay();
+      pageArtifacts.delete(pageKey(input));
+    },
     async readProjectArtifact(input) {
       calls.readProjectArtifact += 1;
       await withDelay();
@@ -69,6 +76,11 @@ function createSharedCacheStore(options = {}) {
       calls.upsertProjectArtifact += 1;
       await withDelay();
       projectArtifacts.set(projectKey(input), clone(input));
+    },
+    async deleteProjectArtifact(input) {
+      calls.deleteProjectArtifact += 1;
+      await withDelay();
+      projectArtifacts.delete(projectKey(input));
     },
     async readPluginData(input) {
       calls.readPluginData += 1;
@@ -174,6 +186,25 @@ function createRestoreProbePlugin() {
 
       ctx.addRoute('get', '/state', (_req, res) => {
         return res.json({ count: localCount });
+      });
+    }
+  };
+}
+
+function createPurgeBridgePlugin() {
+  return {
+    name: 'purge-bridge',
+    setup(ctx) {
+      ctx.addRoute('post', '/page/:projectId/:pageId/purge', async (req, res) => {
+        const { projectId, pageId } = req.params;
+        const ok = await ctx.purgePage(projectId, pageId);
+        return res.json({ ok });
+      });
+
+      ctx.addRoute('post', '/project/:projectId/purge', async (req, res) => {
+        const { projectId } = req.params;
+        const ok = await ctx.purgeProject(projectId);
+        return res.json({ ok });
       });
     }
   };
@@ -513,6 +544,123 @@ describe('Multi-replica cacheStore behavior', () => {
       const css = await cssResponse.text();
       expect(css).toContain('bg-emerald-500');
       expect(css).not.toContain('bg-red-500');
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('purgePage deletes persisted artifacts so other replicas cannot rehydrate', async () => {
+    const store = createSharedCacheStore();
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({
+        cacheStore: store,
+        plugins: [createPurgeBridgePlugin()]
+      });
+      const replicaB = await startReplica({ cacheStore: store });
+      replicas.push(replicaA, replicaB);
+
+      const compileResponse = await compile(replicaA.baseUrl, {
+        projectId: 'purge-shared-page',
+        pageId: 'hero',
+        classes: 'bg-fuchsia-500'
+      });
+      expect(compileResponse.status).toBe(200);
+
+      const wrotePage = await waitFor(
+        () => store.getSnapshot().pageArtifactCount === 1,
+        { timeoutMs: 2000 }
+      );
+      expect(wrotePage).toBe(true);
+
+      const purgeResponse = await fetch(
+        `${replicaA.baseUrl}/plugins/purge-bridge/page/purge-shared-page/hero/purge`,
+        { method: 'POST' }
+      );
+      expect(purgeResponse.status).toBe(200);
+      expect((await purgeResponse.json()).ok).toBe(true);
+
+      const deleted = await waitFor(
+        () => store.getSnapshot().pageArtifactCount === 0,
+        { timeoutMs: 2000 }
+      );
+      expect(deleted).toBe(true);
+
+      const cssAfterPurge = await fetch(
+        `${replicaB.baseUrl}/api/css?projectId=purge-shared-page&pageId=hero`
+      );
+      expect(cssAfterPurge.status).toBe(404);
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('purgeProject deletes persisted page/project artifacts across replicas', async () => {
+    const store = createSharedCacheStore();
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({
+        cacheStore: store,
+        plugins: [createPurgeBridgePlugin()]
+      });
+      const replicaB = await startReplica({ cacheStore: store });
+      replicas.push(replicaA, replicaB);
+
+      const firstCompile = await compile(replicaA.baseUrl, {
+        projectId: 'purge-shared-project',
+        pageId: 'p1',
+        classes: 'text-amber-500'
+      });
+      expect(firstCompile.status).toBe(200);
+
+      const secondCompile = await compile(replicaA.baseUrl, {
+        projectId: 'purge-shared-project',
+        pageId: 'p2',
+        classes: 'border border-amber-500'
+      });
+      expect(secondCompile.status).toBe(200);
+
+      const projectCss = await fetch(
+        `${replicaA.baseUrl}/api/projects/purge-shared-project/css`
+      );
+      expect(projectCss.status).toBe(200);
+
+      const wroteArtifacts = await waitFor(
+        () => {
+          const snapshot = store.getSnapshot();
+          return snapshot.pageArtifactCount >= 2 && snapshot.projectArtifactCount >= 1;
+        },
+        { timeoutMs: 2500 }
+      );
+      expect(wroteArtifacts).toBe(true);
+
+      const purgeResponse = await fetch(
+        `${replicaA.baseUrl}/plugins/purge-bridge/project/purge-shared-project/purge`,
+        { method: 'POST' }
+      );
+      expect(purgeResponse.status).toBe(200);
+      expect((await purgeResponse.json()).ok).toBe(true);
+
+      const deletedAll = await waitFor(
+        () => {
+          const snapshot = store.getSnapshot();
+          return snapshot.pageArtifactCount === 0 && snapshot.projectArtifactCount === 0;
+        },
+        { timeoutMs: 2500 }
+      );
+      expect(deletedAll).toBe(true);
+
+      const pageAfterPurge = await fetch(
+        `${replicaB.baseUrl}/api/css?projectId=purge-shared-project&pageId=p1`
+      );
+      expect(pageAfterPurge.status).toBe(404);
+
+      const projectAfterPurge = await fetch(
+        `${replicaB.baseUrl}/api/projects/purge-shared-project/css`
+      );
+      expect(projectAfterPurge.status).toBe(404);
     } finally {
       await closeReplicas(replicas);
     }

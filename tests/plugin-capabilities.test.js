@@ -1,6 +1,17 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(check, { timeoutMs = 1500, intervalMs = 20 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (check()) return true;
+    await sleep(intervalMs);
+  }
+  return false;
+}
+
 describe('Plugin identity and name validation', () => {
   it('throws on duplicate plugin names', async () => {
     await expect(createCore({
@@ -667,6 +678,123 @@ describe('Plugin mutation functions', () => {
     await close();
   });
 
+  it('purgePage removes in-memory cache and persisted page artifacts', async () => {
+    let ctxRef;
+    const pageArtifacts = new Map();
+
+    const cacheStore = {
+      async upsertPageArtifact({ projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt }) {
+        pageArtifacts.set(`${projectId}:${pageId}:${bundle}`, {
+          projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt
+        });
+      },
+      async deletePageArtifact({ projectId, pageId, bundle }) {
+        pageArtifacts.delete(`${projectId}:${pageId}:${bundle}`);
+      }
+    };
+
+    const plugin = {
+      name: 'purge-page',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'full' });
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'utilities' });
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'theme' });
+
+    const wroteAll = await waitFor(() => pageArtifacts.size === 3, { timeoutMs: 2000 });
+    expect(wroteAll).toBe(true);
+
+    const result = await ctxRef.purgePage('pp', 'home');
+    expect(result).toBe(true);
+    expect(ctxRef.getPageIds('pp')).toBeNull();
+    expect(pageArtifacts.size).toBe(0);
+
+    await close();
+  });
+
+  it('purgeProject removes in-memory cache and persisted project/page artifacts', async () => {
+    let ctxRef;
+    const pageArtifacts = new Map();
+    const projectArtifacts = new Map();
+
+    const cacheStore = {
+      async upsertPageArtifact({ projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt }) {
+        pageArtifacts.set(`${projectId}:${pageId}:${bundle}`, {
+          projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt
+        });
+      },
+      async deletePageArtifact({ projectId, pageId, bundle }) {
+        pageArtifacts.delete(`${projectId}:${pageId}:${bundle}`);
+      },
+      async upsertProjectArtifact({ projectId, bundle, css, hash, updatedAt, expiresAt }) {
+        projectArtifacts.set(`${projectId}:${bundle}`, {
+          projectId, bundle, css, hash, updatedAt, expiresAt
+        });
+      },
+      async deleteProjectArtifact({ projectId, bundle }) {
+        projectArtifacts.delete(`${projectId}:${bundle}`);
+      }
+    };
+
+    const plugin = {
+      name: 'purge-project',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { app, close } = await createCore({
+      plugins: [plugin],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    const server = app.listen(0);
+    await new Promise(r => server.once('listening', r));
+    const { port } = server.address();
+    const baseUrl = `http://localhost:${port}`;
+
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'purge-proj', pageId: 'p1', classes: 'text-red-500' })
+    });
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'purge-proj', pageId: 'p2', classes: 'bg-blue-500' })
+    });
+
+    const projectCss = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
+    expect(projectCss.status).toBe(200);
+
+    const wroteArtifacts = await waitFor(
+      () => pageArtifacts.size >= 2 && projectArtifacts.size >= 1,
+      { timeoutMs: 2000 }
+    );
+    expect(wroteArtifacts).toBe(true);
+
+    const result = await ctxRef.purgeProject('purge-proj');
+    expect(result).toBe(true);
+    expect(ctxRef.getProjectIds()).not.toContain('purge-proj');
+    expect(pageArtifacts.size).toBe(0);
+    expect(projectArtifacts.size).toBe(0);
+
+    const pageAfterPurge = await fetch(`${baseUrl}/api/css?projectId=purge-proj&pageId=p1`);
+    expect(pageAfterPurge.status).toBe(404);
+
+    const projectAfterPurge = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
+    expect(projectAfterPurge.status).toBe(404);
+
+    await new Promise(r => server.close(r));
+    await close();
+  });
+
   it('compile() from plugin context populates cache', async () => {
     let ctxRef;
     const plugin = {
@@ -990,6 +1118,8 @@ describe('Plugin mutation functions', () => {
     expect(typeof ctxRef.compile).toBe('function');
     expect(typeof ctxRef.evictPage).toBe('function');
     expect(typeof ctxRef.evictProject).toBe('function');
+    expect(typeof ctxRef.purgePage).toBe('function');
+    expect(typeof ctxRef.purgeProject).toBe('function');
     expect(typeof ctxRef.hydratePageArtifact).toBe('function');
     expect(typeof ctxRef.hydrateProjectArtifact).toBe('function');
     expect(typeof ctxRef.storage).toBe('object');

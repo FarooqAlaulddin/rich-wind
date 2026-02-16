@@ -43,10 +43,12 @@ const app = createCore({
       return null;
     },
     async upsertPageArtifact(input) {},
+    async deletePageArtifact({ projectId, pageId, bundle }) {},
     async readProjectArtifact({ projectId, bundle, now }) {
       return null;
     },
     async upsertProjectArtifact(input) {},
+    async deleteProjectArtifact({ projectId, bundle }) {},
     async readPluginData({ pluginName, key }) {
       return null;
     },
@@ -99,10 +101,15 @@ Plugin setup context includes `storage`:
 - `ctx.storage.delete(key)` -> `true` | `false`
 - `ctx.storage.list(prefix?)` -> `string[]`
 
+Plugin setup context also includes cache mutation helpers:
+- `ctx.evictPage(projectId, pageId)` / `ctx.evictProject(projectId)` (memory-only)
+- `ctx.purgePage(projectId, pageId)` / `ctx.purgeProject(projectId)` (memory + best-effort cacheStore delete-through)
+
 Storage keys must match `[a-zA-Z0-9._:-]{1,128}` and are automatically namespaced per plugin.
 Storage prefixes for `list(prefix)` must match `[a-zA-Z0-9._:-]{0,128}`.
 Storage methods are always available, even when no `cacheStore` is configured.
 Durability requires `cacheStore` to implement `readPluginData` / `writePluginData` / `deletePluginData` / `listPluginData`.
+Delete-through purging additionally requires `cacheStore.deletePageArtifact` / `cacheStore.deleteProjectArtifact`.
 Missing methods, no adapter, failures, and timeouts are fail-open and reported through `onError`.
 Adapters are responsible for value serialization; plugin values should be JSON-serializable for portable behavior.
 
