@@ -23,6 +23,81 @@ async function withEnv(overrides, fn) {
   }
 }
 
+function createSharedStore() {
+  const pageArtifacts = new Map();
+  const projectArtifacts = new Map();
+  const pluginData = new Map();
+
+  const pageKey = ({ projectId, pageId, bundle }) => `${projectId}::${pageId}::${bundle || 'full'}`;
+  const projectKey = ({ projectId, bundle }) => `${projectId}::${bundle || 'full'}`;
+  const pluginKey = ({ pluginName, key }) => `${pluginName}::${key}`;
+
+  const clone = (value) => {
+    if (value === null || value === undefined) return value;
+    return JSON.parse(JSON.stringify(value));
+  };
+
+  return {
+    async readPageArtifact(input) {
+      return clone(pageArtifacts.get(pageKey(input)) ?? null);
+    },
+    async upsertPageArtifact(input) {
+      pageArtifacts.set(pageKey(input), clone(input));
+    },
+    async deletePageArtifact(input) {
+      pageArtifacts.delete(pageKey(input));
+    },
+    async deleteProjectPageArtifacts({ projectId }) {
+      const prefix = `${projectId}::`;
+      for (const key of pageArtifacts.keys()) {
+        if (key.startsWith(prefix)) pageArtifacts.delete(key);
+      }
+    },
+    async readProjectArtifact(input) {
+      return clone(projectArtifacts.get(projectKey(input)) ?? null);
+    },
+    async upsertProjectArtifact(input) {
+      projectArtifacts.set(projectKey(input), clone(input));
+    },
+    async deleteProjectArtifact(input) {
+      projectArtifacts.delete(projectKey(input));
+    },
+    async readPluginData(input) {
+      return clone(pluginData.get(pluginKey(input)) ?? null);
+    },
+    async writePluginData(input) {
+      pluginData.set(pluginKey(input), clone(input.value));
+    },
+    async deletePluginData(input) {
+      pluginData.delete(pluginKey(input));
+    },
+    async listPluginData({ pluginName, prefix = '' }) {
+      const base = `${pluginName}::`;
+      const keys = [];
+      for (const fullKey of pluginData.keys()) {
+        if (!fullKey.startsWith(base)) continue;
+        const local = fullKey.slice(base.length);
+        if (!prefix || local.startsWith(prefix)) keys.push(local);
+      }
+      return keys;
+    }
+  };
+}
+
+async function startCore(options = {}) {
+  const { app, close } = await createCore(options);
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  return {
+    baseUrl: `http://localhost:${port}`,
+    async close() {
+      await new Promise((resolve) => server.close(resolve));
+      await close();
+    }
+  };
+}
+
 describe('Node role behavior (single writer, many readers)', () => {
   it('uses RW_NODE_ROLE and allows config override', async () => {
     let envRole = null;
@@ -76,7 +151,15 @@ describe('Node role behavior (single writer, many readers)', () => {
   });
 
   it('blocks POST /api/compile on reader replicas', async () => {
+    const errors = [];
+    const plugin = {
+      name: 'reader-http-errors',
+      onError(info) {
+        errors.push(info);
+      }
+    };
     const { baseUrl, close } = await createTestServer({}, {
+      plugins: [plugin],
       config: { nodeRole: 'reader', rateLimitDisabled: true }
     });
 
@@ -95,6 +178,14 @@ describe('Node role behavior (single writer, many readers)', () => {
       const body = await response.json();
       expect(body.code).toBe('READ_ONLY_REPLICA');
       expect(body.error).toMatch(/read-only/i);
+
+      const blocked = errors.find(
+        (entry) =>
+          entry?.stage === 'replica-role' &&
+          entry?.context?.action === 'http-compile'
+      );
+      expect(blocked).toBeTruthy();
+      expect(blocked.code).toBe('READ_ONLY_REPLICA');
     } finally {
       await close();
     }
@@ -276,6 +367,182 @@ describe('Node role behavior (single writer, many readers)', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();
+    }
+  });
+
+  it('reader replicas use cacheStore as source-of-truth for project reads', async () => {
+    const projectKey = 'reader-project::full';
+    const artifacts = new Map();
+    artifacts.set(projectKey, {
+      css: '.text-cyan-500{color:#06b6d4}',
+      hash: hashClasses(['text-cyan-500']),
+      expiresAt: Date.now() + 60_000
+    });
+
+    const cacheStore = {
+      async readProjectArtifact({ projectId, bundle }) {
+        return artifacts.get(`${projectId}::${bundle}`) ?? null;
+      }
+    };
+
+    const { app, close } = await createCore({
+      cacheStore,
+      config: { nodeRole: 'reader', rateLimitDisabled: true }
+    });
+
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const { port } = server.address();
+    const baseUrl = `http://localhost:${port}`;
+
+    try {
+      const first = await fetch(`${baseUrl}/api/projects/reader-project/css`);
+      expect(first.status).toBe(200);
+      const firstCss = await first.text();
+      expect(firstCss).toContain('text-cyan-500');
+
+      artifacts.delete(projectKey);
+
+      const second = await fetch(`${baseUrl}/api/projects/reader-project/css`);
+      expect(second.status).toBe(404);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      await close();
+    }
+  });
+
+  it('behaves like real traffic with one writer and one reader sharing cacheStore', async () => {
+    const store = createSharedStore();
+    const errors = [];
+
+    const mutationProbePlugin = {
+      name: 'mutation-probe',
+      setup(ctx) {
+        ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req, res) => {
+          const { projectId, pageId } = req.params;
+          const writeOk = await ctx.storage.set('probe', { enabled: true });
+          const compileResult = await ctx.compile({
+            projectId,
+            pageId,
+            classes: req.body?.classes || 'text-red-500'
+          });
+          const purgeOk = await ctx.purgePage(projectId, pageId);
+          return res.json({
+            writeOk,
+            purgeOk,
+            compileStatus: compileResult?.status ?? 200,
+            compileCode: compileResult?.code ?? null
+          });
+        });
+      },
+      onError(info) {
+        errors.push(info);
+      }
+    };
+
+    const writer = await startCore({
+      cacheStore: store,
+      plugins: [mutationProbePlugin],
+      config: { nodeRole: 'writer', rateLimitDisabled: true }
+    });
+    const reader = await startCore({
+      cacheStore: store,
+      plugins: [mutationProbePlugin],
+      config: { nodeRole: 'reader', rateLimitDisabled: true }
+    });
+
+    try {
+      const firstWrite = await fetch(`${writer.baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'real-life',
+          pageId: 'home',
+          classes: 'bg-red-500'
+        })
+      });
+      expect(firstWrite.status).toBe(200);
+
+      const projectSeed = await fetch(`${writer.baseUrl}/api/projects/real-life/css`);
+      expect(projectSeed.status).toBe(200);
+
+      const readerPage = await fetch(`${reader.baseUrl}/api/css?projectId=real-life&pageId=home`);
+      expect(readerPage.status).toBe(200);
+      expect(await readerPage.text()).toContain('bg-red-500');
+
+      const secondWrite = await fetch(`${writer.baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'real-life',
+          pageId: 'home',
+          classes: 'bg-blue-500'
+        })
+      });
+      expect(secondWrite.status).toBe(200);
+
+      const readerAfterUpdate = await fetch(`${reader.baseUrl}/api/css?projectId=real-life&pageId=home`);
+      expect(readerAfterUpdate.status).toBe(200);
+      const updatedCss = await readerAfterUpdate.text();
+      expect(updatedCss).toContain('bg-blue-500');
+      expect(updatedCss).not.toContain('bg-red-500');
+
+      const readerCompile = await fetch(`${reader.baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'real-life',
+          pageId: 'home',
+          classes: 'bg-emerald-500'
+        })
+      });
+      expect(readerCompile.status).toBe(409);
+
+      const writerMutationRoute = await fetch(
+        `${writer.baseUrl}/plugins/mutation-probe/mutate/real-life/home`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ classes: 'text-indigo-500' })
+        }
+      );
+      expect(writerMutationRoute.status).toBe(200);
+      const writerMutationBody = await writerMutationRoute.json();
+      expect(writerMutationBody.writeOk).toBe(true);
+      expect(writerMutationBody.purgeOk).toBe(true);
+      expect(writerMutationBody.compileStatus).toBe(200);
+      expect(writerMutationBody.compileCode).toBeNull();
+
+      const readerAfterWriterDelete = await fetch(
+        `${reader.baseUrl}/api/css?projectId=real-life&pageId=home`
+      );
+      expect(readerAfterWriterDelete.status).toBe(404);
+
+      const readerMutationRoute = await fetch(
+        `${reader.baseUrl}/plugins/mutation-probe/mutate/real-life/home`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ classes: 'bg-emerald-500' })
+        }
+      );
+      expect(readerMutationRoute.status).toBe(200);
+      const readerMutationBody = await readerMutationRoute.json();
+      expect(readerMutationBody.writeOk).toBe(false);
+      expect(readerMutationBody.purgeOk).toBe(false);
+      expect(readerMutationBody.compileStatus).toBe(409);
+      expect(readerMutationBody.compileCode).toBe('READ_ONLY_REPLICA');
+
+      const replicaRoleErrors = errors.filter((entry) => entry?.stage === 'replica-role');
+      expect(replicaRoleErrors.length).toBeGreaterThan(0);
+      expect(
+        replicaRoleErrors.some((entry) => entry?.context?.action === 'http-compile')
+      ).toBe(true);
+      expect(
+        replicaRoleErrors.some((entry) => entry?.context?.action === 'plugin-storage-set')
+      ).toBe(true);
+    } finally {
+      await Promise.all([writer.close(), reader.close()]);
     }
   });
 });

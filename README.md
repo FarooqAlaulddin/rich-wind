@@ -118,6 +118,26 @@ Adapters are responsible for value serialization; plugin values should be JSON-s
 Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
 Cache store timeout can be set via `createCore({ cacheStoreTimeoutMs })` or `RW_CACHE_STORE_TIMEOUT_MS`.
 
+### Replica Roles (Simple)
+
+Use this when running multiple replicas:
+
+| Role | Use it for | Write behavior |
+| --- | --- | --- |
+| `writer` | compile requests and plugin writes | allowed |
+| `reader` | serving CSS and suggestions | blocked |
+| `hybrid` (default) | single-node or simple deployments | allowed |
+
+On reader nodes:
+- `POST /api/compile` returns `409` with code `READ_ONLY_REPLICA`
+- write helpers do not run:
+  - `ctx.compile()` returns `{ status: 409, code: "READ_ONLY_REPLICA" }`
+  - `ctx.purge*()` / `ctx.hydrate*()` return `false`
+  - `ctx.evict*()` does nothing
+  - `ctx.storage.set/delete` return `false`
+
+For production, keep writers and readers on the same shared `cacheStore`.
+
 ### Run the core API
 
 ```bash
@@ -152,6 +172,8 @@ Request body:
 ```
 
 At least one of `html` or `classes` is required unless `bundle` is `base`.
+
+If this node is configured as `nodeRole=reader`, this endpoint returns `409` with `code: "READ_ONLY_REPLICA"`.
 
 Response:
 

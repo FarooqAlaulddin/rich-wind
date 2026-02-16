@@ -278,18 +278,27 @@ This means your store implementation doesn't need to be bulletproof. If your dat
 
 Rich Wind supports explicit replica roles through `config.nodeRole` (or `RW_NODE_ROLE`):
 
-- `hybrid` (default) — read + write behavior (current single-node default)
-- `writer` — same write behavior as `hybrid`, intended for mutation pool replicas
-- `reader` — blocks core/plugin mutation helpers and write endpoints
+| Role | Intended use |
+| --- | --- |
+| `hybrid` (default) | Single-node setups or simple deployments that allow reads and writes everywhere |
+| `writer` | Mutation pool replicas (`compile`, purge, plugin writes) |
+| `reader` | Read pool replicas (serve CSS and suggestions only) |
 
 On `reader` replicas:
 
-- `POST /api/compile` returns `409` with code `READ_ONLY_REPLICA`
-- plugin mutation helpers (`ctx.compile`, `ctx.purge*`, `ctx.hydrate*`, `ctx.evict*`) are blocked
-- plugin storage writes (`ctx.storage.set/delete`) are blocked; reads (`get/list`) still work
-- when `cacheStore` is enabled, page/project CSS reads prefer store artifacts as source-of-truth
+- `POST /api/compile` returns `409` (`READ_ONLY_REPLICA`)
+- write helpers are blocked:
+  - `ctx.compile` returns `{ status: 409, code: "READ_ONLY_REPLICA" }`
+  - `ctx.purge*` and `ctx.hydrate*` return `false`
+  - `ctx.evict*` does nothing
+- plugin storage writes are blocked (`ctx.storage.set/delete`)
+- plugin storage reads still work (`ctx.storage.get/list`)
+- if `cacheStore` is enabled, CSS reads check shared storage first; if the shared entry is gone, readers return `404` instead of stale local CSS
 
-This enables a single-writer/many-readers topology while keeping core storage-agnostic.
+Recommended production shape:
+1. Route all writes to `writer` replicas.
+2. Route read traffic to `reader` replicas.
+3. Keep both pools on the same shared `cacheStore`.
 
 ### Artifact validation
 

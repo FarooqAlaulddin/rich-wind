@@ -102,6 +102,12 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 - **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
 - **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
 
+**Simple request routing (recommended):**
+
+1. Send `POST /api/compile` and plugin mutation routes to writer replicas.
+2. Send `GET /api/css`, `GET /api/projects/:projectId/css`, and `POST /api/suggest` to reader replicas.
+3. Keep writer and reader replicas on the same shared `cacheStore`.
+
 ## cacheStore Adapters
 
 The `cacheStore` option accepts any object that implements the core artifact methods (page + project). It can also implement plugin-data methods so plugin `ctx.storage` state is durable across restarts. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.

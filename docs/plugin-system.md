@@ -101,11 +101,14 @@ All query functions return copies or frozen snapshots — never live references.
 
 **`evictPage()` / `evictProject()` are memory-only.** They intentionally do not mutate remote persistence.
 
-**`purgePage()` / `purgeProject()` are best-effort delete-through.** They keep the same in-memory eviction behavior and also call cache-store delete operations when available. Full remote cleanup requires `deletePageArtifact` / `deleteProjectArtifact`, and cold-replica `purgeProject()` additionally needs `deleteProjectPageArtifacts` to delete page artifacts when no local page list exists.
+**`purgePage()` / `purgeProject()` remove from memory and then try to remove from `cacheStore`.** For full shared cleanup, implement `deletePageArtifact` and `deleteProjectArtifact`. For project purges on cold replicas (no local page list), also implement `deleteProjectPageArtifacts`.
 
-**`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it automatically skips hooks to prevent infinite recursion (reentrancy guard).
+**`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it skips hook execution to avoid recursive loops.
 
-When `nodeRole` is `reader`, mutation helpers are blocked: `compile()` returns `{ error, status: 409, code: "READ_ONLY_REPLICA" }`, `purge*`/`hydrate*` return `false`, and `evict*` are no-ops.
+When `nodeRole` is `reader`, mutation helpers are blocked:
+- `compile()` returns `{ error, status: 409, code: "READ_ONLY_REPLICA" }`
+- `purge*` and `hydrate*` return `false`
+- `evict*` are no-ops
 
 **`hydratePageArtifact()`** is useful for fast restart from persistence — a plugin reads artifacts from Redis/DB in `setup()` and populates the cache without recompilation. Returns `true` if hydrated, `false` if rejected. New pages require `classes`; existing pages can update CSS only.
 
@@ -127,7 +130,7 @@ When `nodeRole` is `reader`, mutation helpers are blocked: `compile()` returns `
 - Namespacing is automatic per plugin route name (lowercased plugin name)
 - Storage methods are always available (even without `cacheStore`) and fail open: `get` returns `null`, `set/delete` return `false`, `list` returns `[]`
 - Adapters are responsible for value serialization; JSON-serializable values are recommended for portability
-- On `nodeRole: "reader"`, `storage.set/delete` are blocked and return `false` with `onError` reporting (`stage: "replica-role"`, code `READ_ONLY_REPLICA`)
+- On `nodeRole: "reader"`, `storage.set/delete` are blocked. They return `false` and trigger `onError` with `stage: "replica-role"` and code `READ_ONLY_REPLICA`.
 
 ```js
 function createAnalyticsPlugin() {

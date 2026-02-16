@@ -72,6 +72,7 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 | Status | Cause |
 | --- | --- |
 | `400` | Missing `projectId`, invalid ID format, or no valid classes found |
+| `409` | Replica is configured as `nodeRole: "reader"` (`READ_ONLY_REPLICA`) |
 | `413` | HTML too large, class string too large, class count exceeds limit, or JSON body too large |
 | `429` | Rate limit exceeded (includes `Retry-After` header) |
 | `500` | Unexpected internal error |
@@ -186,4 +187,7 @@ These options live outside `config` — they're top-level arguments to `createCo
 
 `PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you call `app.listen()` yourself.
 
-For single-writer deployments, set write nodes to `nodeRole: "writer"` and read nodes to `nodeRole: "reader"` while using a shared `cacheStore`.
+For single-writer deployments, use this split:
+- `writer` nodes: accept compile and other writes
+- `reader` nodes: serve CSS/suggestions only
+- both point to the same `cacheStore`
