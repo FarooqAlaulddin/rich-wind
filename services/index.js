@@ -433,7 +433,9 @@ function createCacheStoreRunner(cacheStore, options = {}) {
             context: {
                 projectId: input?.projectId ?? null,
                 pageId: input?.pageId ?? null,
-                bundle: input?.bundle ?? null
+                bundle: input?.bundle ?? null,
+                pluginName: input?.pluginName ?? null,
+                key: input?.key ?? null
             }
         });
     };
@@ -466,7 +468,10 @@ function createCacheStoreRunner(cacheStore, options = {}) {
         readPageArtifact: (input) => read('readPageArtifact', input),
         upsertPageArtifact: (input) => write('upsertPageArtifact', input),
         readProjectArtifact: (input) => read('readProjectArtifact', input),
-        upsertProjectArtifact: (input) => write('upsertProjectArtifact', input)
+        upsertProjectArtifact: (input) => write('upsertProjectArtifact', input),
+        readPluginData: (input) => read('readPluginData', input),
+        writePluginData: (input) => write('writePluginData', input),
+        deletePluginData: (input) => write('deletePluginData', input)
     };
 }
 
@@ -1035,6 +1040,8 @@ const hookStore = new AsyncLocalStorage();
 
 const PLUGIN_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const MAX_PLUGIN_NAME_LENGTH = 64;
+const PLUGIN_STORAGE_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+const PLUGIN_STORAGE_KEY_DESC = '[a-zA-Z0-9._:-]{1,128}';
 
 function createPluginRunner(plugins = [], options = {}) {
     const defaultTimeoutMs = parseIntWithDefault(
@@ -1611,7 +1618,7 @@ function withTimeoutGeneric(promise, timeoutMs, label = 'Operation') {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function mountPluginRoutes(app, pluginList, pluginContext, globalSetupTimeoutMs) {
+async function mountPluginRoutes(app, pluginList, pluginContext, cacheStoreRunner, globalSetupTimeoutMs) {
     for (const plugin of pluginList) {
         if (typeof plugin.instance.setup !== 'function') {
             plugin.active = true;
@@ -1636,10 +1643,41 @@ async function mountPluginRoutes(app, pluginList, pluginContext, globalSetupTime
             router[m](routePath, handler);
         };
 
+        const storage = Object.freeze({
+            async get(key) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                return cacheStoreRunner.readPluginData({
+                    pluginName: plugin.routeName,
+                    key
+                });
+            },
+            async set(key, value) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                return cacheStoreRunner.writePluginData({
+                    pluginName: plugin.routeName,
+                    key,
+                    value
+                });
+            },
+            async delete(key) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                return cacheStoreRunner.deletePluginData({
+                    pluginName: plugin.routeName,
+                    key
+                });
+            }
+        });
+
         try {
             const perPluginTimeout = plugin.instance.setupTimeoutMs ?? globalSetupTimeoutMs;
             await withTimeoutGeneric(
-                Promise.resolve(plugin.instance.setup({ ...pluginContext, addRoute })),
+                Promise.resolve(plugin.instance.setup({ ...pluginContext, addRoute, storage })),
                 perPluginTimeout,
                 `Plugin "${plugin.name}" setup`
             );
@@ -1771,7 +1809,13 @@ export async function createCore({
     Object.freeze(pluginContext);
 
     const defaultSetupTimeout = Math.max((pluginTimeoutMs ?? 200) * 5, 1000);
-    await mountPluginRoutes(app, pluginRunner.list, pluginContext, setupTimeoutMs ?? defaultSetupTimeout);
+    await mountPluginRoutes(
+        app,
+        pluginRunner.list,
+        pluginContext,
+        cacheStoreRunner,
+        setupTimeoutMs ?? defaultSetupTimeout
+    );
 
     registerRoutes(app, pluginRunner, config, state, cacheStoreRunner);
 

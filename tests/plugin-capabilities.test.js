@@ -402,6 +402,175 @@ describe('Plugin context query functions', () => {
 });
 
 describe('Plugin mutation functions', () => {
+  it('setup context includes namespaced storage helpers', async () => {
+    let ctxRef;
+    const plugin = {
+      name: 'ctx-storage',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { close } = await createCore({ plugins: [plugin] });
+
+    expect(typeof ctxRef.storage).toBe('object');
+    expect(typeof ctxRef.storage.get).toBe('function');
+    expect(typeof ctxRef.storage.set).toBe('function');
+    expect(typeof ctxRef.storage.delete).toBe('function');
+
+    await close();
+  });
+
+  it('plugin storage is namespaced per plugin route name', async () => {
+    const entries = new Map();
+    const calls = [];
+
+    const cacheStore = {
+      async readPluginData({ pluginName, key }) {
+        calls.push({ op: 'readPluginData', pluginName, key });
+        return entries.has(`${pluginName}:${key}`) ? entries.get(`${pluginName}:${key}`) : null;
+      },
+      async writePluginData({ pluginName, key, value }) {
+        calls.push({ op: 'writePluginData', pluginName, key });
+        entries.set(`${pluginName}:${key}`, value);
+      },
+      async deletePluginData({ pluginName, key }) {
+        calls.push({ op: 'deletePluginData', pluginName, key });
+        entries.delete(`${pluginName}:${key}`);
+      }
+    };
+
+    let alphaStorage;
+    let betaStorage;
+    const alpha = {
+      name: 'Alpha',
+      setup(ctx) { alphaStorage = ctx.storage; }
+    };
+    const beta = {
+      name: 'Beta',
+      setup(ctx) { betaStorage = ctx.storage; }
+    };
+
+    const { close } = await createCore({
+      plugins: [alpha, beta],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    await alphaStorage.set('metrics', { count: 1 });
+    await betaStorage.set('metrics', { count: 2 });
+
+    expect(await alphaStorage.get('metrics')).toEqual({ count: 1 });
+    expect(await betaStorage.get('metrics')).toEqual({ count: 2 });
+
+    await alphaStorage.delete('metrics');
+    expect(await alphaStorage.get('metrics')).toBeNull();
+    expect(await betaStorage.get('metrics')).toEqual({ count: 2 });
+
+    expect(entries.has('alpha:metrics')).toBe(false);
+    expect(entries.get('beta:metrics')).toEqual({ count: 2 });
+    expect(calls.some((call) => call.pluginName === 'alpha')).toBe(true);
+    expect(calls.some((call) => call.pluginName === 'beta')).toBe(true);
+
+    await close();
+  });
+
+  it('plugin storage fails open when cacheStore plugin methods are missing', async () => {
+    let storage;
+    const plugin = {
+      name: 'storage-fail-open',
+      setup(ctx) { storage = ctx.storage; }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin],
+      cacheStore: {},
+      config: { rateLimitDisabled: true }
+    });
+
+    expect(await storage.get('metrics')).toBeNull();
+    expect(await storage.set('metrics', { count: 1 })).toBe(false);
+    expect(await storage.delete('metrics')).toBe(false);
+
+    await close();
+  });
+
+  it('plugin storage honors cacheStore timeouts and reports onError', async () => {
+    const errors = [];
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const collector = {
+      name: 'collector',
+      onError(ctx) { errors.push(ctx); }
+    };
+
+    let storage;
+    const probe = {
+      name: 'probe-store',
+      setup(ctx) { storage = ctx.storage; }
+    };
+
+    const cacheStore = {
+      async readPluginData() {
+        await sleep(80);
+        return { stale: true };
+      },
+      async writePluginData() {
+        await sleep(80);
+      },
+      async deletePluginData() {
+        await sleep(80);
+      }
+    };
+
+    const { close } = await createCore({
+      plugins: [probe, collector],
+      cacheStore,
+      cacheStoreTimeoutMs: 20,
+      config: { rateLimitDisabled: true }
+    });
+
+    expect(await storage.get('metrics')).toBeNull();
+    expect(await storage.set('metrics', { count: 1 })).toBe(false);
+    expect(await storage.delete('metrics')).toBe(false);
+
+    const ops = errors
+      .filter((entry) => entry?.stage === 'cache-store')
+      .map((entry) => entry.op);
+
+    expect(ops).toContain('readPluginData');
+    expect(ops).toContain('writePluginData');
+    expect(ops).toContain('deletePluginData');
+    expect(
+      errors.some(
+        (entry) =>
+          entry?.stage === 'cache-store' &&
+          entry?.context?.pluginName === 'probe-store' &&
+          entry?.context?.key === 'metrics' &&
+          entry?.timedOut === true
+      )
+    ).toBe(true);
+
+    await close();
+  });
+
+  it('plugin storage rejects invalid keys', async () => {
+    let storage;
+    const plugin = {
+      name: 'storage-key-guard',
+      setup(ctx) { storage = ctx.storage; }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin],
+      config: { rateLimitDisabled: true }
+    });
+
+    await expect(storage.get('bad key')).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.set('../metrics', { count: 1 })).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.delete('')).rejects.toThrow(/Invalid storage key/);
+
+    await close();
+  });
+
   it('evictPage removes a page from cache', async () => {
     let ctxRef;
     const plugin = {
@@ -798,6 +967,10 @@ describe('Plugin mutation functions', () => {
     expect(typeof ctxRef.evictProject).toBe('function');
     expect(typeof ctxRef.hydratePageArtifact).toBe('function');
     expect(typeof ctxRef.hydrateProjectArtifact).toBe('function');
+    expect(typeof ctxRef.storage).toBe('object');
+    expect(typeof ctxRef.storage.get).toBe('function');
+    expect(typeof ctxRef.storage.set).toBe('function');
+    expect(typeof ctxRef.storage.delete).toBe('function');
 
     // Query functions are available
     expect(typeof ctxRef.getProjectIds).toBe('function');

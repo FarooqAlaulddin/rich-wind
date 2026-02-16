@@ -47,11 +47,20 @@ const app = createCore({
       return null;
     },
     async upsertProjectArtifact(input) {},
+    async readPluginData({ pluginName, key }) {
+      return null;
+    },
+    async writePluginData({ pluginName, key, value }) {},
+    async deletePluginData({ pluginName, key }) {},
   },
   cacheStoreTimeoutMs: 150,
   plugins: [
     {
       name: "logger",
+      async setup(ctx) {
+        // Plugin-scoped durable storage (optional, if cacheStore implements it)
+        await ctx.storage.set("booted", true);
+      },
       onCompileStart: ({ projectId, pageId }) => {
         console.log("compile start", projectId, pageId);
       },
@@ -80,6 +89,14 @@ Plugin options:
 - `defer` (boolean) — run all hooks asynchronously (non‑blocking).
 - `deferHooks` (string[]) — defer only specific hooks.
 - `timeoutMs` (number) — per‑hook timeout before `onError` is called.
+
+Plugin setup context includes `storage` when `cacheStore` is configured:
+- `ctx.storage.get(key)` -> value | `null`
+- `ctx.storage.set(key, value)` -> `true` | `false`
+- `ctx.storage.delete(key)` -> `true` | `false`
+
+Storage keys must match `[a-zA-Z0-9._:-]{1,128}` and are automatically namespaced per plugin.
+Cache-store failures and timeouts are fail-open and reported through `onError`.
 
 Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.
 Cache store timeout can be set via `createCore({ cacheStoreTimeoutMs })` or `RW_CACHE_STORE_TIMEOUT_MS`.
