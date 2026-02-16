@@ -382,11 +382,11 @@ describe('Plugin context query functions', () => {
   });
 
   it('hook context includes query functions', async () => {
-    let hookCtxKeys = [];
+    let hookCtx;
     const plugin = {
       name: 'hook-ctx-check',
       onCompileResult(ctx) {
-        hookCtxKeys = Object.keys(ctx);
+        hookCtx = ctx;
       }
     };
 
@@ -408,7 +408,24 @@ describe('Plugin context query functions', () => {
     await new Promise(r => server.close(r));
     await close();
 
-    expect(hookCtxKeys).toContain('projectId');
+    expect(hookCtx.projectId).toBe('hc');
+    expect(hookCtx.pageId).toBe('pg');
+    expect(typeof hookCtx.getProjectIds).toBe('function');
+    expect(typeof hookCtx.getPageIds).toBe('function');
+    expect(typeof hookCtx.getCacheStats).toBe('function');
+    expect(typeof hookCtx.getConfig).toBe('function');
+    expect(typeof hookCtx.getCss).toBe('function');
+    expect(typeof hookCtx.getProjectCss).toBe('function');
+    expect(typeof hookCtx.evictPage).toBe('function');
+    expect(typeof hookCtx.evictProject).toBe('function');
+    expect(typeof hookCtx.purgePage).toBe('function');
+    expect(typeof hookCtx.purgeProject).toBe('function');
+    expect(typeof hookCtx.compile).toBe('function');
+    expect(typeof hookCtx.hydratePageArtifact).toBe('function');
+    expect(typeof hookCtx.hydrateProjectArtifact).toBe('function');
+    expect(hookCtx.getProjectIds()).toContain('hc');
+    expect(hookCtx.getPageIds('hc')).toContain('pg');
+    expect(hookCtx.storage).toBeUndefined();
   });
 });
 
@@ -502,14 +519,19 @@ describe('Plugin mutation functions', () => {
   });
 
   it('plugin storage fails open when cacheStore plugin methods are missing', async () => {
+    const errors = [];
     let storage;
     const plugin = {
       name: 'storage-fail-open',
       setup(ctx) { storage = ctx.storage; }
     };
+    const collector = {
+      name: 'storage-missing-method-errors',
+      onError(info) { errors.push(info); }
+    };
 
     const { close } = await createCore({
-      plugins: [plugin],
+      plugins: [plugin, collector],
       cacheStore: {},
       config: { rateLimitDisabled: true }
     });
@@ -518,6 +540,25 @@ describe('Plugin mutation functions', () => {
     expect(await storage.set('metrics', { count: 1 })).toBe(false);
     expect(await storage.delete('metrics')).toBe(false);
     expect(await storage.list()).toEqual([]);
+
+    const ops = errors
+      .filter((entry) => entry?.stage === 'cache-store')
+      .map((entry) => entry.op);
+
+    expect(ops).toContain('readPluginData');
+    expect(ops).toContain('writePluginData');
+    expect(ops).toContain('deletePluginData');
+    expect(ops).toContain('listPluginData');
+    expect(
+      errors.some(
+        (entry) =>
+          entry?.stage === 'cache-store' &&
+          entry?.error?.code === 'CACHE_STORE_METHOD_MISSING' &&
+          entry?.timedOut === false &&
+          entry?.context?.pluginName === 'storage-fail-open' &&
+          entry?.context?.key === 'metrics'
+      )
+    ).toBe(true);
 
     await close();
   });

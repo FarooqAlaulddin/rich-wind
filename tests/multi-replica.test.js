@@ -27,6 +27,7 @@ function createSharedCacheStore(options = {}) {
     readPageArtifact: 0,
     upsertPageArtifact: 0,
     deletePageArtifact: 0,
+    deleteProjectPageArtifacts: 0,
     readProjectArtifact: 0,
     upsertProjectArtifact: 0,
     deleteProjectArtifact: 0,
@@ -66,6 +67,16 @@ function createSharedCacheStore(options = {}) {
       calls.deletePageArtifact += 1;
       await withDelay();
       pageArtifacts.delete(pageKey(input));
+    },
+    async deleteProjectPageArtifacts({ projectId }) {
+      calls.deleteProjectPageArtifacts += 1;
+      await withDelay();
+      const prefix = `${projectId}::`;
+      for (const key of pageArtifacts.keys()) {
+        if (key.startsWith(prefix)) {
+          pageArtifacts.delete(key);
+        }
+      }
     },
     async readProjectArtifact(input) {
       calls.readProjectArtifact += 1;
@@ -661,6 +672,136 @@ describe('Multi-replica cacheStore behavior', () => {
         `${replicaB.baseUrl}/api/projects/purge-shared-project/css`
       );
       expect(projectAfterPurge.status).toBe(404);
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('purgeProject from a cold replica uses bulk project-page delete for global cleanup', async () => {
+    const store = createSharedCacheStore();
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({
+        cacheStore: store,
+        plugins: [createPurgeBridgePlugin()]
+      });
+      const replicaB = await startReplica({ cacheStore: store });
+      replicas.push(replicaA, replicaB);
+
+      const firstCompile = await compile(replicaB.baseUrl, {
+        projectId: 'cold-purge-project',
+        pageId: 'p1',
+        classes: 'text-emerald-500'
+      });
+      expect(firstCompile.status).toBe(200);
+
+      const secondCompile = await compile(replicaB.baseUrl, {
+        projectId: 'cold-purge-project',
+        pageId: 'p2',
+        classes: 'border border-emerald-500'
+      });
+      expect(secondCompile.status).toBe(200);
+
+      const projectCss = await fetch(
+        `${replicaB.baseUrl}/api/projects/cold-purge-project/css`
+      );
+      expect(projectCss.status).toBe(200);
+
+      const wroteArtifacts = await waitFor(
+        () => {
+          const snapshot = store.getSnapshot();
+          return snapshot.pageArtifactCount >= 2 && snapshot.projectArtifactCount >= 1;
+        },
+        { timeoutMs: 2500 }
+      );
+      expect(wroteArtifacts).toBe(true);
+
+      const purgeResponse = await fetch(
+        `${replicaA.baseUrl}/plugins/purge-bridge/project/cold-purge-project/purge`,
+        { method: 'POST' }
+      );
+      expect(purgeResponse.status).toBe(200);
+      expect((await purgeResponse.json()).ok).toBe(true);
+
+      const deletedAll = await waitFor(
+        () => {
+          const snapshot = store.getSnapshot();
+          return snapshot.pageArtifactCount === 0 && snapshot.projectArtifactCount === 0;
+        },
+        { timeoutMs: 2500 }
+      );
+      expect(deletedAll).toBe(true);
+      expect(store.getSnapshot().calls.deleteProjectPageArtifacts).toBeGreaterThan(0);
+
+      const replicaC = await startReplica({ cacheStore: store });
+      replicas.push(replicaC);
+
+      const pageAfterPurge = await fetch(
+        `${replicaC.baseUrl}/api/css?projectId=cold-purge-project&pageId=p1`
+      );
+      expect(pageAfterPurge.status).toBe(404);
+
+      const projectAfterPurge = await fetch(
+        `${replicaC.baseUrl}/api/projects/cold-purge-project/css`
+      );
+      expect(projectAfterPurge.status).toBe(404);
+    } finally {
+      await closeReplicas(replicas);
+    }
+  });
+
+  it('purgeProject from a cold replica returns false when bulk project-page delete is not implemented', async () => {
+    const storeWithBulk = createSharedCacheStore();
+    const { deleteProjectPageArtifacts, ...store } = storeWithBulk; // eslint-disable-line no-unused-vars
+    const replicas = [];
+
+    try {
+      const replicaA = await startReplica({
+        cacheStore: store,
+        plugins: [createPurgeBridgePlugin()]
+      });
+      const replicaB = await startReplica({ cacheStore: store });
+      replicas.push(replicaA, replicaB);
+
+      const firstCompile = await compile(replicaB.baseUrl, {
+        projectId: 'cold-purge-missing-bulk',
+        pageId: 'p1',
+        classes: 'text-rose-500'
+      });
+      expect(firstCompile.status).toBe(200);
+
+      const secondCompile = await compile(replicaB.baseUrl, {
+        projectId: 'cold-purge-missing-bulk',
+        pageId: 'p2',
+        classes: 'border border-rose-500'
+      });
+      expect(secondCompile.status).toBe(200);
+
+      const projectCss = await fetch(
+        `${replicaB.baseUrl}/api/projects/cold-purge-missing-bulk/css`
+      );
+      expect(projectCss.status).toBe(200);
+
+      const wroteArtifacts = await waitFor(
+        () => {
+          const snapshot = store.getSnapshot();
+          return snapshot.pageArtifactCount >= 2 && snapshot.projectArtifactCount >= 1;
+        },
+        { timeoutMs: 2500 }
+      );
+      expect(wroteArtifacts).toBe(true);
+
+      const purgeResponse = await fetch(
+        `${replicaA.baseUrl}/plugins/purge-bridge/project/cold-purge-missing-bulk/purge`,
+        { method: 'POST' }
+      );
+      expect(purgeResponse.status).toBe(200);
+      expect((await purgeResponse.json()).ok).toBe(false);
+
+      const snapshot = store.getSnapshot();
+      expect(snapshot.pageArtifactCount).toBeGreaterThan(0);
+      expect(snapshot.projectArtifactCount).toBe(0);
     } finally {
       await closeReplicas(replicas);
     }

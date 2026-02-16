@@ -44,6 +44,7 @@ const app = createCore({
     },
     async upsertPageArtifact(input) {},
     async deletePageArtifact({ projectId, pageId, bundle }) {},
+    async deleteProjectPageArtifacts({ projectId }) {},
     async readProjectArtifact({ projectId, bundle, now }) {
       return null;
     },
@@ -110,6 +111,7 @@ Storage prefixes for `list(prefix)` must match `[a-zA-Z0-9._:-]{0,128}`.
 Storage methods are always available, even when no `cacheStore` is configured.
 Durability requires `cacheStore` to implement `readPluginData` / `writePluginData` / `deletePluginData` / `listPluginData`.
 Delete-through purging additionally requires `cacheStore.deletePageArtifact` / `cacheStore.deleteProjectArtifact`.
+For `ctx.purgeProject(projectId)` to remove remote page artifacts from cold replicas (no local page list), implement `cacheStore.deleteProjectPageArtifacts`.
 Missing methods, no adapter, failures, and timeouts are fail-open and reported through `onError`.
 Adapters are responsible for value serialization; plugin values should be JSON-serializable for portable behavior.
 

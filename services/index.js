@@ -408,6 +408,8 @@ function createCacheStoreRunner(cacheStore, options = {}) {
     );
     const onError = typeof options.onError === 'function' ? options.onError : null;
     const store = cacheStore && typeof cacheStore === 'object' ? cacheStore : null;
+    const missingMethodOps = new Set();
+    const hasMethod = (op) => Boolean(store && typeof store[op] === 'function');
 
     const withTimeout = (promise, method) => {
         if (!defaultTimeout || defaultTimeout <= 0) return promise;
@@ -441,9 +443,21 @@ function createCacheStoreRunner(cacheStore, options = {}) {
         });
     };
 
+    const reportMissingMethod = async (op, input) => {
+        if (missingMethodOps.has(op)) return;
+        missingMethodOps.add(op);
+        const error = new Error(`cacheStore.${op} is not implemented`);
+        error.code = 'CACHE_STORE_METHOD_MISSING';
+        error.method = op;
+        await reportError(error, op, input);
+    };
+
     const read = async (op, input) => {
-        const fn = store && typeof store[op] === 'function' ? store[op] : null;
-        if (!fn) return null;
+        if (!hasMethod(op)) {
+            await reportMissingMethod(op, input);
+            return null;
+        }
+        const fn = store[op];
         try {
             return await withTimeout(Promise.resolve(fn(input)), op);
         } catch (error) {
@@ -453,8 +467,11 @@ function createCacheStoreRunner(cacheStore, options = {}) {
     };
 
     const write = async (op, input) => {
-        const fn = store && typeof store[op] === 'function' ? store[op] : null;
-        if (!fn) return false;
+        if (!hasMethod(op)) {
+            await reportMissingMethod(op, input);
+            return false;
+        }
+        const fn = store[op];
         try {
             await withTimeout(Promise.resolve(fn(input)), op);
             return true;
@@ -466,9 +483,11 @@ function createCacheStoreRunner(cacheStore, options = {}) {
 
     return {
         enabled: Boolean(store),
+        hasMethod,
         readPageArtifact: (input) => read('readPageArtifact', input),
         upsertPageArtifact: (input) => write('upsertPageArtifact', input),
         deletePageArtifact: (input) => write('deletePageArtifact', input),
+        deleteProjectPageArtifacts: (input) => write('deleteProjectPageArtifacts', input),
         readProjectArtifact: (input) => read('readProjectArtifact', input),
         upsertProjectArtifact: (input) => write('upsertProjectArtifact', input),
         deleteProjectArtifact: (input) => write('deleteProjectArtifact', input),
@@ -1055,6 +1074,16 @@ function createPluginRunner(plugins = [], options = {}) {
         200,
         0
     );
+    const pluginContext = options.pluginContext && typeof options.pluginContext === 'object'
+        ? options.pluginContext
+        : null;
+    const buildHookContext = (context) => {
+        if (!pluginContext) return context || {};
+        return {
+            ...pluginContext,
+            ...(context || {})
+        };
+    };
     const list = (Array.isArray(plugins) ? plugins : [plugins])
         .filter(Boolean)
         .map((plugin, index) => {
@@ -1130,6 +1159,7 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runHook = async (hook, context) => {
+        const hookContext = buildHookContext(context);
         for (const plugin of list) {
             if (shouldDefer(plugin, hook)) {
                 const p = plugin;
@@ -1138,19 +1168,20 @@ function createPluginRunner(plugins = [], options = {}) {
                 queueMicrotask(() => {
                     hookStore.run(
                         { inHook: false, deferred: true, compileChainDepth: chainDepth },
-                        () => runSingle(p, hook, context)
+                        () => runSingle(p, hook, hookContext)
                     );
                 });
                 continue;
             }
             await hookStore.run(
                 { inHook: true },
-                () => runSingle(plugin, hook, context)
+                () => runSingle(plugin, hook, hookContext)
             );
         }
     };
 
     const runPipeline = async (hook, context, initialValue) => {
+        const hookContext = buildHookContext(context);
         let value = initialValue;
         for (const plugin of list) {
             if (!plugin.active || plugin.failed) continue;
@@ -1159,7 +1190,7 @@ function createPluginRunner(plugins = [], options = {}) {
             try {
                 const result = await hookStore.run(
                     { inHook: true },
-                    () => withTimeout(Promise.resolve(fn({ ...context, value })), plugin.timeoutMs)
+                    () => withTimeout(Promise.resolve(fn({ ...hookContext, value })), plugin.timeoutMs)
                 );
                 if (result !== undefined) {
                     value = result;
@@ -1167,7 +1198,7 @@ function createPluginRunner(plugins = [], options = {}) {
             } catch (error) {
                 const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
                 await runHook('onError', {
-                    error, hook, plugin: plugin.name, timedOut, context
+                    error, hook, plugin: plugin.name, timedOut, context: hookContext
                 });
             }
         }
@@ -1175,6 +1206,7 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runResolve = async (hook, context, resolveConfig) => {
+        const hookContext = buildHookContext(context);
         for (const plugin of list) {
             if (!plugin.active || plugin.failed) continue;
             const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
@@ -1182,7 +1214,7 @@ function createPluginRunner(plugins = [], options = {}) {
             try {
                 const result = await hookStore.run(
                     { inHook: true },
-                    () => withTimeout(Promise.resolve(fn(context)), plugin.timeoutMs)
+                    () => withTimeout(Promise.resolve(fn(hookContext)), plugin.timeoutMs)
                 );
                 if (result == null) continue;
                 if (typeof result.css !== 'string') continue;
@@ -1197,7 +1229,7 @@ function createPluginRunner(plugins = [], options = {}) {
             } catch (error) {
                 const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
                 await runHook('onError', {
-                    error, hook, plugin: plugin.name, timedOut, context
+                    error, hook, plugin: plugin.name, timedOut, context: hookContext
                 });
             }
         }
@@ -1751,7 +1783,7 @@ export async function createCore({
     app.use(rateLimiter.middleware);
 
     const pluginContext = buildPluginContext(state, config);
-    const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs });
+    const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs, pluginContext });
     const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
@@ -1790,6 +1822,11 @@ export async function createCore({
         return results.every(Boolean);
     };
 
+    const purgeProjectPagesFromStore = async (projectId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        return cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
+    };
+
     pluginContext.evictPage = (projectId, pageId) => {
         evictPageByKey(state, makePageKey(projectId, pageId));
     };
@@ -1807,11 +1844,22 @@ export async function createCore({
     pluginContext.purgeProject = async (projectId) => {
         if (!isValidId(projectId, config)) return false;
         const pageIds = evictProjectLocal(projectId);
-        const pageResults = await Promise.all(
-            pageIds.map((pageId) => purgePageArtifactsFromStore(projectId, pageId))
-        );
+        let pageResult = true;
+        if (pageIds.length > 0) {
+            const pageResults = await Promise.all(
+                pageIds.map((pageId) => purgePageArtifactsFromStore(projectId, pageId))
+            );
+            pageResult = pageResults.every(Boolean);
+        }
+
+        const hasBulkProjectPageDelete = cacheStoreRunner?.hasMethod?.('deleteProjectPageArtifacts');
+        if (cacheStoreRunner?.enabled && (hasBulkProjectPageDelete || pageIds.length === 0)) {
+            const bulkResult = await purgeProjectPagesFromStore(projectId);
+            pageResult = pageResult && bulkResult;
+        }
+
         const projectResult = await purgeProjectArtifactsFromStore(projectId);
-        return [projectResult, ...pageResults].every(Boolean);
+        return pageResult && projectResult;
     };
 
     pluginContext.compile = async (input) => {

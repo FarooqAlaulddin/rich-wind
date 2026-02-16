@@ -98,6 +98,7 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 
 - **Sticky sessions** — route requests from the same editing session to the same replica. This keeps the cache warm for active users.
 - **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore) for the adapter interface.
+- **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
 - **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
 
 ## cacheStore Adapters
@@ -106,7 +107,7 @@ The `cacheStore` option accepts any object that implements the core artifact met
 
 For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore).
 
-The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact` and `deleteProjectArtifact` as well. Here are two examples:
+The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact`, `deleteProjectArtifact`, and `deleteProjectPageArtifacts`. Here are two examples:
 
 ### Redis
 
@@ -123,6 +124,16 @@ const cacheStore = {
   },
   async deletePageArtifact({ projectId, pageId, bundle }) {
     await redis.del(`rw:${projectId}:${pageId}:${bundle}`);
+  },
+  async deleteProjectPageArtifacts({ projectId }) {
+    const prefix = `rw:${projectId}:`;
+    let cursor = "0";
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, "MATCH", `${prefix}*`, "COUNT", 200);
+      cursor = nextCursor;
+      const pageKeys = keys.filter((key) => !key.includes(":_project:"));
+      if (pageKeys.length > 0) await redis.del(pageKeys);
+    } while (cursor !== "0");
   },
   async readProjectArtifact({ projectId, bundle }) {
     const raw = await redis.get(`rw:${projectId}:_project:${bundle}`);
@@ -172,6 +183,24 @@ const cacheStore = {
     try {
       await fs.unlink(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`));
     } catch {}
+  },
+  deleteProjectPageArtifacts: async ({ projectId }) => {
+    const projectDir = path.join(DIR, safe(projectId));
+    let names = [];
+    try {
+      names = await fs.readdir(projectDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      names
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && !entry.name.startsWith("_project."))
+        .map(async (entry) => {
+          try {
+            await fs.unlink(path.join(projectDir, entry.name));
+          } catch {}
+        })
+    );
   },
   readProjectArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`)),
   upsertProjectArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`), i),

@@ -94,14 +94,14 @@ All query functions return copies or frozen snapshots — never live references.
 | `evictPage(projectId, pageId)` | Remove a page from cache (updates class counts, LRU, project aggregates) |
 | `evictProject(projectId)` | Remove an entire project and all its pages |
 | `purgePage(projectId, pageId)` | Evict a page from memory and delete persisted page artifacts (`full`/`utilities`/`theme`) via `cacheStore` |
-| `purgeProject(projectId)` | Evict a project from memory and delete persisted project artifacts plus known page artifacts via `cacheStore` |
+| `purgeProject(projectId)` | Evict a project from memory and delete persisted project artifacts plus page artifacts via `cacheStore` |
 | `compile({ projectId, pageId, html?, classes?, bundle? })` | Compile and cache a page programmatically |
 | `hydratePageArtifact({ projectId, pageId, bundle, css, classes?, ... })` | Inject a pre-built artifact into cache without compilation |
 | `hydrateProjectArtifact({ projectId, bundle, css, hash?, ... })` | Inject a pre-built project aggregate into cache |
 
 **`evictPage()` / `evictProject()` are memory-only.** They intentionally do not mutate remote persistence.
 
-**`purgePage()` / `purgeProject()` are best-effort delete-through.** They keep the same in-memory eviction behavior and also call cache-store delete operations when available. Full remote cleanup requires the adapter to implement `deletePageArtifact` and `deleteProjectArtifact`.
+**`purgePage()` / `purgeProject()` are best-effort delete-through.** They keep the same in-memory eviction behavior and also call cache-store delete operations when available. Full remote cleanup requires `deletePageArtifact` / `deleteProjectArtifact`, and cold-replica `purgeProject()` additionally needs `deleteProjectPageArtifacts` to delete page artifacts when no local page list exists.
 
 **`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it automatically skips hooks to prevent infinite recursion (reentrancy guard).
 

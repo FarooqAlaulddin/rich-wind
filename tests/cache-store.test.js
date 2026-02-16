@@ -168,6 +168,63 @@ describe('Cache store integration', () => {
     }
   });
 
+  it('reports missing cacheStore artifact methods through onError and fails open', async () => {
+    const errors = [];
+    const plugin = {
+      onError: (ctx) => errors.push(ctx)
+    };
+    const store = {};
+
+    const { baseUrl, close } = await createTestServer({}, {
+      cacheStore: store,
+      plugins: [plugin],
+      config: { rateLimitDisabled: true }
+    });
+
+    try {
+      const pageRead = await fetch(`${baseUrl}/api/css?projectId=missing-ops&pageId=home`);
+      expect(pageRead.status).toBe(404);
+
+      const projectRead = await fetch(`${baseUrl}/api/projects/missing-ops/css`);
+      expect(projectRead.status).toBe(404);
+
+      const compile = await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'missing-ops',
+          pageId: 'home',
+          classes: 'bg-red-500'
+        })
+      });
+      expect(compile.status).toBe(200);
+
+      const projectWrite = await fetch(`${baseUrl}/api/projects/missing-ops/css`);
+      expect(projectWrite.status).toBe(200);
+
+      const done = await waitFor(() => {
+        const ops = errors
+          .filter((entry) => entry?.stage === 'cache-store')
+          .map((entry) => entry.op);
+        return (
+          ops.includes('readPageArtifact') &&
+          ops.includes('readProjectArtifact') &&
+          ops.includes('upsertPageArtifact') &&
+          ops.includes('upsertProjectArtifact')
+        );
+      }, { timeoutMs: 2000 });
+      expect(done).toBe(true);
+
+      const readPageError = errors.find(
+        (entry) => entry?.stage === 'cache-store' && entry?.op === 'readPageArtifact'
+      );
+      expect(readPageError?.error?.code).toBe('CACHE_STORE_METHOD_MISSING');
+      expect(readPageError?.timedOut).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
   it('writes page artifacts through store after compile', async () => {
     const writes = [];
     const store = {

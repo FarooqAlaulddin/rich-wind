@@ -49,7 +49,7 @@ The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It
 
 By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
 
-A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus two optional delete-through artifact methods used by plugin purge mutations, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
+A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus up to three optional delete-through artifact methods used by plugin purge mutations, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
 
 ### readPageArtifact
 
@@ -177,6 +177,20 @@ Called by `purgeProject(projectId)` from plugin context. This is for explicit de
 
 If implemented, it should remove the project aggregate artifact for that bundle from persistence.
 
+### deleteProjectPageArtifacts (optional)
+
+Called by `purgeProject(projectId)` from plugin context for project-wide page artifact cleanup in persistence. This is especially important when purging from a cold replica that has no local page list.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app"
+}
+```
+
+If implemented, it should remove all persisted page artifacts for the project across bundles (`full` / `utilities` / `theme`).
+
 ### Plugin data methods (optional)
 
 These methods back the plugin storage API described in [Plugin System](/docs/plugin-system#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
@@ -255,6 +269,7 @@ For plugin storage specifically:
 
 For purge mutations specifically:
 - `ctx.purgePage(projectId, pageId)` and `ctx.purgeProject(projectId)` return `false` if required delete operations fail, time out, or are missing
+- `ctx.purgeProject(projectId)` can still purge known local pages without `deleteProjectPageArtifacts`, but a cold-replica purge (no local pages) requires `deleteProjectPageArtifacts` for full remote cleanup
 - local in-memory eviction still happens, so the process remains healthy and operational
 
 This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.

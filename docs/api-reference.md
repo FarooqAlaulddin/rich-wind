@@ -180,7 +180,7 @@ These options live outside `config` — they're top-level arguments to `createCo
 | `pluginTimeoutMs` | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default timeout for plugin hooks |
 | `setupTimeoutMs` | — | computed | Plugin setup timeout (min 1000ms) |
 | `maxPluginCompileChainDepth` | — | `2` | Max depth for plugin-initiated compile chains |
-| `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](/docs/runtime-spec#cachestore), including optional `deletePageArtifact`/`deleteProjectArtifact` for purge mutations) |
+| `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](/docs/runtime-spec#cachestore), including optional `deletePageArtifact`/`deleteProjectArtifact`/`deleteProjectPageArtifacts` for purge mutations) |
 | `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation |
 
 `PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you call `app.listen()` yourself.
