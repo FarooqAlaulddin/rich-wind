@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: rich-wind-core
+    name: rich-wind
     env: node
     plan: free
     rootDir: .
-    buildCommand: npm ci --omit=dev
-    startCommand: npm run prod
+    buildCommand: npm ci && npm run build --workspace=demo
+    startCommand: node scripts/dev-server.js
     autoDeploy: false
     envVars:
       - key: NODE_ENV
@@ -32,20 +32,3 @@ services:
         value: "60000"
       - key: RW_RATE_LIMIT_MAX
         value: "60"
-
-  - type: web
-    name: rich-wind-ui
-    env: node
-    plan: free
-    rootDir: ui
-    buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm run start
-    autoDeploy: false
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: RW_CORE_URL
-        fromService:
-          type: web
-          name: rich-wind-core
-          envVarKey: RENDER_EXTERNAL_URL

@@ -1,0 +1,414 @@
+/* ==========================================================================
+   Auto-Promote Dashboard — Content Styles
+   Loaded as extra CSS on the /plugins/auto-promote page.
+   Shell & nav come from docs.css.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Tokens (light-first, matching docs convention)
+   -------------------------------------------------------------------------- */
+:root {
+  --ap-ink: #1e293b;
+  --ap-ink-muted: #475569;
+  --ap-ink-subtle: #94a3b8;
+  --ap-paper: #f8fafc;
+  --ap-card: rgba(255, 255, 255, 0.85);
+  --ap-border: rgba(15, 23, 42, 0.1);
+  --ap-border-strong: rgba(15, 23, 42, 0.2);
+  --ap-accent: #4c8bf5;
+  --ap-yellow: #d97706;
+  --ap-yellow-muted: rgba(217, 119, 6, 0.12);
+  --ap-green: #10b981;
+  --ap-rose: #f43f5e;
+  --ap-radius: 0.5rem;
+  --ap-radius-lg: 0.75rem;
+  --font-mono: 'DM Mono', ui-monospace, monospace;
+}
+
+body.theme-dark {
+  --ap-ink: #e2e8f0;
+  --ap-ink-muted: #94a3b8;
+  --ap-ink-subtle: #64748b;
+  --ap-paper: #0b1120;
+  --ap-card: rgba(15, 23, 42, 0.7);
+  --ap-border: rgba(148, 163, 184, 0.15);
+  --ap-border-strong: rgba(148, 163, 184, 0.25);
+  --ap-accent: #60a5fa;
+  --ap-yellow: #fbbf24;
+  --ap-yellow-muted: rgba(251, 191, 36, 0.15);
+  --ap-green: #34d399;
+  --ap-rose: #fb7185;
+}
+
+/* --------------------------------------------------------------------------
+   Header
+   -------------------------------------------------------------------------- */
+
+.ap-header {
+  display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;
+}
+
+.ap-header h1 { font-size: 1.75rem; font-weight: 700; margin: 0; letter-spacing: -0.02em; color: var(--ap-ink); }
+
+.ap-threshold {
+  font-size: 0.8125rem; color: var(--ap-ink-muted);
+  background: var(--ap-yellow-muted); border: 1px solid rgba(217, 119, 6, 0.25);
+  padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: 500;
+}
+
+body.theme-dark .ap-threshold { border-color: rgba(251, 191, 36, 0.3); }
+
+.ap-threshold strong { color: var(--ap-yellow); }
+
+/* --------------------------------------------------------------------------
+   Sections
+   -------------------------------------------------------------------------- */
+
+.ap-section {
+  background: var(--ap-card); border: 1px solid var(--ap-border);
+  border-radius: var(--ap-radius-lg); padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem; backdrop-filter: blur(8px);
+}
+
+.ap-section h3 { font-size: 1rem; font-weight: 700; margin: 0 0 1rem; color: var(--ap-ink); }
+.ap-section h4 { font-size: 0.875rem; font-weight: 600; margin: 0.75rem 0 0.5rem; display: flex; align-items: center; gap: 0.75rem; color: var(--ap-ink); }
+.ap-desc { color: var(--ap-ink-muted); margin: 0 0 1rem; font-size: 0.8125rem; }
+
+/* --------------------------------------------------------------------------
+   Project cards
+   -------------------------------------------------------------------------- */
+
+.ap-project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.75rem; }
+
+.ap-project-card {
+  border: 1px solid var(--ap-border); border-radius: var(--ap-radius-lg);
+  overflow: hidden; background: rgba(15, 23, 42, 0.02);
+}
+
+body.theme-dark .ap-project-card { background: rgba(148, 163, 184, 0.04); }
+
+.ap-project-header {
+  padding: 0.625rem 1rem; font-weight: 600; font-family: var(--font-mono);
+  font-size: 0.8125rem; background: rgba(15, 23, 42, 0.03);
+  border-bottom: 1px solid var(--ap-border);
+  display: flex; justify-content: space-between; align-items: center;
+}
+
+body.theme-dark .ap-project-header { background: rgba(148, 163, 184, 0.06); }
+
+.ap-project-body { padding: 0.75rem 1rem; }
+
+.ap-stat-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 0.8125rem; }
+.ap-stat-label { color: var(--ap-ink-muted); }
+.ap-stat-value { font-weight: 600; font-family: var(--font-mono); }
+
+.ap-promoted-list { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.5rem; }
+
+/* --------------------------------------------------------------------------
+   Badges / Pills
+   -------------------------------------------------------------------------- */
+
+.ap-badge {
+  display: inline-block; font-size: 0.6875rem; font-family: var(--font-mono);
+  padding: 0.125rem 0.5rem; border-radius: 999px; font-weight: 500;
+  border: 1px solid var(--ap-border);
+}
+
+.ap-badge-promoted {
+  background: var(--ap-yellow-muted);
+  border-color: rgba(217, 119, 6, 0.3);
+  color: var(--ap-yellow);
+}
+
+body.theme-dark .ap-badge-promoted { border-color: rgba(251, 191, 36, 0.4); }
+
+.ap-badge-none { color: var(--ap-ink-subtle); font-style: italic; }
+
+.ap-empty { color: var(--ap-ink-subtle); font-style: italic; text-align: center; padding: 1.5rem; }
+
+/* --------------------------------------------------------------------------
+   Demo controls
+   -------------------------------------------------------------------------- */
+
+.ap-demo-controls { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1rem; }
+
+.ap-field { display: flex; flex-direction: column; gap: 0.25rem; }
+.ap-field label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ap-ink-subtle); }
+.ap-field input {
+  font-family: var(--font-mono); font-size: 0.8125rem;
+  background: rgba(15, 23, 42, 0.04); border: 1px solid var(--ap-border-strong);
+  border-radius: var(--ap-radius); padding: 0.5rem 0.75rem; color: var(--ap-ink);
+  outline: none; transition: border-color 0.15s;
+}
+
+body.theme-dark .ap-field input { background: rgba(148, 163, 184, 0.08); }
+
+.ap-field input:focus { border-color: var(--ap-accent); }
+
+.ap-demo-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+
+.ap-btn {
+  font-family: inherit; font-size: 0.8125rem; font-weight: 600;
+  padding: 0.5rem 1rem; border-radius: var(--ap-radius); border: 1px solid transparent;
+  cursor: pointer; transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.ap-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ap-btn-primary { background: var(--ap-accent); color: #fff; border-color: var(--ap-accent); }
+.ap-btn-primary:hover:not(:disabled) { opacity: 0.85; }
+
+.ap-btn-secondary { background: rgba(15, 23, 42, 0.06); color: var(--ap-ink); border-color: var(--ap-border-strong); }
+body.theme-dark .ap-btn-secondary { background: rgba(148, 163, 184, 0.12); }
+.ap-btn-secondary:hover:not(:disabled) { background: rgba(15, 23, 42, 0.1); }
+body.theme-dark .ap-btn-secondary:hover:not(:disabled) { background: rgba(148, 163, 184, 0.2); }
+
+.ap-btn-warning { background: var(--ap-yellow-muted); color: var(--ap-yellow); border-color: rgba(217, 119, 6, 0.25); }
+body.theme-dark .ap-btn-warning { border-color: rgba(251, 191, 36, 0.3); }
+.ap-btn-warning:hover:not(:disabled) { opacity: 0.85; }
+
+.ap-btn-sm { font-size: 0.6875rem; padding: 0.25rem 0.625rem; }
+
+/* --------------------------------------------------------------------------
+   Page entries
+   -------------------------------------------------------------------------- */
+
+.ap-pages-heading {
+  font-size: 0.875rem; font-weight: 600; margin: 1.25rem 0 0.5rem;
+  color: var(--ap-ink-muted);
+}
+
+.ap-pages { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.ap-page-entry {
+  border: 1px solid var(--ap-border); border-radius: var(--ap-radius-lg);
+  padding: 0.875rem 1rem; background: rgba(15, 23, 42, 0.02);
+}
+
+body.theme-dark .ap-page-entry { background: rgba(148, 163, 184, 0.04); }
+
+.ap-page-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;
+}
+
+.ap-page-title { font-weight: 600; font-family: var(--font-mono); font-size: 0.8125rem; }
+
+.ap-page-actions { display: flex; gap: 0.375rem; align-items: center; }
+
+.ap-page-status {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 0.125rem 0.5rem; border-radius: 999px;
+}
+.ap-page-status-idle { color: var(--ap-ink-subtle); }
+.ap-page-status-compiling { color: var(--ap-yellow); }
+.ap-page-status-compiled { color: var(--ap-green); }
+.ap-page-status-error { color: var(--ap-rose); }
+
+.ap-btn-remove {
+  background: none; border: none; color: var(--ap-ink-subtle);
+  cursor: pointer; font-size: 1rem; padding: 0.125rem 0.375rem;
+  border-radius: var(--ap-radius); transition: color 0.15s;
+}
+.ap-btn-remove:hover { color: var(--ap-rose); }
+
+.ap-page-textarea {
+  width: 100%; min-height: 60px; resize: vertical;
+  font-family: var(--font-mono); font-size: 0.8125rem;
+  background: rgba(15, 23, 42, 0.03); border: 1px solid var(--ap-border);
+  border-radius: var(--ap-radius); padding: 0.5rem 0.75rem; color: var(--ap-ink);
+  outline: none; transition: border-color 0.15s;
+}
+
+body.theme-dark .ap-page-textarea { background: rgba(148, 163, 184, 0.06); }
+
+.ap-page-textarea:focus { border-color: var(--ap-accent); }
+
+.ap-page-output {
+  margin-top: 0.5rem; font-size: 0.75rem; color: var(--ap-ink-muted);
+  font-family: var(--font-mono); min-height: 1.5em;
+}
+
+/* --------------------------------------------------------------------------
+   Compile result display
+   -------------------------------------------------------------------------- */
+
+.ap-compile-result { display: flex; flex-direction: column; gap: 0.375rem; }
+.ap-compile-result.ap-compile-error { color: var(--ap-rose); }
+
+.ap-compile-metrics { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+
+.ap-size-badge {
+  display: inline-block; font-family: var(--font-mono); font-size: 0.6875rem;
+  font-weight: 700; padding: 0.125rem 0.5rem; border-radius: 999px;
+  background: rgba(76, 139, 245, 0.1); color: var(--ap-accent);
+  border: 1px solid rgba(76, 139, 245, 0.2);
+}
+
+body.theme-dark .ap-size-badge {
+  background: rgba(96, 165, 250, 0.15);
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
+.ap-size-badge-promoted {
+  background: var(--ap-yellow-muted); color: var(--ap-yellow);
+  border-color: rgba(217, 119, 6, 0.3);
+}
+
+body.theme-dark .ap-size-badge-promoted { border-color: rgba(251, 191, 36, 0.4); }
+
+.ap-compile-detail { font-size: 0.6875rem; color: var(--ap-ink-muted); }
+
+.ap-compile-cached {
+  font-size: 0.6125rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--ap-green);
+}
+
+.ap-compile-stripped {
+  font-size: 0.6125rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--ap-yellow);
+}
+
+.ap-compile-classes { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+.ap-compile-css-details { margin-top: 0.375rem; }
+
+.ap-compile-css-toggle {
+  font-size: 0.6875rem; font-weight: 600; color: var(--ap-ink-muted);
+  cursor: pointer; display: flex; align-items: center; gap: 0.5rem;
+  list-style: none; user-select: none;
+}
+.ap-compile-css-toggle::-webkit-details-marker { display: none; }
+.ap-compile-css-toggle::before {
+  content: "\25B6"; font-size: 0.5rem; transition: transform 0.15s;
+}
+details[open] > .ap-compile-css-toggle::before { transform: rotate(90deg); }
+
+.ap-compile-css-code {
+  margin: 0.375rem 0 0; padding: 0.625rem 0.75rem;
+  background: #0f172a; color: #e2e8f0;
+  border: 1px solid var(--ap-border); border-radius: var(--ap-radius);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  max-height: 200px; overflow-y: auto; line-height: 1.45;
+}
+
+.ap-class-pill {
+  display: inline-block; font-family: var(--font-mono); font-size: 0.625rem;
+  padding: 0.0625rem 0.375rem; border-radius: var(--ap-radius);
+  background: rgba(15, 23, 42, 0.04); border: 1px solid var(--ap-border);
+  color: var(--ap-ink-muted);
+}
+
+body.theme-dark .ap-class-pill { background: rgba(148, 163, 184, 0.08); }
+
+.ap-class-promoted {
+  background: var(--ap-yellow-muted); border-color: rgba(217, 119, 6, 0.25);
+  color: var(--ap-yellow); text-decoration: line-through;
+  text-decoration-color: rgba(217, 119, 6, 0.4);
+}
+
+body.theme-dark .ap-class-promoted {
+  border-color: rgba(251, 191, 36, 0.35);
+  text-decoration-color: rgba(251, 191, 36, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   Project card promoted section
+   -------------------------------------------------------------------------- */
+
+.ap-promoted-count {
+  font-family: inherit; font-size: 0.6875rem; font-weight: 600;
+  padding: 0.0625rem 0.5rem; border-radius: 999px;
+  background: var(--ap-yellow-muted); color: var(--ap-yellow);
+  border: 1px solid rgba(217, 119, 6, 0.25);
+}
+
+body.theme-dark .ap-promoted-count { border-color: rgba(251, 191, 36, 0.3); }
+
+.ap-stat-promoted { color: var(--ap-yellow); }
+.ap-stat-pct { font-weight: 400; font-size: 0.75rem; opacity: 0.7; }
+
+.ap-promoted-section {
+  margin-top: 0.625rem; padding-top: 0.5rem;
+  border-top: 1px solid var(--ap-border);
+}
+
+.ap-promoted-label {
+  font-size: 0.6875rem; color: var(--ap-ink-subtle);
+  margin-bottom: 0.375rem; font-weight: 500;
+}
+
+/* --------------------------------------------------------------------------
+   Output section (promoted CSS)
+   -------------------------------------------------------------------------- */
+
+.ap-output-section { margin-top: 1rem; }
+
+.ap-css-output {
+  margin: 0.5rem 0 0; border-radius: var(--ap-radius);
+}
+
+.ap-promoted-output-empty {
+  padding: 1rem; text-align: center;
+  color: var(--ap-ink-subtle); font-style: italic; font-size: 0.8125rem;
+  background: rgba(15, 23, 42, 0.02); border: 1px solid var(--ap-border);
+  border-radius: var(--ap-radius);
+}
+
+body.theme-dark .ap-promoted-output-empty { background: rgba(148, 163, 184, 0.04); }
+
+.ap-promoted-output-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.8125rem; font-weight: 600; color: var(--ap-ink);
+  margin-bottom: 0.375rem;
+}
+
+.ap-promoted-output-code {
+  margin: 0; padding: 0.75rem 1rem;
+  background: #0f172a; color: #e2e8f0;
+  border: 1px solid var(--ap-border); border-radius: var(--ap-radius);
+  font-family: var(--font-mono); font-size: 0.75rem;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  max-height: 300px; overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Status bar
+   -------------------------------------------------------------------------- */
+
+.ap-status {
+  position: fixed; bottom: 1rem; right: 1rem;
+  font-size: 0.75rem; font-weight: 600;
+  padding: 0.375rem 0.875rem; border-radius: 999px;
+  background: var(--ap-card); border: 1px solid var(--ap-border);
+  backdrop-filter: blur(8px);
+  opacity: 0; transform: translateY(0.5rem);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.ap-status:not(:empty) {
+  animation: ap-toast-fade 2.5s ease forwards;
+}
+
+@keyframes ap-toast-fade {
+  0%   { opacity: 1; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .ap-header h1 { font-size: 1.375rem; }
+  .ap-project-grid { grid-template-columns: 1fr; }
+  .ap-demo-controls { flex-direction: column; align-items: stretch; }
+}
