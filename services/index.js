@@ -435,7 +435,8 @@ function createCacheStoreRunner(cacheStore, options = {}) {
                 pageId: input?.pageId ?? null,
                 bundle: input?.bundle ?? null,
                 pluginName: input?.pluginName ?? null,
-                key: input?.key ?? null
+                key: input?.key ?? null,
+                prefix: input?.prefix ?? null
             }
         });
     };
@@ -471,7 +472,8 @@ function createCacheStoreRunner(cacheStore, options = {}) {
         upsertProjectArtifact: (input) => write('upsertProjectArtifact', input),
         readPluginData: (input) => read('readPluginData', input),
         writePluginData: (input) => write('writePluginData', input),
-        deletePluginData: (input) => write('deletePluginData', input)
+        deletePluginData: (input) => write('deletePluginData', input),
+        listPluginData: (input) => read('listPluginData', input)
     };
 }
 
@@ -1042,6 +1044,8 @@ const PLUGIN_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const MAX_PLUGIN_NAME_LENGTH = 64;
 const PLUGIN_STORAGE_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 const PLUGIN_STORAGE_KEY_DESC = '[a-zA-Z0-9._:-]{1,128}';
+const PLUGIN_STORAGE_PREFIX_RE = /^[a-zA-Z0-9._:-]{0,128}$/;
+const PLUGIN_STORAGE_PREFIX_DESC = '[a-zA-Z0-9._:-]{0,128}';
 
 function createPluginRunner(plugins = [], options = {}) {
     const defaultTimeoutMs = parseIntWithDefault(
@@ -1671,6 +1675,28 @@ async function mountPluginRoutes(app, pluginList, pluginContext, cacheStoreRunne
                     pluginName: plugin.routeName,
                     key
                 });
+            },
+            async list(prefix = '') {
+                const normalizedPrefix = prefix == null ? '' : prefix;
+                if (typeof normalizedPrefix !== 'string' || !PLUGIN_STORAGE_PREFIX_RE.test(normalizedPrefix)) {
+                    throw new Error(`Invalid storage prefix "${prefix}". Must match ${PLUGIN_STORAGE_PREFIX_DESC}.`);
+                }
+                const result = await cacheStoreRunner.listPluginData({
+                    pluginName: plugin.routeName,
+                    prefix: normalizedPrefix
+                });
+                if (!Array.isArray(result)) return [];
+                const seen = new Set();
+                const filtered = [];
+                for (const key of result) {
+                    if (typeof key !== 'string') continue;
+                    if (!PLUGIN_STORAGE_KEY_RE.test(key)) continue;
+                    if (normalizedPrefix && !key.startsWith(normalizedPrefix)) continue;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    filtered.push(key);
+                }
+                return filtered;
             }
         });
 

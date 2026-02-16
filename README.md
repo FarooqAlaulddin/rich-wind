@@ -52,6 +52,9 @@ const app = createCore({
     },
     async writePluginData({ pluginName, key, value }) {},
     async deletePluginData({ pluginName, key }) {},
+    async listPluginData({ pluginName, prefix }) {
+      return [];
+    },
   },
   cacheStoreTimeoutMs: 150,
   plugins: [
@@ -94,12 +97,13 @@ Plugin setup context includes `storage`:
 - `ctx.storage.get(key)` -> value | `null`
 - `ctx.storage.set(key, value)` -> `true` | `false`
 - `ctx.storage.delete(key)` -> `true` | `false`
+- `ctx.storage.list(prefix?)` -> `string[]`
 
 Storage keys must match `[a-zA-Z0-9._:-]{1,128}` and are automatically namespaced per plugin.
+Storage prefixes for `list(prefix)` must match `[a-zA-Z0-9._:-]{0,128}`.
 Storage methods are always available, even when no `cacheStore` is configured.
-Durability requires `cacheStore` to implement `readPluginData` / `writePluginData` / `deletePluginData`.
+Durability requires `cacheStore` to implement `readPluginData` / `writePluginData` / `deletePluginData` / `listPluginData`.
 Missing methods, no adapter, failures, and timeouts are fail-open and reported through `onError`.
-There is no key-enumeration API (`list`/`keys`) yet; plugins should use known-key conventions when needed.
 Adapters are responsible for value serialization; plugin values should be JSON-serializable for portable behavior.
 
 Global plugin timeout can also be set via `createCore({ pluginTimeoutMs })` or `RW_PLUGIN_TIMEOUT_MS`.

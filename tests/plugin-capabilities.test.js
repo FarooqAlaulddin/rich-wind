@@ -415,6 +415,7 @@ describe('Plugin mutation functions', () => {
     expect(typeof ctxRef.storage.get).toBe('function');
     expect(typeof ctxRef.storage.set).toBe('function');
     expect(typeof ctxRef.storage.delete).toBe('function');
+    expect(typeof ctxRef.storage.list).toBe('function');
 
     await close();
   });
@@ -435,6 +436,17 @@ describe('Plugin mutation functions', () => {
       async deletePluginData({ pluginName, key }) {
         calls.push({ op: 'deletePluginData', pluginName, key });
         entries.delete(`${pluginName}:${key}`);
+      },
+      async listPluginData({ pluginName, prefix }) {
+        calls.push({ op: 'listPluginData', pluginName, prefix });
+        const fullPrefix = `${pluginName}:`;
+        const keys = [];
+        for (const fullKey of entries.keys()) {
+          if (!fullKey.startsWith(fullPrefix)) continue;
+          const key = fullKey.slice(fullPrefix.length);
+          if (!prefix || key.startsWith(prefix)) keys.push(key);
+        }
+        return keys;
       }
     };
 
@@ -457,9 +469,13 @@ describe('Plugin mutation functions', () => {
 
     await alphaStorage.set('metrics', { count: 1 });
     await betaStorage.set('metrics', { count: 2 });
+    await alphaStorage.set('meta:1', { flag: true });
 
     expect(await alphaStorage.get('metrics')).toEqual({ count: 1 });
     expect(await betaStorage.get('metrics')).toEqual({ count: 2 });
+    expect(await alphaStorage.list()).toEqual(expect.arrayContaining(['metrics', 'meta:1']));
+    expect(await alphaStorage.list('met')).toEqual(expect.arrayContaining(['metrics']));
+    expect(await betaStorage.list()).toEqual(['metrics']);
 
     await alphaStorage.delete('metrics');
     expect(await alphaStorage.get('metrics')).toBeNull();
@@ -469,6 +485,7 @@ describe('Plugin mutation functions', () => {
     expect(entries.get('beta:metrics')).toEqual({ count: 2 });
     expect(calls.some((call) => call.pluginName === 'alpha')).toBe(true);
     expect(calls.some((call) => call.pluginName === 'beta')).toBe(true);
+    expect(calls.some((call) => call.op === 'listPluginData' && call.pluginName === 'alpha')).toBe(true);
 
     await close();
   });
@@ -489,6 +506,7 @@ describe('Plugin mutation functions', () => {
     expect(await storage.get('metrics')).toBeNull();
     expect(await storage.set('metrics', { count: 1 })).toBe(false);
     expect(await storage.delete('metrics')).toBe(false);
+    expect(await storage.list()).toEqual([]);
 
     await close();
   });
@@ -518,6 +536,10 @@ describe('Plugin mutation functions', () => {
       },
       async deletePluginData() {
         await sleep(80);
+      },
+      async listPluginData() {
+        await sleep(80);
+        return ['metrics'];
       }
     };
 
@@ -531,6 +553,7 @@ describe('Plugin mutation functions', () => {
     expect(await storage.get('metrics')).toBeNull();
     expect(await storage.set('metrics', { count: 1 })).toBe(false);
     expect(await storage.delete('metrics')).toBe(false);
+    expect(await storage.list('met')).toEqual([]);
 
     const ops = errors
       .filter((entry) => entry?.stage === 'cache-store')
@@ -539,6 +562,7 @@ describe('Plugin mutation functions', () => {
     expect(ops).toContain('readPluginData');
     expect(ops).toContain('writePluginData');
     expect(ops).toContain('deletePluginData');
+    expect(ops).toContain('listPluginData');
     expect(
       errors.some(
         (entry) =>
@@ -567,6 +591,7 @@ describe('Plugin mutation functions', () => {
     await expect(storage.get('bad key')).rejects.toThrow(/Invalid storage key/);
     await expect(storage.set('../metrics', { count: 1 })).rejects.toThrow(/Invalid storage key/);
     await expect(storage.delete('')).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.list('bad prefix')).rejects.toThrow(/Invalid storage prefix/);
 
     await close();
   });
@@ -971,6 +996,7 @@ describe('Plugin mutation functions', () => {
     expect(typeof ctxRef.storage.get).toBe('function');
     expect(typeof ctxRef.storage.set).toBe('function');
     expect(typeof ctxRef.storage.delete).toBe('function');
+    expect(typeof ctxRef.storage.list).toBe('function');
 
     // Query functions are available
     expect(typeof ctxRef.getProjectIds).toBe('function');
