@@ -29,6 +29,39 @@ const parseBoolean = (value, fallback = false) => {
     return fallback;
 };
 
+const parseCorsOrigin = (value) => {
+    if (value === undefined || value === null) return null;
+    const tokens = (Array.isArray(value) ? value : [value])
+        .flatMap((part) => String(part).split(','))
+        .map((part) => part.trim())
+        .filter(Boolean);
+    if (tokens.length === 0) return null;
+    if (
+        tokens.length === 1 &&
+        ['0', 'false', 'off', 'none', 'disabled'].includes(tokens[0].toLowerCase())
+    ) {
+        return null;
+    }
+    if (tokens.includes('*')) return '*';
+    return Array.from(new Set(tokens));
+};
+
+const resolveCorsOrigin = (corsOrigin, requestOrigin) => {
+    if (!corsOrigin) return null;
+    if (corsOrigin === '*') return '*';
+    if (typeof requestOrigin !== 'string' || !requestOrigin) return null;
+    return corsOrigin.includes(requestOrigin) ? requestOrigin : null;
+};
+
+const appendVaryHeader = (existingValue, nextToken) => {
+    const existing = String(existingValue || '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+    if (!existing.includes(nextToken)) existing.push(nextToken);
+    return existing.join(', ');
+};
+
 const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
 const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
 
@@ -119,6 +152,9 @@ function buildConfig(overrides = {}) {
             cacheTtlMs,
             0
         ),
+        corsOrigin: parseCorsOrigin(
+            overrides.corsOrigin ?? process.env.RW_CORS_ORIGIN
+        ),
         maxCssChars: parseIntWithDefault(
             overrides.maxCssChars ?? process.env.RW_MAX_CSS_CHARS,
             2000000,
@@ -186,6 +222,36 @@ function createRateLimiter(config) {
 // =============================================================================
 function makePageKey(projectId, pageId) {
     return `${projectId}::${pageId}`;
+}
+
+function createAsyncTaskQueue() {
+    let pendingCount = 0;
+    const waiters = new Set();
+
+    const flushWaiters = () => {
+        if (pendingCount !== 0) return;
+        for (const resolve of waiters) resolve();
+        waiters.clear();
+    };
+
+    return {
+        queue(taskFactory) {
+            pendingCount += 1;
+            queueMicrotask(() => {
+                Promise.resolve()
+                    .then(taskFactory)
+                    .catch(() => {})
+                    .finally(() => {
+                        pendingCount -= 1;
+                        flushWaiters();
+                    });
+            });
+        },
+        drain() {
+            if (pendingCount === 0) return Promise.resolve();
+            return new Promise((resolve) => waiters.add(resolve));
+        }
+    };
 }
 
 function touchPageKey(state, key) {
@@ -792,7 +858,21 @@ async function resolveClassesFromInput({ html, classes }) {
     return valid.sort();
 }
 
-async function compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle = 'full', pluginRunner, cacheStoreRunner, skipHooks = false, source = 'http', request = null }) {
+async function compileAndCachePage({
+    state,
+    config,
+    projectId,
+    pageId,
+    html,
+    classes,
+    bundle = 'full',
+    pluginRunner,
+    cacheStoreRunner,
+    queueStoreWrite,
+    skipHooks = false,
+    source = 'http',
+    request = null
+}) {
     const normalizedBundle = normalizeBundle(bundle);
 
     // Base bundle handling
@@ -942,13 +1022,20 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
     // CacheStore write-through
     if (cacheStoreRunner?.enabled && normalizedBundle !== 'base') {
         const writeNow = Date.now();
-        queueMicrotask(() => {
+        const queueWrite = typeof queueStoreWrite === 'function'
+            ? queueStoreWrite
+            : (fn) => {
+                queueMicrotask(() => {
+                    Promise.resolve(fn()).catch(() => {});
+                });
+            };
+        queueWrite(() =>
             cacheStoreRunner.upsertPageArtifact({
                 projectId, pageId, bundle: normalizedBundle,
                 css, hash: classHash, classes: resolvedClasses,
                 cached: false, updatedAt: writeNow, expiresAt: writeNow + config.cacheTtlMs
-            }).catch(() => {});
-        });
+            })
+        );
     }
 
     return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
@@ -1263,7 +1350,7 @@ function createPluginRunner(plugins = [], options = {}) {
 // =============================================================================
 // HTTP routes
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}) {
+function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}, runtimeHelpers = {}) {
     const withRequestHooks = (req, res, context) => {
         const start = Date.now();
         pluginRunner.runHook('onRequestStart', context);
@@ -1275,11 +1362,13 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
             });
         });
     };
-    const queueStoreWrite = (fn) => {
-        queueMicrotask(() => {
-            Promise.resolve(fn()).catch(() => {});
-        });
-    };
+    const queueStoreWrite = typeof runtimeHelpers.queueStoreWrite === 'function'
+        ? runtimeHelpers.queueStoreWrite
+        : (fn) => {
+            queueMicrotask(() => {
+                Promise.resolve(fn()).catch(() => {});
+            });
+        };
     const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
         ? roleHelpers.isWriteAllowed
         : (() => true);
@@ -1345,6 +1434,7 @@ app.post('/api/compile', async (req, res) => {
         const result = await compileAndCachePage({
             state, config, projectId, pageId, html, classes, bundle,
             pluginRunner, cacheStoreRunner,
+            queueStoreWrite,
             skipHooks: false, source: 'http', request: hookContext.request
         });
         if (result.error) {
@@ -1905,6 +1995,8 @@ export async function createCore({
     const chainDepthLimit = Math.max(1, parseIntWithDefault(maxPluginCompileChainDepth, 2, 1));
     const config = buildConfig(configOverrides);
     const state = createCacheState();
+    const storeWriteQueue = createAsyncTaskQueue();
+    const queueStoreWrite = (fn) => storeWriteQueue.queue(fn);
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -1915,6 +2007,36 @@ export async function createCore({
         res.setHeader('X-Frame-Options', 'DENY');
         res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
         next();
+    });
+
+    app.use((req, res, next) => {
+        const resolvedOrigin = resolveCorsOrigin(config.corsOrigin, req.headers.origin);
+        const corsEnabled = Boolean(config.corsOrigin);
+
+        if (resolvedOrigin) {
+            res.setHeader('Access-Control-Allow-Origin', resolvedOrigin);
+            if (resolvedOrigin !== '*') {
+                res.setHeader(
+                    'Vary',
+                    appendVaryHeader(res.getHeader('Vary'), 'Origin')
+                );
+            }
+            res.setHeader(
+                'Access-Control-Allow-Methods',
+                'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+            );
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.setHeader('Access-Control-Max-Age', '86400');
+        }
+
+        if (req.method === 'OPTIONS' && corsEnabled) {
+            if (req.headers.origin && !resolvedOrigin) {
+                return res.status(403).json({ error: 'CORS origin not allowed.' });
+            }
+            return res.status(204).end();
+        }
+
+        return next();
     });
 
     app.use(express.json({ limit: config.maxBodyBytes }));
@@ -2077,6 +2199,7 @@ export async function createCore({
             () => compileAndCachePage({
                 state, config, projectId, pageId, html, classes, bundle,
                 pluginRunner, cacheStoreRunner,
+                queueStoreWrite,
                 skipHooks,
                 source: 'plugin',
                 request: null
@@ -2148,13 +2271,15 @@ export async function createCore({
         config,
         state,
         cacheStoreRunner,
-        { isWriteAllowed, reportWriteBlocked }
+        { isWriteAllowed, reportWriteBlocked },
+        { queueStoreWrite }
     );
 
     let closePromise = null;
     const close = () => {
         if (closePromise) return closePromise;
         closePromise = (async () => {
+            await storeWriteQueue.drain();
             for (const plugin of [...pluginRunner.list].reverse()) {
                 if (typeof plugin.instance.teardown === 'function') {
                     try {
@@ -2166,6 +2291,7 @@ export async function createCore({
                     } catch { /* teardown errors are silent */ }
                 }
             }
+            await storeWriteQueue.drain();
         })();
         return closePromise;
     };

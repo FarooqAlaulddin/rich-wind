@@ -23,7 +23,8 @@
     "dev:ui": "npm run dev --workspace=demo",
     "prod": "node ./services/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:pack": "node ./scripts/pack-smoke.js"
   },
   "keywords": [
     "tailwindcss",

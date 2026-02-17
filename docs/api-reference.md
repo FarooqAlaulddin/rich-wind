@@ -173,6 +173,7 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `rateLimitDisabled` | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting entirely |
 | `trustProxy` | `RW_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for IP detection |
 | `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
+| `corsOrigin` | `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
 
 These options live outside `config` — they're top-level arguments to `createCore()`:
 

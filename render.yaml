@@ -32,6 +32,8 @@ services:
         value: "60000"
       - key: RW_RATE_LIMIT_MAX
         value: "60"
+      - key: RW_CORS_ORIGIN
+        value: "https://rich-wind.thinkly.dev"
 
   - type: web
     name: rich-wind-ui

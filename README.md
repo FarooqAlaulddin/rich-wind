@@ -1,6 +1,10 @@
 # Rich Wind
 
-Runtime Tailwind CSS compiler and suggestion API. Feed it HTML or class lists, get back compiled CSS. Caching is in memory by `projectId` + `pageId`.
+Rich Wind is a runtime Tailwind CSS core and API. It compiles CSS from HTML/class input, caches by `projectId` + `pageId`, and can share artifacts across replicas with a pluggable `cacheStore`.
+
+Live links:
+- Demo: https://rich-wind.thinkly.dev/
+- Docs: https://rich-wind.thinkly.dev/docs/
 
 ## Table of Contents
 - Background
@@ -37,7 +41,7 @@ npm install
 ```js
 import { createCore } from "rich-wind";
 
-const app = createCore({
+const { app, close } = await createCore({
   cacheStore: {
     async readPageArtifact({ projectId, pageId, bundle, now }) {
       return null;
@@ -75,6 +79,8 @@ const app = createCore({
 });
 
 app.listen(3001);
+process.on("SIGTERM", close);
+process.on("SIGINT", close);
 ```
 
 Plugins are optional and isolated: hook errors are caught and forwarded to `onError`.
@@ -149,9 +155,9 @@ Default base URL: `http://localhost:3001`
 ### Run the UI demo (optional)
 
 ```bash
-cd ui
+cd demo
 npm install
-RW_CORE_URL=http://localhost:3001 npm run dev
+VITE_RW_CORE_URL=http://localhost:3001 npm run dev
 ```
 
 ## API
@@ -376,6 +382,7 @@ Supported config keys:
 | `rateLimitDisabled` | Disable rate limiting |
 | `trustProxy` | Trust proxy IPs |
 | `nodeRole` | Replica role: `hybrid` (default), `writer`, or `reader` |
+| `corsOrigin` | CORS allowlist (`*` or comma-separated origins) |
 
 Additional top-level options:
 
@@ -406,6 +413,7 @@ Environment variables (core):
 | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting |
 | `RW_TRUST_PROXY` | `false` | Trust proxy IPs |
 | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, `reader` |
+| `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
 | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default plugin hook timeout (ms) |
 | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Cache store operation timeout (ms) |
 
@@ -420,12 +428,13 @@ Environment variables (UI):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RW_CORE_URL` | `http://localhost:3001` | Core API base URL |
+| `VITE_RW_CORE_URL` | `http://localhost:3001` | Core API base URL |
 
 ## Development
 
 ```bash
 npm test
+npm run test:pack
 ```
 
 ## Production
@@ -436,11 +445,11 @@ Core:
 npm run prod
 ```
 
-UI (from the `ui/` folder):
+UI (demo workspace):
 
 ```bash
-cd ui
-npm run prod
+npm run build --workspace=demo
+npm run preview --workspace=demo -- --host 0.0.0.0 --port 4173
 ```
 
 ## Docs
@@ -448,8 +457,7 @@ npm run prod
 Docs live in `/docs` (Markdown) and are rendered inside the UI at `/docs`:
 
 ```bash
-cd ui
-npm run dev
+npm run dev --workspace=demo
 ```
 
 ## License

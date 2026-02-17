@@ -263,6 +263,55 @@ describe('Cache store integration', () => {
     }
   });
 
+  it('waits for queued page-artifact writes during close', async () => {
+    let started = false;
+    let finished = false;
+    let releaseWrite;
+    const writeGate = new Promise((resolve) => {
+      releaseWrite = resolve;
+    });
+    const store = {
+      async upsertPageArtifact() {
+        started = true;
+        await writeGate;
+        finished = true;
+      }
+    };
+
+    const { baseUrl, close } = await createTestServer({}, {
+      cacheStore: store,
+      config: { rateLimitDisabled: true }
+    });
+
+    const compile = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'close-drain',
+        pageId: 'home',
+        classes: 'bg-red-500'
+      })
+    });
+    expect(compile.status).toBe(200);
+
+    const closePromise = close();
+    const writeStarted = await waitFor(() => started, { timeoutMs: 1000 });
+    expect(writeStarted).toBe(true);
+
+    let closeFinishedEarly = false;
+    closePromise.then(() => {
+      closeFinishedEarly = true;
+    });
+
+    await sleep(25);
+    expect(closeFinishedEarly).toBe(false);
+    expect(finished).toBe(false);
+
+    releaseWrite();
+    await closePromise;
+    expect(finished).toBe(true);
+  });
+
   it('serves theme bundle page CSS from cacheStore on memory miss', async () => {
     const store = {
       async readPageArtifact({ projectId, pageId, bundle }) {

@@ -7,7 +7,7 @@ export async function createTestServer(envOverrides = {}, options = {}) {
   vi.resetModules();
   const moduleUrl = new URL('../../services/index.js', import.meta.url).href;
   const { createCore } = await import(moduleUrl);
-  const { app } = await createCore({
+  const { app, close: closeCore } = await createCore({
     plugins: options.plugins || [],
     config: options.config || {},
     pluginTimeoutMs: options.pluginTimeoutMs,
@@ -21,6 +21,7 @@ export async function createTestServer(envOverrides = {}, options = {}) {
 
   async function close() {
     await new Promise((resolve) => server.close(resolve));
+    await closeCore();
     for (const key of Object.keys(process.env)) {
       if (!(key in originalEnv)) delete process.env[key];
     }
