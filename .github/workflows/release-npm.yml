@@ -18,6 +18,17 @@ on:
         required: false
         default: beta
         type: string
+      dist_tag:
+        description: npm dist-tag used for publish
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - alpha
+          - beta
+          - rc
+          - next
 
 permissions:
   contents: write
@@ -71,7 +82,14 @@ jobs:
           set -euo pipefail
 
           release_type="${{ inputs.release_type }}"
+          dist_tag="${{ inputs.dist_tag }}"
           prerelease="false"
+
+          if [ "$release_type" = "prerelease" ] && [ "$dist_tag" = "latest" ]; then
+            echo "Prerelease builds must not publish to the latest dist-tag."
+            echo "Use dist_tag=alpha, beta, rc, or next."
+            exit 1
+          fi
 
           if [ "$release_type" = "prerelease" ]; then
             npm version prerelease --preid "${{ inputs.prerelease_id }}" -m "release: %s"
@@ -90,7 +108,7 @@ jobs:
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public --tag "${{ inputs.dist_tag }}"
 
       - name: Create GitHub release
         env:
