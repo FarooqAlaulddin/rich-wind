@@ -6,10 +6,6 @@ Live links:
 - Demo: https://rich-wind.thinkly.dev/
 - Docs: https://rich-wind.thinkly.dev/docs/
 
-## What It Is
-
-Rich Wind is a runtime CSS compiler for Tailwind-based apps. Instead of compiling from source files at build time, it compiles from runtime input (HTML/classes) over an API.
-
 ## Why It Helps
 
 - Supports dynamic content where classes are only known at runtime.

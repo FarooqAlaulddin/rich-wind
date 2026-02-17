@@ -4,10 +4,6 @@ Rich Wind is a runtime Tailwind CSS compiler. You send it HTML or a list of Tail
 
 It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders. Anywhere you don't know the final set of Tailwind classes until runtime.
 
-## What It Is
-
-Rich Wind is a runtime Tailwind compiler exposed as an API. You send `projectId`, `pageId`, and HTML/classes; it returns compiled CSS and caches the result.
-
 ## Why It Helps
 
 - Handles dynamic pages where class names are not known during CI/build.
