@@ -6,15 +6,28 @@ Live links:
 - Demo: https://rich-wind.thinkly.dev/
 - Docs: https://rich-wind.thinkly.dev/docs/
 
-## Table of Contents
-- Background
-- Features
-- Install
-- Usage
-- API
-- Configuration
-- Development
-- License
+## What It Is
+
+Rich Wind is a runtime CSS compiler for Tailwind-based apps. Instead of compiling from source files at build time, it compiles from runtime input (HTML/classes) over an API.
+
+## Why It Helps
+
+- Supports dynamic content where classes are only known at runtime.
+- Removes the need to run a Tailwind build pipeline in each host app.
+- Gives you cache control per `projectId` and `pageId` for fast repeat requests.
+- Works in single-node or multi-replica deployments with a shared `cacheStore`.
+
+## When to Use It
+
+- You run a CMS, visual builder, template/email editor, or preview system.
+- You need CSS generation for user-created or tenant-created pages.
+- You want a central CSS runtime service used by multiple products.
+
+## When Not to Use It
+
+- Your UI is static and build-time Tailwind already fits your workflow.
+- You do not want runtime compute/network overhead for CSS generation.
+- You need direct support for arbitrary user-uploaded Tailwind configs at request time.
 
 ## Background
 Rich Wind focuses on the “compile at request time” workflow. By default cache state is in-process memory, and host apps can optionally plug in a `cacheStore` adapter for read-through/write-through persistence. It’s intentionally auth‑agnostic and expects callers to scope `projectId` within their own tenant model.
