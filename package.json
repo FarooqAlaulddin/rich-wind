@@ -24,7 +24,8 @@
     "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:pack": "node ./scripts/pack-smoke.js"
+    "test:pack": "node ./scripts/pack-smoke.js",
+    "test:load": "node ./scripts/load-single-writer.js"
   },
   "keywords": [
     "tailwindcss",

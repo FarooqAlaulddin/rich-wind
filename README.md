@@ -446,6 +446,21 @@ npm test
 npm run test:pack
 ```
 
+Load test (single writer + many readers):
+
+```bash
+# local topology managed by the script
+npm run test:load
+
+# override shape
+RW_LOAD_DURATION_MS=60000 RW_LOAD_CONCURRENCY=80 RW_LOAD_WRITE_RATIO=0.1 npm run test:load
+
+# target existing deployment
+RW_LOAD_WRITER_URL=https://writer.example.com \
+RW_LOAD_READER_URLS=https://reader-a.example.com,https://reader-b.example.com \
+npm run test:load
+```
+
 ## Production
 
 Core:
