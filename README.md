@@ -5,6 +5,7 @@ Rich Wind is a runtime Tailwind CSS core and API. It compiles CSS from HTML/clas
 Live links:
 - Demo: https://rich-wind.thinkly.dev/
 - Docs: https://rich-wind.thinkly.dev/docs/
+- OpenAPI: https://rich-wind.thinkly.dev/docs/openapi.json
 
 ## Why It Helps
 

@@ -4,8 +4,13 @@
   "description": "A stateless Tailwind CSS runtime service for compiling CSS from HTML and class lists",
   "type": "module",
   "main": "./services/index.js",
+  "types": "./services/index.d.ts",
   "exports": {
-    ".": "./services/index.js"
+    ".": {
+      "types": "./services/index.d.ts",
+      "import": "./services/index.js",
+      "default": "./services/index.js"
+    }
   },
   "files": [
     "services/"

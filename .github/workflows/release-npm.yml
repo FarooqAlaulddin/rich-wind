@@ -1,0 +1,109 @@
+name: Release to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+      prerelease_id:
+        description: Prerelease identifier (used only when release_type=prerelease)
+        required: false
+        default: beta
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-npm-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Test, tag, and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main'
+
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Run package smoke test
+        run: npm run test:pack
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump package version and create tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_type="${{ inputs.release_type }}"
+          prerelease="false"
+
+          if [ "$release_type" = "prerelease" ]; then
+            npm version prerelease --preid "${{ inputs.prerelease_id }}" -m "release: %s"
+            prerelease="true"
+          else
+            npm version "$release_type" -m "release: %s"
+          fi
+
+          version="$(node -e "console.log(JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version)")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Push release commit and tag
+        run: git push origin HEAD:main --follow-tags
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          prerelease="${{ steps.version.outputs.prerelease }}"
+
+          args=(release create "v$version" --title "v$version" --generate-notes)
+          if [ "$prerelease" = "true" ]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"

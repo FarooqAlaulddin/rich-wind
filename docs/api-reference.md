@@ -2,6 +2,8 @@
 
 Rich Wind exposes four endpoints and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
 
+Machine-readable contract: [`/docs/openapi.json`](/docs/openapi.json)
+
 ## createCore()
 
 Everything starts here. `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function.
