@@ -144,7 +144,7 @@ function buildConfig(overrides = {}) {
         cacheMaxPages: parseIntWithDefault(
             overrides.cacheMaxPages ?? process.env.RW_CACHE_MAX_PAGES,
             200,
-            0
+            1
         ),
         cacheTtlMs,
         projectCacheTtlMs: parseIntWithDefault(
@@ -1093,7 +1093,7 @@ async function getProjectCss(state, config, projectId, bundle = 'full') {
 
     const classes = Array.from(project.classCounts.keys()).sort();
     const hash = hashClasses(classes);
-    if (cacheEntry && cacheEntry.hash === hash && !isExpired(cacheEntry)) {
+    if (cacheEntry && cacheEntry.hash === hash) {
         cacheEntry.expiresAt = now + config.projectCacheTtlMs;
         return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
@@ -1380,10 +1380,11 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
 // Compile CSS for a project/page (in-memory cache)
 app.post('/api/compile', async (req, res) => {
     try {
-        const projectId = req.body.projectId ?? req.body.project_id;
-        const pageId = req.body.pageId ?? req.body.page_id ?? 'default';
-        const { html, classes } = req.body;
-        const bundle = normalizeBundle(req.body.bundle ?? req.body.mode);
+        const body = req.body || {};
+        const projectId = body.projectId ?? body.project_id;
+        const pageId = body.pageId ?? body.page_id ?? 'default';
+        const { html, classes } = body;
+        const bundle = normalizeBundle(body.bundle ?? body.mode);
         const hookContext = {
             projectId,
             pageId,
@@ -1691,11 +1692,12 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
 // Suggest Tailwind classes based on cached project data and/or input
 app.post('/api/suggest', async (req, res) => {
     try {
-        const projectId = req.body.projectId ?? req.body.project_id ?? null;
-        const prefix = typeof req.body.prefix === 'string' ? req.body.prefix.trim() : '';
-        const limitRaw = req.body.limit ?? req.body.max ?? req.body.count;
+        const body = req.body || {};
+        const projectId = body.projectId ?? body.project_id ?? null;
+        const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
+        const limitRaw = body.limit ?? body.max ?? body.count;
         const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
-        const includeInput = normalizeClassList(req.body.classes);
+        const includeInput = normalizeClassList(body.classes);
         const hookContext = {
             projectId,
             prefix,
@@ -1745,7 +1747,7 @@ app.post('/api/suggest', async (req, res) => {
         await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions, source: 'http' });
         return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: hookContext.request });
+        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
         res.status(500).json({ error: err.message });
     }
 });
