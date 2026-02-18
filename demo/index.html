@@ -13,6 +13,22 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=Space+Grotesk:wght@300..700&family=DM+Mono:wght@300;400;500&display=swap" />
 </head>
 <body>
+  <script>
+    (() => {
+      try {
+        const raw = localStorage.getItem('rw-theme');
+        const parsed = raw === null ? null : JSON.parse(raw);
+        const mode = parsed === 'dark' || parsed === 'light' ? parsed : null;
+        const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+        const isDark = mode === 'dark' || (mode === null && prefersDark);
+        const colorScheme = isDark ? 'dark' : 'light';
+        document.documentElement.classList.toggle('theme-dark', isDark);
+        document.documentElement.style.setProperty('color-scheme', colorScheme);
+        document.body.classList.toggle('theme-dark', isDark);
+        document.body.style.setProperty('color-scheme', colorScheme);
+      } catch { /* ignore */ }
+    })();
+  </script>
   <div id="app"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>

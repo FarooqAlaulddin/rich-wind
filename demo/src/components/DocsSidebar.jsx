@@ -1,4 +1,4 @@
-import { useLocalStorage } from '../hooks/useLocalStorage';
+import { useThemeMode } from '../hooks/useThemeMode';
 
 const PLUGIN_NAV = [
   { slug: 'analytics', title: 'Analytics', href: '/plugins/analytics' },
@@ -6,14 +6,10 @@ const PLUGIN_NAV = [
 ];
 
 export function DocsSidebar({ sections, activeSlug, activePlugin }) {
-  const [theme, setTheme] = useLocalStorage('rw-theme', null);
-
-  const isDark = theme === 'dark' || (!theme && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  const { isDark, setDarkEnabled } = useThemeMode();
 
   function toggleTheme() {
-    const next = isDark ? 'light' : 'dark';
-    setTheme(next);
-    document.body.classList.toggle('theme-dark', next === 'dark');
+    setDarkEnabled(!isDark);
   }
 
   return (

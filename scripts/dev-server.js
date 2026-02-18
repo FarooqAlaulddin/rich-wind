@@ -14,7 +14,7 @@ import { createCore } from '../services/index.js';
 import { loadPlugins } from '../plugins/loader.js';
 import { registerDemoRoutes } from './demo-routes.js';
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.RW_CORE_PORT || process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '../demo/dist');
 const isProd = process.env.NODE_ENV === 'production';

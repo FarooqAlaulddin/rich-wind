@@ -9,6 +9,7 @@ import { useAutoCompile } from '../hooks/useAutoCompile';
 import { useSplitter } from '../hooks/useSplitter';
 import { usePaneResize } from '../hooks/usePaneResize';
 import { loadMonaco, registerSuggestProviders, clearSuggestCache } from '../hooks/useMonaco';
+import { useThemeMode } from '../hooks/useThemeMode';
 import { SAMPLE_HTML, SAMPLE_CLASSES, SAMPLE_CSS } from '../data/sample-data';
 
 const STORAGE_KEY = 'rw-editor-state';
@@ -33,8 +34,8 @@ export function Playground() {
   const [bundle, setBundle] = useLocalStorage('__pg_bundle', saved?.bundle ?? 'full');
   const [autoCompileEnabled, setAutoCompileEnabled] = useLocalStorage('rw-auto-compile', true);
   const [compact, setCompact] = useLocalStorage('rw-compact', false);
-  const [dark, setDark] = useLocalStorage('rw-theme', null);
   const [layout, setLayout] = useLocalStorage('rw-layout', 'split');
+  const { isDark, setDarkEnabled } = useThemeMode();
 
   const gridRef = useRef(null);
   const splitter = useSplitter(gridRef);
@@ -89,13 +90,6 @@ export function Playground() {
   const onClassesChange = useCallback((v) => { setClassesInput(v); schedule(); }, [setClassesInput, schedule]);
   const onCustomCssChange = useCallback((v) => { setCustomCss(v); }, [setCustomCss]);
   const onBundleChange = useCallback((v) => { setBundle(v); schedule(); }, [setBundle, schedule]);
-
-  // Theme
-  const isDark = dark === 'dark' || (!dark && typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-
-  useEffect(() => {
-    document.body.classList.toggle('theme-dark', isDark);
-  }, [isDark]);
 
   useEffect(() => {
     document.body.classList.toggle('compact-mode', compact);
@@ -154,7 +148,7 @@ export function Playground() {
         compact={compact}
         onCompactChange={setCompact}
         dark={isDark}
-        onDarkChange={(v) => setDark(v ? 'dark' : 'light')}
+        onDarkChange={setDarkEnabled}
         layout={layout}
         onLayoutChange={setLayout}
       />
