@@ -35,6 +35,20 @@ export async function getProjectCss({ projectId, bundle = 'full' }) {
   return { css, cached: true };
 }
 
+export async function fetchPromotedCss(projectId) {
+  const encoded = encodeURIComponent(String(projectId || ''));
+  const res = await fetch(`/plugins/auto-promote/css/${encoded}`);
+  if (!res.ok) return '';
+  return res.text();
+}
+
+export async function fetchPromotedStats() {
+  const res = await fetch('/plugins/auto-promote/stats');
+  if (!res.ok) return {};
+  const data = await res.json().catch(() => ({}));
+  return data && typeof data === 'object' ? data : {};
+}
+
 export async function suggest({ projectId, prefix, classes, limit = 50 }) {
   const res = await fetch('/api/suggest', {
     method: 'POST',

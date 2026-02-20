@@ -15,6 +15,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': coreOrigin,
+      '/plugins': coreOrigin,
     },
   },
 });

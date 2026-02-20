@@ -18,7 +18,9 @@ function ensureStyleTag(id) {
 export default function App() {
   const {
     projectId,
-    fullCss, html, loading, cached,
+    baseCss, themeCss, utilitiesCss, fullCss,
+    sharedSizes, promotedClasses,
+    html, loading, cached,
     activePage, pages, pageOrder,
     initialEditorState, setEditor: hookSetEditor,
     switchPage, doCompile, addPage, deletePage, resetDemo,
@@ -76,6 +78,11 @@ export default function App() {
             editor={editor}
             html={html}
             css={fullCss}
+            baseCss={baseCss}
+            themeCss={themeCss}
+            utilitiesCss={utilitiesCss}
+            sharedSizes={sharedSizes}
+            promotedClasses={promotedClasses}
             loading={loading}
             cached={cached}
             projectId={projectId}

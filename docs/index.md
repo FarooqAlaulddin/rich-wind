@@ -85,3 +85,4 @@ Splitting makes sense when many pages share the same design tokens but have diff
 - **[Runtime Spec](/docs/runtime-spec)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
 - **[Plugin System](/docs/plugin-system)** — lifecycle hooks, setup context, plugin storage, and custom behavior
 - **[Integration Cookbook](/docs/integration-cookbook)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
+- **[FAQ](/docs/faq)** — common implementation and architecture questions

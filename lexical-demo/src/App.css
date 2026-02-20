@@ -338,6 +338,20 @@ body {
   color: #1e40af;
 }
 
+.class-chip-promoted {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.class-chip-promoted .chip-remove {
+  color: #fbbf24;
+}
+
+.class-chip-promoted .chip-remove:hover {
+  color: #92400e;
+}
+
 .no-classes {
   font-size: 12px;
   color: #94a3b8;
@@ -512,6 +526,19 @@ body {
 .bundle-row.bundle-active .bundle-name {
   color: #1e40af;
   font-weight: 500;
+}
+
+.bundle-row.bundle-promoted {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.bundle-row.bundle-promoted .bundle-name {
+  color: #92400e;
+}
+
+.bundle-row.bundle-promoted .bundle-size {
+  color: #b45309;
 }
 
 .bundle-row.bundle-total {

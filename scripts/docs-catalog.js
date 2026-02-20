@@ -8,10 +8,11 @@ import { readdir } from 'node:fs/promises';
 const DOC_EXTENSION = '.md';
 const REVIEW_PREFIX = '_review_';
 const IDEA_PREFIX = '_idea_';
-const ACRONYMS = new Set(['api', 'css', 'html', 'http', 'https', 'id', 'json', 'sdk', 'sla', 'sql', 'ui', 'url']);
+const ACRONYMS = new Set(['api', 'css', 'faq', 'html', 'http', 'https', 'id', 'json', 'sdk', 'sla', 'sql', 'ui', 'url']);
 const SECTION_ORDER = ['docs', 'review', 'idea'];
 const SECTION_TITLES = { docs: 'All Docs', review: 'Review', idea: 'Ideas' };
 const KIND_PRIORITY = { docs: 3, review: 2, idea: 1 };
+const DOCS_LAST_SLUGS = new Set(['faq']);
 
 function toTitleCaseWord(word) {
   const lower = word.toLowerCase();
@@ -75,6 +76,12 @@ export async function loadDocsCatalog(docsRoot) {
     if (a.kind !== b.kind) return SECTION_ORDER.indexOf(a.kind) - SECTION_ORDER.indexOf(b.kind);
     if (a.slug === '' && b.slug !== '') return -1;
     if (a.slug !== '' && b.slug === '') return 1;
+    if (a.kind === 'docs') {
+      const aLast = DOCS_LAST_SLUGS.has(a.slug);
+      const bLast = DOCS_LAST_SLUGS.has(b.slug);
+      if (aLast && !bLast) return 1;
+      if (!aLast && bLast) return -1;
+    }
     return a.title.localeCompare(b.title, 'en');
   });
 

@@ -62,16 +62,19 @@ function BundleRow({ name, bytes, cssText, className }) {
   );
 }
 
-function buildExportHtml(html, projectId, activePage, hasPageClasses) {
+function buildExportHtml(html, projectId, activePage, hasPageUtilities) {
   const baseHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
   const themeHref = `/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
-  const fullHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=full`;
-  const cssLinks = hasPageClasses
-    ? [`<link rel="stylesheet" href="${fullHref}">`]
-    : [
-      `<link rel="stylesheet" href="${baseHref}">`,
-      `<link rel="stylesheet" href="${themeHref}">`,
-    ];
+  const promotedHref = `/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
+  const utilitiesHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
+  const cssLinks = [
+    `<link rel="stylesheet" href="${baseHref}">`,
+    `<link rel="stylesheet" href="${themeHref}">`,
+    `<link rel="stylesheet" href="${promotedHref}">`,
+  ];
+  if (hasPageUtilities) {
+    cssLinks.push(`<link rel="stylesheet" href="${utilitiesHref}">`);
+  }
   return `<!doctype html>
 <html>
 <head>
@@ -85,7 +88,22 @@ ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
 </html>`;
 }
 
-export default function InspectorPanel({ editor, html, css, loading, cached, projectId, activePage, pages, pageOrder }) {
+export default function InspectorPanel({
+  editor,
+  html,
+  css,
+  baseCss,
+  themeCss,
+  utilitiesCss,
+  sharedSizes,
+  promotedClasses,
+  loading,
+  cached,
+  projectId,
+  activePage,
+  pages,
+  pageOrder,
+}) {
   const [blockType, setBlockType] = useState('paragraph');
   const [blockClasses, setBlockClasses] = useState([]);
   const [isInlineMode, setIsInlineMode] = useState(false);
@@ -227,10 +245,12 @@ export default function InspectorPanel({ editor, html, css, loading, cached, pro
     }
   }, [editor, isInlineMode, targetNodeKey]);
 
-  // Compute total from all pages
-  const total = (pageOrder || []).reduce((sum, id) => sum + (pages?.[id]?.cssSize || 0), 0);
-  const hasPageClasses = Boolean(pages?.[activePage]?.classes?.length);
-  const exportHtml = buildExportHtml(html, projectId, activePage, hasPageClasses);
+  const promotedSet = new Set(promotedClasses || []);
+  const pageUtilitiesTotal = (pageOrder || []).reduce((sum, id) => sum + (pages?.[id]?.cssSize || 0), 0);
+  const sharedTotal = (sharedSizes?.base || 0) + (sharedSizes?.theme || 0);
+  const total = sharedTotal + pageUtilitiesTotal;
+  const hasPageUtilities = (pages?.[activePage]?.cssSize || 0) > 0;
+  const exportHtml = buildExportHtml(html, projectId, activePage, hasPageUtilities);
 
   return (
     <div className="inspector-panel">
@@ -248,7 +268,7 @@ export default function InspectorPanel({ editor, html, css, loading, cached, pro
 
         <div className="class-chips">
           {currentClasses.map(cls => (
-            <span key={cls} className="class-chip">
+            <span key={cls} className={`class-chip${promotedSet.has(cls) ? ' class-chip-promoted' : ''}`}>
               {cls}
               <button className="chip-remove" onClick={() => handleRemoveClass(cls)}>&times;</button>
             </span>
@@ -271,6 +291,18 @@ export default function InspectorPanel({ editor, html, css, loading, cached, pro
       <div className="inspector-section bundle-section">
         <div className="inspector-subheader">BUNDLES</div>
         <div className="bundle-sizes">
+          <BundleRow
+            name="Base (shared)"
+            bytes={sharedSizes?.base || 0}
+            cssText={baseCss}
+            className="bundle-row"
+          />
+          <BundleRow
+            name="Theme (shared)"
+            bytes={sharedSizes?.theme || 0}
+            cssText={themeCss}
+            className="bundle-row"
+          />
           {(pageOrder || []).map(id => {
             const page = pages?.[id];
             if (!page) return null;
@@ -278,9 +310,9 @@ export default function InspectorPanel({ editor, html, css, loading, cached, pro
             return (
               <BundleRow
                 key={id}
-                name={page.label}
+                name={`${page.label} (utilities)`}
                 bytes={page.cssSize || 0}
-                cssText={isActive ? css : null}
+                cssText={isActive ? utilitiesCss : null}
                 className={`bundle-row${isActive ? ' bundle-active' : ''}`}
               />
             );

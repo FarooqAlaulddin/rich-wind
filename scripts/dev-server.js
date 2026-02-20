@@ -21,6 +21,16 @@ const isProd = process.env.NODE_ENV === 'production';
 
 const plugins = await loadPlugins();
 
+// Lexical demo expects promotion to kick in quickly for visible behavior.
+for (let i = 0; i < plugins.length; i++) {
+  if (plugins[i].name === 'auto-promote') {
+    const { default: createAutoPromotePlugin } = await import('../plugins/auto-promote/index.js');
+    plugins[i] = createAutoPromotePlugin({ threshold: 2 });
+    console.log('Auto-promote plugin overridden with threshold=2');
+    break;
+  }
+}
+
 const { app, close } = await createCore({
   plugins,
   maxPluginCompileChainDepth: 3,

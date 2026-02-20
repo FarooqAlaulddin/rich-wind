@@ -907,7 +907,10 @@ async function compileAndCachePage({
         }
     }
 
-    if (resolvedClasses.length === 0) {
+    const allowEmptyClassSet =
+        normalizedBundle === 'utilities' ||
+        normalizedBundle === 'theme';
+    if (resolvedClasses.length === 0 && !allowEmptyClassSet) {
         const err = { error: 'No valid classes found.', classes: [], css: '', status: 400 };
         if (!skipHooks && pluginRunner) {
             await pluginRunner.runHook('onError', { error: new Error(err.error), stage: 'compile', source, request, context: { projectId, pageId, bundle: normalizedBundle } });
@@ -943,7 +946,7 @@ async function compileAndCachePage({
         existing.updatedAt = now;
         const pageKey = makePageKey(projectId, pageId);
         touchPageKey(state, pageKey);
-        if (existing[bundleKey]) {
+        if (existing[bundleKey] !== null && existing[bundleKey] !== undefined) {
             if (!skipHooks && pluginRunner) {
                 await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: normalizedBundle, source, request });
                 await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css: existing[bundleKey], hash: classHash, cached: true, source, request });
@@ -1058,14 +1061,14 @@ async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full
     page.expiresAt = Date.now() + config.cacheTtlMs;
     touchPageKey(state, makePageKey(projectId, pageId));
     if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
-        if (!page.utilitiesCss || !page.themeCss) {
+        if (page.utilitiesCss === null || page.utilitiesCss === undefined || page.themeCss === null || page.themeCss === undefined) {
             const split = await generateThemeUtilitiesForClasses(Array.from(page.classes || []));
             page.utilitiesCss = split.utilitiesCss;
             page.themeCss = split.themeCss;
         }
         return { css: normalizedBundle === 'utilities' ? page.utilitiesCss : page.themeCss };
     }
-    if (!page.css) {
+    if (page.css === null || page.css === undefined) {
         page.css = await generateCssForClasses(Array.from(page.classes || []));
     }
     return { css: page.css };

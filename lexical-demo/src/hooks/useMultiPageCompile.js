@@ -1,8 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { compile as apiCompile, getPageCss, getProjectCss } from '../api';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import {
+  compile as apiCompile,
+  getPageCss,
+  getProjectCss,
+  fetchPromotedCss,
+  fetchPromotedStats,
+} from '../api';
 
 const PROJECT_ID = 'lexical-demo';
 const STORAGE_KEY = 'rw-lexical-demo-v2';
+const SHARED_REFRESH_DELAY_MS = 550;
 
 // --- Default page content builders ---
 
@@ -44,20 +51,20 @@ const DEFAULT_CONTENT = {
   about: makeEditorState([
     heading('h2', 'text-3xl font-semibold text-emerald-700', [textNode('About This Project')]),
     para('border-l-4 border-emerald-500 pl-4', [
-      textNode('Rich Wind compiles Tailwind CSS on demand. Each page gets its own '),
-      spanNode('optimized bundle', 'text-emerald-600 font-medium'),
-      textNode(' containing only the utilities it actually uses.'),
+      textNode('Rich Wind compiles Tailwind CSS on demand. Shared base/theme load once, while each page keeps only '),
+      spanNode('its own utilities', 'text-emerald-600 font-medium'),
+      textNode('.'),
     ]),
-    para('bg-emerald-50 p-4 rounded-lg', [textNode('Switch between pages to see how bundle sizes change based on the classes used on each page.')]),
+    para('bg-emerald-50 p-4 rounded-lg', [textNode('When classes cross the threshold, auto-promote moves them into a shared bundle.')]),
   ]),
   contact: makeEditorState([
     heading('h2', 'text-3xl font-bold text-purple-600', [textNode('Get in Touch')]),
     para('bg-purple-50 p-6 rounded-lg', [
-      textNode('This demo showcases '),
-      spanNode('multi-page bundle splitting', 'text-purple-700 font-semibold'),
-      textNode('. Each page compiles to separate base, theme, and utility bundles.'),
+      textNode('This demo uses layered CSS: '),
+      spanNode('base + theme + promoted + page utilities', 'text-purple-700 font-semibold'),
+      textNode('.'),
     ]),
-    para('text-lg text-purple-900', [textNode('Check the BUNDLES panel to see how shared and per-page CSS is split efficiently.')]),
+    para('text-lg text-purple-900', [textNode('Open BUNDLES to inspect shared vs per-page output.')]),
   ]),
 };
 
@@ -98,7 +105,6 @@ function debouncedSave(pages, activePage, pageOrder) {
 // --- Hook ---
 
 export function useMultiPageCompile() {
-  // Initialize from localStorage or defaults
   const saved = useRef(loadState()).current;
   const initialPages = saved?.pages || DEFAULT_PAGES;
   const initialActivePage = saved?.activePage && initialPages[saved.activePage] ? saved.activePage : 'home';
@@ -107,21 +113,28 @@ export function useMultiPageCompile() {
   const [pages, setPages] = useState(initialPages);
   const [pageOrder, setPageOrder] = useState(initialPageOrder);
   const [activePage, setActivePage] = useState(initialActivePage);
-  const [fullCss, setFullCss] = useState('');
   const [html, setHtml] = useState(initialPages[initialActivePage]?.html || '');
   const [loading, setLoading] = useState(false);
   const [cached, setCached] = useState(false);
+
+  const [baseCss, setBaseCss] = useState('');
+  const [themeCss, setThemeCss] = useState('');
+  const [utilitiesCss, setUtilitiesCss] = useState('');
+  const [sharedSizes, setSharedSizes] = useState({ base: 0, theme: 0 });
+  const [promotedClasses, setPromotedClasses] = useState([]);
 
   const editorRef = useRef(null);
   const pagesRef = useRef(pages);
   const activePageRef = useRef(activePage);
   const pageOrderRef = useRef(pageOrder);
+  const promotedSetRef = useRef(new Set());
+  const refreshTimerRef = useRef(null);
   const suppressPersistRef = useRef(false);
+
   pagesRef.current = pages;
   activePageRef.current = activePage;
   pageOrderRef.current = pageOrder;
 
-  // Start counter from highest existing page number to avoid ID collisions
   const pageCounterRef = useRef((() => {
     let max = Object.keys(initialPages).length;
     for (const key of Object.keys(initialPages)) {
@@ -131,7 +144,6 @@ export function useMultiPageCompile() {
     return max;
   })());
 
-  // Compute the initial editor state for the active page (stable ref, used once)
   const initialEditorState = useRef(
     initialPages[initialActivePage]?.editorStateJSON
       ? JSON.stringify(initialPages[initialActivePage].editorStateJSON)
@@ -145,7 +157,108 @@ export function useMultiPageCompile() {
     editorRef.current = editor;
   }, []);
 
-  // Save editor state to localStorage before unload
+  const compileUtilitiesSnapshot = useCallback(async (pageId, htmlSnapshot, classesSnapshot) => {
+    const classList = Array.isArray(classesSnapshot) ? classesSnapshot : [];
+    let css = '';
+    let fromCache = false;
+
+    try {
+      const utilitiesData = await apiCompile({
+        projectId: PROJECT_ID,
+        pageId,
+        html: htmlSnapshot || '',
+        classes: classList,
+        bundle: 'utilities',
+      });
+      css = utilitiesData.css || '';
+      fromCache = Boolean(utilitiesData.cached);
+    } catch (err) {
+      const message = String(err?.message || '');
+      if (!message.includes('No valid classes')) {
+        throw err;
+      }
+    }
+
+    if (classList.length > 0 && classList.every((cls) => promotedSetRef.current.has(cls))) {
+      css = '';
+    }
+
+    setPages(prev => prev[pageId]
+      ? { ...prev, [pageId]: { ...prev[pageId], cssSize: css.length } }
+      : prev);
+
+    if (activePageRef.current === pageId) {
+      setUtilitiesCss(css);
+      setCached(fromCache);
+    }
+
+    return css;
+  }, []);
+
+  const refreshSharedBundles = useCallback(async () => {
+    const pageId = activePageRef.current || 'default';
+    try {
+      const previousPromotedKey = Array.from(promotedSetRef.current).sort().join('|');
+      const [baseResult, themeResult, statsResult] = await Promise.allSettled([
+        getPageCss({ projectId: PROJECT_ID, pageId, bundle: 'base' }),
+        getProjectCss({ projectId: PROJECT_ID, bundle: 'theme' }),
+        fetchPromotedStats(),
+      ]);
+
+      const base = baseResult.status === 'fulfilled' ? (baseResult.value.css || '') : '';
+      const theme = themeResult.status === 'fulfilled' ? (themeResult.value.css || '') : '';
+      const stats = statsResult.status === 'fulfilled' ? statsResult.value : {};
+      const promotedList = Array.isArray(stats?.[PROJECT_ID]?.promoted)
+        ? stats[PROJECT_ID].promoted
+        : [];
+      const promotedCssText = promotedList.length > 0
+        ? (await fetchPromotedCss(PROJECT_ID)) || ''
+        : '';
+      const mergedBaseCss = [base, promotedCssText].filter(Boolean).join('\n\n');
+
+      promotedSetRef.current = new Set(promotedList);
+      setPromotedClasses(promotedList);
+      setBaseCss(mergedBaseCss);
+      setThemeCss(theme);
+      setSharedSizes({
+        base: mergedBaseCss.length,
+        theme: theme.length,
+      });
+      const nextPromotedKey = promotedList.slice().sort().join('|');
+      return { promotedChanged: previousPromotedKey !== nextPromotedKey };
+    } catch (err) {
+      console.error('Shared bundle refresh error:', err);
+      return { promotedChanged: false };
+    }
+  }, []);
+
+  const scheduleSharedRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setTimeout(async () => {
+      refreshTimerRef.current = null;
+      const { promotedChanged } = await refreshSharedBundles();
+      if (promotedChanged) {
+        const ids = pageOrderRef.current || [];
+        const snapshotPages = pagesRef.current || {};
+        await Promise.all(
+          ids.map((id) => {
+            const page = snapshotPages[id];
+            if (!page) return Promise.resolve();
+            return compileUtilitiesSnapshot(id, page.html, page.classes).catch(() => {});
+          })
+        );
+      } else {
+        const pageId = activePageRef.current;
+        const page = pagesRef.current?.[pageId];
+        if (pageId && page) {
+          await compileUtilitiesSnapshot(pageId, page.html, page.classes).catch(() => {});
+        }
+      }
+    }, SHARED_REFRESH_DELAY_MS);
+  }, [compileUtilitiesSnapshot, refreshSharedBundles]);
+
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (suppressPersistRef.current) return;
@@ -163,88 +276,71 @@ export function useMultiPageCompile() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Persist to localStorage on changes
   useEffect(() => {
     if (suppressPersistRef.current) return;
     debouncedSave(pages, activePage, pageOrder);
   }, [pages, activePage, pageOrder]);
 
+  useEffect(() => {
+    void refreshSharedBundles();
+    const pageId = activePageRef.current;
+    const page = pagesRef.current?.[pageId];
+    if (pageId && page) {
+      void compileUtilitiesSnapshot(pageId, page.html, page.classes);
+    }
+    scheduleSharedRefresh();
+  }, [compileUtilitiesSnapshot, refreshSharedBundles, scheduleSharedRefresh]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, []);
+
   const doCompile = useCallback(async ({ html: newHtml, classes }) => {
-    // Read current page from ref (not closure) — critical for switchPage timing
     const page = activePageRef.current;
+    const classList = Array.isArray(classes) ? classes : [];
 
     setHtml(newHtml);
 
-    // Capture editor state for persistence
     const editor = editorRef.current;
     const editorStateJSON = editor ? editor.getEditorState().toJSON() : null;
 
     setPages(prev => ({
       ...prev,
-      [page]: { ...prev[page], html: newHtml, classes, editorStateJSON },
+      [page]: { ...prev[page], html: newHtml, classes: classList, editorStateJSON },
     }));
 
     setLoading(true);
     try {
-      if (!classes || classes.length === 0) {
-        // Keep base + theme applied even when a page has no utility classes.
-        const [baseData, themeData] = await Promise.all([
-          getPageCss({ projectId: PROJECT_ID, pageId: page, bundle: 'base' }),
-          getProjectCss({ projectId: PROJECT_ID, bundle: 'theme' }),
-        ]);
-        const css = [baseData.css || '', themeData.css || ''].filter(Boolean).join('\n\n');
-        setFullCss(css);
-        setCached(Boolean(baseData.cached) && Boolean(themeData.cached));
-        setPages(prev => ({
-          ...prev,
-          [page]: { ...prev[page], cssSize: css.length },
-        }));
-        return;
-      }
-
-      const fullData = await apiCompile({
-        projectId: PROJECT_ID,
-        pageId: page,
-        html: newHtml,
-        classes,
-        bundle: 'full',
-      });
-      const css = fullData.css || '';
-      setFullCss(css);
-      setCached(!!fullData.cached);
-      setPages(prev => ({
-        ...prev,
-        [page]: { ...prev[page], cssSize: css.length },
-      }));
+      await compileUtilitiesSnapshot(page, newHtml, classList);
+      await refreshSharedBundles();
+      scheduleSharedRefresh();
     } catch (err) {
       console.error('Compile error:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [compileUtilitiesSnapshot, refreshSharedBundles, scheduleSharedRefresh]);
 
   const switchPage = useCallback((pageId, editor) => {
     if (pageId === activePage || !editor) return;
 
-    // Save current editor state
     const currentState = editor.getEditorState().toJSON();
     setPages(prev => ({
       ...prev,
       [activePage]: { ...prev[activePage], editorStateJSON: currentState },
     }));
 
-    // Read target page content before any state updates
     const targetPage = pages[pageId];
     const savedState = targetPage?.editorStateJSON;
     const defaultContent = DEFAULT_CONTENT[pageId];
     setHtml(targetPage?.html || '');
 
-    // Update ref BEFORE editor.setEditorState() — the editor change fires
-    // TailwindClassPlugin synchronously, which calls doCompile. doCompile reads
-    // activePageRef to know which page to compile for.
     activePageRef.current = pageId;
 
-    // Restore editor content (side effect — must be outside state setter)
     if (savedState) {
       const parsed = editor.parseEditorState(savedState);
       editor.setEditorState(parsed);
@@ -259,8 +355,13 @@ export function useMultiPageCompile() {
     }
 
     setActivePage(pageId);
+    setUtilitiesCss('');
     setCached(false);
-  }, [activePage, pages]);
+
+    void refreshSharedBundles();
+    void compileUtilitiesSnapshot(pageId, targetPage?.html, targetPage?.classes);
+    scheduleSharedRefresh();
+  }, [activePage, compileUtilitiesSnapshot, pages, refreshSharedBundles, scheduleSharedRefresh]);
 
   const addPage = useCallback((editor) => {
     if (!editor) return;
@@ -268,7 +369,6 @@ export function useMultiPageCompile() {
     const id = `page-${pageCounterRef.current}`;
     const label = `Page ${pageCounterRef.current}`;
 
-    // Save current editor state before switching
     const currentState = editor.getEditorState().toJSON();
     setPages(prev => ({
       ...prev,
@@ -277,20 +377,21 @@ export function useMultiPageCompile() {
     }));
     setPageOrder(prev => [...prev, id]);
 
-    // Update ref BEFORE editor.setEditorState() — same reason as switchPage
     activePageRef.current = id;
     setActivePage(id);
 
-    // Set empty content
     const emptyState = editor.parseEditorState(JSON.stringify(makeEditorState([
       para('', [textNode('Start typing...')]),
     ])));
     editor.setEditorState(emptyState);
 
-    setFullCss('');
     setHtml('');
+    setUtilitiesCss('');
     setCached(false);
-  }, []);
+
+    void refreshSharedBundles();
+    scheduleSharedRefresh();
+  }, [refreshSharedBundles, scheduleSharedRefresh]);
 
   const deletePage = useCallback((pageId, editor) => {
     if (!editor) return;
@@ -298,12 +399,13 @@ export function useMultiPageCompile() {
 
     const remaining = pageOrder.filter(id => id !== pageId);
 
-    // If deleting active page, restore first remaining page's content
     if (pageId === activePage) {
       const newActive = remaining[0];
       const target = pages[newActive];
       const savedState = target?.editorStateJSON;
       const defaultContent = DEFAULT_CONTENT[newActive];
+
+      activePageRef.current = newActive;
 
       if (savedState) {
         editor.setEditorState(editor.parseEditorState(savedState));
@@ -313,7 +415,10 @@ export function useMultiPageCompile() {
 
       setActivePage(newActive);
       setHtml(target?.html || '');
+      setUtilitiesCss('');
       setCached(false);
+
+      void compileUtilitiesSnapshot(newActive, target?.html, target?.classes);
     }
 
     setPages(prev => {
@@ -323,9 +428,12 @@ export function useMultiPageCompile() {
     });
     setPageOrder(remaining);
 
-    // Clear server-side class tracking for deleted page
-    apiCompile({ projectId: PROJECT_ID, pageId, html: '', classes: ['hidden'], bundle: 'utilities' }).catch(() => {});
-  }, [activePage, pageOrder, pages]);
+    // Clear server-side tracking for deleted page classes.
+    apiCompile({ projectId: PROJECT_ID, pageId, html: '', classes: [], bundle: 'utilities' }).catch(() => {});
+
+    void refreshSharedBundles();
+    scheduleSharedRefresh();
+  }, [activePage, compileUtilitiesSnapshot, pageOrder, pages, refreshSharedBundles, scheduleSharedRefresh]);
 
   const resetDemo = useCallback(() => {
     suppressPersistRef.current = true;
@@ -333,16 +441,41 @@ export function useMultiPageCompile() {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem('rw-lexical-demo'); // clear old key too
+    localStorage.removeItem('rw-lexical-demo');
     window.location.reload();
   }, []);
 
+  const fullCss = useMemo(() => {
+    return [baseCss, themeCss, utilitiesCss]
+      .filter(Boolean)
+      .join('\n\n');
+  }, [baseCss, themeCss, utilitiesCss]);
+
   return {
     projectId: PROJECT_ID,
-    fullCss, html, loading, cached,
-    activePage, pages, pageOrder,
-    initialEditorState, setEditor,
-    switchPage, doCompile, addPage, deletePage, resetDemo,
+    baseCss,
+    themeCss,
+    utilitiesCss,
+    fullCss,
+    sharedSizes,
+    promotedClasses,
+    html,
+    loading,
+    cached,
+    activePage,
+    pages,
+    pageOrder,
+    initialEditorState,
+    setEditor,
+    switchPage,
+    doCompile,
+    addPage,
+    deletePage,
+    resetDemo,
   };
 }

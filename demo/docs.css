@@ -872,6 +872,29 @@ body.theme-dark .docs-content :where(tbody tr):hover {
   margin-top: var(--docs-space-4);
 }
 
+/* FAQ-specific collapsible layout */
+.docs-content :where(.faq-list > p) {
+  max-width: var(--docs-prose-width);
+}
+
+.docs-content :where(.faq-item) {
+  margin: var(--docs-space-3) 0;
+  background: rgba(15, 23, 42, 0.03);
+}
+
+body.theme-dark .docs-content :where(.faq-item) {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.docs-content :where(.faq-item > summary) {
+  font-size: var(--docs-text-lg);
+  line-height: var(--docs-leading-snug);
+}
+
+.docs-content :where(.faq-answer > :first-child) {
+  margin-top: 0;
+}
+
 /* --------------------------------------------------------------------------
    Plugin Source Showcase
    -------------------------------------------------------------------------- */

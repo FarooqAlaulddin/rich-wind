@@ -192,6 +192,8 @@ export function createAutoPromotePlugin(options = {}) {
     if (thresholdMatches && isObject(snapshot.promotedCssCache)) {
       for (const [projectId, css] of Object.entries(snapshot.promotedCssCache)) {
         if (typeof css !== 'string') continue;
+        const promotedSet = promoted.get(projectId);
+        if (!promotedSet || promotedSet.size === 0) continue;
         promotedCssCache.set(projectId, css);
       }
     }
@@ -270,7 +272,7 @@ export function createAutoPromotePlugin(options = {}) {
       await persist();
     },
 
-    transformClasses({ projectId, pageId, value }) {
+    transformClasses({ projectId, pageId, bundle, value }) {
       // Always track the original classes (before stripping)
       if (pageId !== SYNTHETIC_PAGE) {
         trackClasses(projectId, pageId, value);
@@ -289,9 +291,10 @@ export function createAutoPromotePlugin(options = {}) {
 
       const filtered = value.filter(cls => !promotedSet.has(cls));
 
-      // If all classes are promoted, return undefined to keep original
-      // (avoids empty-class 400 error)
+      // For utilities bundle, returning [] is valid and keeps per-page output empty.
+      // For other bundles, preserve legacy behavior to avoid breaking callers.
       if (filtered.length === 0) {
+        if (bundle === 'utilities') return [];
         return undefined;
       }
 
@@ -317,7 +320,8 @@ export function createAutoPromotePlugin(options = {}) {
         const result = await ctx.compile({
           projectId,
           pageId: SYNTHETIC_PAGE,
-          classes
+          classes,
+          bundle: 'utilities'
         });
         if (result && !result.error && result.css) {
           promotedCssCache.set(projectId, result.css);
