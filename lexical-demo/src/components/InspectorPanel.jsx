@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   $getSelection,
   $isRangeSelection,
@@ -8,7 +8,6 @@ import { $isStyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { $isStyledHeadingNode } from '../nodes/StyledHeadingNode';
 import { $isTailwindSpanNode, $createTailwindSpanNode } from '../nodes/TailwindSpanNode';
 import AutocompletePlugin from '../plugins/AutocompletePlugin';
-import PreviewFrame from './PreviewFrame';
 
 const BLOCK_TYPE_LABELS = {
   paragraph: 'Paragraph',
@@ -20,7 +19,65 @@ const BLOCK_TYPE_LABELS = {
   h6: 'Heading 6',
 };
 
-export default function InspectorPanel({ editor, html, css, loading, cached }) {
+function formatKB(bytes) {
+  if (!bytes) return '0 KB';
+  return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+function AnimatedSize({ bytes }) {
+  const ref = useRef(null);
+  const prevRef = useRef(bytes);
+
+  useEffect(() => {
+    if (prevRef.current === bytes) return;
+    const el = ref.current;
+    if (!el) return;
+    el.classList.remove('size-bump');
+    // Force reflow to restart animation
+    void el.offsetWidth;
+    el.classList.add('size-bump');
+    prevRef.current = bytes;
+  }, [bytes]);
+
+  return <span ref={ref} className="bundle-size">{formatKB(bytes)}</span>;
+}
+
+function BundleRow({ name, bytes, cssText, className }) {
+  const [open, setOpen] = useState(false);
+  const hasCss = cssText && cssText.length > 0;
+
+  return (
+    <div className={className}>
+      <button className="bundle-row-toggle" onClick={() => hasCss && setOpen(v => !v)}>
+        <span className="bundle-name">{name}</span>
+        <span className="bundle-row-right">
+          <AnimatedSize bytes={bytes} />
+          {hasCss && <span className="bundle-chevron">{open ? '\u25B4' : '\u25BE'}</span>}
+        </span>
+      </button>
+      {open && hasCss && (
+        <pre className="bundle-css-preview">{cssText}</pre>
+      )}
+    </div>
+  );
+}
+
+function buildExportHtml(html, projectId, activePage) {
+  const cssHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=full`;
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="${cssHref}">
+</head>
+<body>
+${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
+</body>
+</html>`;
+}
+
+export default function InspectorPanel({ editor, html, css, loading, cached, projectId, activePage, pages, pageOrder }) {
   const [blockType, setBlockType] = useState('paragraph');
   const [blockClasses, setBlockClasses] = useState([]);
   const [isInlineMode, setIsInlineMode] = useState(false);
@@ -28,6 +85,8 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
   const [selectionText, setSelectionText] = useState('');
   const [targetNodeKey, setTargetNodeKey] = useState(null);
   const [addValue, setAddValue] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [copied, setCopied] = useState(null);
 
   useEffect(() => {
     if (!editor) return;
@@ -40,14 +99,12 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
         const focus = selection.focus.getNode();
         const parent = anchor.getTopLevelElement();
 
-        // Block type
         if ($isStyledHeadingNode(parent)) {
           setBlockType(parent.getTag());
         } else {
           setBlockType('paragraph');
         }
 
-        // Block classes
         if ($isStyledParagraphNode(parent) || $isStyledHeadingNode(parent)) {
           const cls = parent.getTailwindClasses() || '';
           setBlockClasses(cls ? cls.split(/\s+/).filter(Boolean) : []);
@@ -55,7 +112,6 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
           setBlockClasses([]);
         }
 
-        // Inline mode detection
         const isCollapsed = selection.isCollapsed();
         const selectedText = selection.getTextContent();
 
@@ -63,7 +119,6 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
           setIsInlineMode(true);
           setSelectionText(selectedText);
 
-          // Check if either end of selection is in a TailwindSpanNode
           const spanNode = $isTailwindSpanNode(anchor) ? anchor
             : $isTailwindSpanNode(focus) ? focus : null;
 
@@ -98,7 +153,6 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
     if (isInlineMode) {
       editor.update(() => {
         if (targetNodeKey) {
-          // Modify existing TailwindSpanNode
           const node = $getNodeByKey(targetNodeKey);
           if ($isTailwindSpanNode(node)) {
             const existing = node.getTailwindClasses() || '';
@@ -109,7 +163,6 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
             }
           }
         } else {
-          // Wrap selection in new TailwindSpanNode
           const selection = $getSelection();
           if ($isRangeSelection(selection) && !selection.isCollapsed()) {
             const text = selection.getTextContent();
@@ -166,6 +219,10 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
     }
   }, [editor, isInlineMode, targetNodeKey]);
 
+  // Compute total from all pages
+  const total = (pageOrder || []).reduce((sum, id) => sum + (pages?.[id]?.cssSize || 0), 0);
+  const exportHtml = buildExportHtml(html, projectId, activePage);
+
   return (
     <div className="inspector-panel">
       <div className="inspector-section">
@@ -202,11 +259,62 @@ export default function InspectorPanel({ editor, html, css, loading, cached }) {
         </div>
       </div>
 
-      <div className="inspector-section preview-section">
-        <div className="inspector-subheader">PREVIEW</div>
-        <div className="preview-container">
-          <PreviewFrame html={html} css={css} />
+      <div className="inspector-section bundle-section">
+        <div className="inspector-subheader">BUNDLES</div>
+        <div className="bundle-sizes">
+          {(pageOrder || []).map(id => {
+            const page = pages?.[id];
+            if (!page) return null;
+            const isActive = id === activePage;
+            return (
+              <BundleRow
+                key={id}
+                name={page.label}
+                bytes={page.cssSize || 0}
+                cssText={isActive ? css : null}
+                className={`bundle-row${isActive ? ' bundle-active' : ''}`}
+              />
+            );
+          })}
+          <div className="bundle-row bundle-total">
+            <span className="bundle-name">Total</span>
+            <AnimatedSize bytes={total} />
+          </div>
         </div>
+      </div>
+
+      <div className="inspector-section export-section">
+        <button className="export-toggle" onClick={() => setExportOpen(v => !v)}>
+          <span className="inspector-subheader" style={{ marginBottom: 0 }}>EXPORT</span>
+          <span className="export-chevron">{exportOpen ? '\u25B4' : '\u25BE'}</span>
+        </button>
+        {exportOpen && (
+          <div className="export-content">
+            <pre className="export-code">{exportHtml}</pre>
+            <div className="export-actions">
+              <button
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(exportHtml);
+                  setCopied('html');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
+              >
+                {copied === 'html' ? 'Copied!' : 'Copy HTML'}
+              </button>
+              <button
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(css || '');
+                  setCopied('css');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
+              >
+                {copied === 'css' ? 'Copied!' : 'Copy CSS'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
