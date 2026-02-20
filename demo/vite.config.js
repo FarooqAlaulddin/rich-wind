@@ -12,6 +12,9 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
   },
+  preview: {
+    allowedHosts: true,
+  },
   server: {
     port: 5173,
     proxy: {
