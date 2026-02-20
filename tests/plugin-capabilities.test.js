@@ -1,6 +1,17 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(check, { timeoutMs = 1500, intervalMs = 20 } = {}) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (check()) return true;
+    await sleep(intervalMs);
+  }
+  return false;
+}
+
 describe('Plugin identity and name validation', () => {
   it('throws on duplicate plugin names', async () => {
     await expect(createCore({
@@ -371,11 +382,11 @@ describe('Plugin context query functions', () => {
   });
 
   it('hook context includes query functions', async () => {
-    let hookCtxKeys = [];
+    let hookCtx;
     const plugin = {
       name: 'hook-ctx-check',
       onCompileResult(ctx) {
-        hookCtxKeys = Object.keys(ctx);
+        hookCtx = ctx;
       }
     };
 
@@ -397,11 +408,246 @@ describe('Plugin context query functions', () => {
     await new Promise(r => server.close(r));
     await close();
 
-    expect(hookCtxKeys).toContain('projectId');
+    expect(hookCtx.projectId).toBe('hc');
+    expect(hookCtx.pageId).toBe('pg');
+    expect(typeof hookCtx.getProjectIds).toBe('function');
+    expect(typeof hookCtx.getPageIds).toBe('function');
+    expect(typeof hookCtx.getCacheStats).toBe('function');
+    expect(typeof hookCtx.getConfig).toBe('function');
+    expect(typeof hookCtx.getCss).toBe('function');
+    expect(typeof hookCtx.getProjectCss).toBe('function');
+    expect(typeof hookCtx.evictPage).toBe('function');
+    expect(typeof hookCtx.evictProject).toBe('function');
+    expect(typeof hookCtx.purgePage).toBe('function');
+    expect(typeof hookCtx.purgeProject).toBe('function');
+    expect(typeof hookCtx.compile).toBe('function');
+    expect(typeof hookCtx.hydratePageArtifact).toBe('function');
+    expect(typeof hookCtx.hydrateProjectArtifact).toBe('function');
+    expect(hookCtx.getProjectIds()).toContain('hc');
+    expect(hookCtx.getPageIds('hc')).toContain('pg');
+    expect(hookCtx.storage).toBeUndefined();
   });
 });
 
 describe('Plugin mutation functions', () => {
+  it('setup context includes namespaced storage helpers', async () => {
+    let ctxRef;
+    const plugin = {
+      name: 'ctx-storage',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { close } = await createCore({ plugins: [plugin] });
+
+    expect(typeof ctxRef.storage).toBe('object');
+    expect(typeof ctxRef.storage.get).toBe('function');
+    expect(typeof ctxRef.storage.set).toBe('function');
+    expect(typeof ctxRef.storage.delete).toBe('function');
+    expect(typeof ctxRef.storage.list).toBe('function');
+
+    await close();
+  });
+
+  it('plugin storage is namespaced per plugin route name', async () => {
+    const entries = new Map();
+    const calls = [];
+
+    const cacheStore = {
+      async readPluginData({ pluginName, key }) {
+        calls.push({ op: 'readPluginData', pluginName, key });
+        return entries.has(`${pluginName}:${key}`) ? entries.get(`${pluginName}:${key}`) : null;
+      },
+      async writePluginData({ pluginName, key, value }) {
+        calls.push({ op: 'writePluginData', pluginName, key });
+        entries.set(`${pluginName}:${key}`, value);
+      },
+      async deletePluginData({ pluginName, key }) {
+        calls.push({ op: 'deletePluginData', pluginName, key });
+        entries.delete(`${pluginName}:${key}`);
+      },
+      async listPluginData({ pluginName, prefix }) {
+        calls.push({ op: 'listPluginData', pluginName, prefix });
+        const fullPrefix = `${pluginName}:`;
+        const keys = [];
+        for (const fullKey of entries.keys()) {
+          if (!fullKey.startsWith(fullPrefix)) continue;
+          const key = fullKey.slice(fullPrefix.length);
+          if (!prefix || key.startsWith(prefix)) keys.push(key);
+        }
+        return keys;
+      }
+    };
+
+    let alphaStorage;
+    let betaStorage;
+    const alpha = {
+      name: 'Alpha',
+      setup(ctx) { alphaStorage = ctx.storage; }
+    };
+    const beta = {
+      name: 'Beta',
+      setup(ctx) { betaStorage = ctx.storage; }
+    };
+
+    const { close } = await createCore({
+      plugins: [alpha, beta],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    await alphaStorage.set('metrics', { count: 1 });
+    await betaStorage.set('metrics', { count: 2 });
+    await alphaStorage.set('meta:1', { flag: true });
+
+    expect(await alphaStorage.get('metrics')).toEqual({ count: 1 });
+    expect(await betaStorage.get('metrics')).toEqual({ count: 2 });
+    expect(await alphaStorage.list()).toEqual(expect.arrayContaining(['metrics', 'meta:1']));
+    expect(await alphaStorage.list('met')).toEqual(expect.arrayContaining(['metrics']));
+    expect(await betaStorage.list()).toEqual(['metrics']);
+
+    await alphaStorage.delete('metrics');
+    expect(await alphaStorage.get('metrics')).toBeNull();
+    expect(await betaStorage.get('metrics')).toEqual({ count: 2 });
+
+    expect(entries.has('alpha:metrics')).toBe(false);
+    expect(entries.get('beta:metrics')).toEqual({ count: 2 });
+    expect(calls.some((call) => call.pluginName === 'alpha')).toBe(true);
+    expect(calls.some((call) => call.pluginName === 'beta')).toBe(true);
+    expect(calls.some((call) => call.op === 'listPluginData' && call.pluginName === 'alpha')).toBe(true);
+
+    await close();
+  });
+
+  it('plugin storage fails open when cacheStore plugin methods are missing', async () => {
+    const errors = [];
+    let storage;
+    const plugin = {
+      name: 'storage-fail-open',
+      setup(ctx) { storage = ctx.storage; }
+    };
+    const collector = {
+      name: 'storage-missing-method-errors',
+      onError(info) { errors.push(info); }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin, collector],
+      cacheStore: {},
+      config: { rateLimitDisabled: true }
+    });
+
+    expect(await storage.get('metrics')).toBeNull();
+    expect(await storage.set('metrics', { count: 1 })).toBe(false);
+    expect(await storage.delete('metrics')).toBe(false);
+    expect(await storage.list()).toEqual([]);
+
+    const ops = errors
+      .filter((entry) => entry?.stage === 'cache-store')
+      .map((entry) => entry.op);
+
+    expect(ops).toContain('readPluginData');
+    expect(ops).toContain('writePluginData');
+    expect(ops).toContain('deletePluginData');
+    expect(ops).toContain('listPluginData');
+    expect(
+      errors.some(
+        (entry) =>
+          entry?.stage === 'cache-store' &&
+          entry?.error?.code === 'CACHE_STORE_METHOD_MISSING' &&
+          entry?.timedOut === false &&
+          entry?.context?.pluginName === 'storage-fail-open' &&
+          entry?.context?.key === 'metrics'
+      )
+    ).toBe(true);
+
+    await close();
+  });
+
+  it('plugin storage honors cacheStore timeouts and reports onError', async () => {
+    const errors = [];
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const collector = {
+      name: 'collector',
+      onError(ctx) { errors.push(ctx); }
+    };
+
+    let storage;
+    const probe = {
+      name: 'probe-store',
+      setup(ctx) { storage = ctx.storage; }
+    };
+
+    const cacheStore = {
+      async readPluginData() {
+        await sleep(80);
+        return { stale: true };
+      },
+      async writePluginData() {
+        await sleep(80);
+      },
+      async deletePluginData() {
+        await sleep(80);
+      },
+      async listPluginData() {
+        await sleep(80);
+        return ['metrics'];
+      }
+    };
+
+    const { close } = await createCore({
+      plugins: [probe, collector],
+      cacheStore,
+      cacheStoreTimeoutMs: 20,
+      config: { rateLimitDisabled: true }
+    });
+
+    expect(await storage.get('metrics')).toBeNull();
+    expect(await storage.set('metrics', { count: 1 })).toBe(false);
+    expect(await storage.delete('metrics')).toBe(false);
+    expect(await storage.list('met')).toEqual([]);
+
+    const ops = errors
+      .filter((entry) => entry?.stage === 'cache-store')
+      .map((entry) => entry.op);
+
+    expect(ops).toContain('readPluginData');
+    expect(ops).toContain('writePluginData');
+    expect(ops).toContain('deletePluginData');
+    expect(ops).toContain('listPluginData');
+    expect(
+      errors.some(
+        (entry) =>
+          entry?.stage === 'cache-store' &&
+          entry?.context?.pluginName === 'probe-store' &&
+          entry?.context?.key === 'metrics' &&
+          entry?.timedOut === true
+      )
+    ).toBe(true);
+
+    await close();
+  });
+
+  it('plugin storage rejects invalid keys', async () => {
+    let storage;
+    const plugin = {
+      name: 'storage-key-guard',
+      setup(ctx) { storage = ctx.storage; }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin],
+      config: { rateLimitDisabled: true }
+    });
+
+    await expect(storage.get('bad key')).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.set('../metrics', { count: 1 })).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.delete('')).rejects.toThrow(/Invalid storage key/);
+    await expect(storage.list('bad prefix')).rejects.toThrow(/Invalid storage prefix/);
+
+    await close();
+  });
+
   it('evictPage removes a page from cache', async () => {
     let ctxRef;
     const plugin = {
@@ -468,6 +714,123 @@ describe('Plugin mutation functions', () => {
 
     ctxRef.evictProject('ep');
     expect(ctxRef.getProjectIds()).not.toContain('ep');
+
+    await new Promise(r => server.close(r));
+    await close();
+  });
+
+  it('purgePage removes in-memory cache and persisted page artifacts', async () => {
+    let ctxRef;
+    const pageArtifacts = new Map();
+
+    const cacheStore = {
+      async upsertPageArtifact({ projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt }) {
+        pageArtifacts.set(`${projectId}:${pageId}:${bundle}`, {
+          projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt
+        });
+      },
+      async deletePageArtifact({ projectId, pageId, bundle }) {
+        pageArtifacts.delete(`${projectId}:${pageId}:${bundle}`);
+      }
+    };
+
+    const plugin = {
+      name: 'purge-page',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { close } = await createCore({
+      plugins: [plugin],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'full' });
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'utilities' });
+    await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'theme' });
+
+    const wroteAll = await waitFor(() => pageArtifacts.size === 3, { timeoutMs: 2000 });
+    expect(wroteAll).toBe(true);
+
+    const result = await ctxRef.purgePage('pp', 'home');
+    expect(result).toBe(true);
+    expect(ctxRef.getPageIds('pp')).toBeNull();
+    expect(pageArtifacts.size).toBe(0);
+
+    await close();
+  });
+
+  it('purgeProject removes in-memory cache and persisted project/page artifacts', async () => {
+    let ctxRef;
+    const pageArtifacts = new Map();
+    const projectArtifacts = new Map();
+
+    const cacheStore = {
+      async upsertPageArtifact({ projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt }) {
+        pageArtifacts.set(`${projectId}:${pageId}:${bundle}`, {
+          projectId, pageId, bundle, css, hash, classes, updatedAt, expiresAt
+        });
+      },
+      async deletePageArtifact({ projectId, pageId, bundle }) {
+        pageArtifacts.delete(`${projectId}:${pageId}:${bundle}`);
+      },
+      async upsertProjectArtifact({ projectId, bundle, css, hash, updatedAt, expiresAt }) {
+        projectArtifacts.set(`${projectId}:${bundle}`, {
+          projectId, bundle, css, hash, updatedAt, expiresAt
+        });
+      },
+      async deleteProjectArtifact({ projectId, bundle }) {
+        projectArtifacts.delete(`${projectId}:${bundle}`);
+      }
+    };
+
+    const plugin = {
+      name: 'purge-project',
+      setup(ctx) { ctxRef = ctx; }
+    };
+
+    const { app, close } = await createCore({
+      plugins: [plugin],
+      cacheStore,
+      config: { rateLimitDisabled: true }
+    });
+
+    const server = app.listen(0);
+    await new Promise(r => server.once('listening', r));
+    const { port } = server.address();
+    const baseUrl = `http://localhost:${port}`;
+
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'purge-proj', pageId: 'p1', classes: 'text-red-500' })
+    });
+    await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'purge-proj', pageId: 'p2', classes: 'bg-blue-500' })
+    });
+
+    const projectCss = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
+    expect(projectCss.status).toBe(200);
+
+    const wroteArtifacts = await waitFor(
+      () => pageArtifacts.size >= 2 && projectArtifacts.size >= 1,
+      { timeoutMs: 2000 }
+    );
+    expect(wroteArtifacts).toBe(true);
+
+    const result = await ctxRef.purgeProject('purge-proj');
+    expect(result).toBe(true);
+    expect(ctxRef.getProjectIds()).not.toContain('purge-proj');
+    expect(pageArtifacts.size).toBe(0);
+    expect(projectArtifacts.size).toBe(0);
+
+    const pageAfterPurge = await fetch(`${baseUrl}/api/css?projectId=purge-proj&pageId=p1`);
+    expect(pageAfterPurge.status).toBe(404);
+
+    const projectAfterPurge = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
+    expect(projectAfterPurge.status).toBe(404);
 
     await new Promise(r => server.close(r));
     await close();
@@ -796,8 +1159,15 @@ describe('Plugin mutation functions', () => {
     expect(typeof ctxRef.compile).toBe('function');
     expect(typeof ctxRef.evictPage).toBe('function');
     expect(typeof ctxRef.evictProject).toBe('function');
+    expect(typeof ctxRef.purgePage).toBe('function');
+    expect(typeof ctxRef.purgeProject).toBe('function');
     expect(typeof ctxRef.hydratePageArtifact).toBe('function');
     expect(typeof ctxRef.hydrateProjectArtifact).toBe('function');
+    expect(typeof ctxRef.storage).toBe('object');
+    expect(typeof ctxRef.storage.get).toBe('function');
+    expect(typeof ctxRef.storage.set).toBe('function');
+    expect(typeof ctxRef.storage.delete).toBe('function');
+    expect(typeof ctxRef.storage.list).toBe('function');
 
     // Query functions are available
     expect(typeof ctxRef.getProjectIds).toBe('function');

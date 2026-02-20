@@ -98,15 +98,23 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 
 - **Sticky sessions** — route requests from the same editing session to the same replica. This keeps the cache warm for active users.
 - **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore) for the adapter interface.
+- **Single writer, many readers** — run writer replicas with `RW_NODE_ROLE=writer` and read replicas with `RW_NODE_ROLE=reader`. Route compile/purge/storage writes to writers only.
+- **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
 - **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
+
+**Simple request routing (recommended):**
+
+1. Send `POST /api/compile` and plugin mutation routes to writer replicas.
+2. Send `GET /api/css`, `GET /api/projects/:projectId/css`, and `POST /api/suggest` to reader replicas.
+3. Keep writer and reader replicas on the same shared `cacheStore`.
 
 ## cacheStore Adapters
 
-The `cacheStore` option accepts any object that implements four async methods. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
+The `cacheStore` option accepts any object that implements the core artifact methods (page + project). It can also implement plugin-data methods so plugin `ctx.storage` state is durable across restarts. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
 
 For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore).
 
-The pattern is the same regardless of backend: map `projectId + pageId + bundle` to a storage key, serialize the artifact as JSON, and return `null` on miss. Here are two examples:
+The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact`, `deleteProjectArtifact`, and `deleteProjectPageArtifacts`. Here are two examples:
 
 ### Redis
 
@@ -121,6 +129,19 @@ const cacheStore = {
     const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
     await redis.set(key, JSON.stringify(input), "EX", ttl);
   },
+  async deletePageArtifact({ projectId, pageId, bundle }) {
+    await redis.del(`rw:${projectId}:${pageId}:${bundle}`);
+  },
+  async deleteProjectPageArtifacts({ projectId }) {
+    const prefix = `rw:${projectId}:`;
+    let cursor = "0";
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, "MATCH", `${prefix}*`, "COUNT", 200);
+      cursor = nextCursor;
+      const pageKeys = keys.filter((key) => !key.includes(":_project:"));
+      if (pageKeys.length > 0) await redis.del(pageKeys);
+    } while (cursor !== "0");
+  },
   async readProjectArtifact({ projectId, bundle }) {
     const raw = await redis.get(`rw:${projectId}:_project:${bundle}`);
     return raw ? JSON.parse(raw) : null;
@@ -129,6 +150,24 @@ const cacheStore = {
     const key = `rw:${input.projectId}:_project:${input.bundle}`;
     const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
     await redis.set(key, JSON.stringify(input), "EX", ttl);
+  },
+  async deleteProjectArtifact({ projectId, bundle }) {
+    await redis.del(`rw:${projectId}:_project:${bundle}`);
+  },
+  async readPluginData({ pluginName, key }) {
+    const raw = await redis.get(`rw:plugin:${pluginName}:${key}`);
+    return raw ? JSON.parse(raw) : null;
+  },
+  async writePluginData({ pluginName, key, value }) {
+    await redis.set(`rw:plugin:${pluginName}:${key}`, JSON.stringify(value));
+  },
+  async deletePluginData({ pluginName, key }) {
+    await redis.del(`rw:plugin:${pluginName}:${key}`);
+  },
+  async listPluginData({ pluginName, prefix = "" }) {
+    // For large keyspaces, prefer SCAN over KEYS.
+    const keys = await redis.keys(`rw:plugin:${pluginName}:${prefix}*`);
+    return keys.map((fullKey) => fullKey.slice(`rw:plugin:${pluginName}:`.length));
   }
 };
 ```
@@ -147,8 +186,58 @@ const writeJson = async (f, d) => { await fs.mkdir(path.dirname(f), { recursive:
 const cacheStore = {
   readPageArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`)),
   upsertPageArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`), i),
+  deletePageArtifact: async (i) => {
+    try {
+      await fs.unlink(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`));
+    } catch {}
+  },
+  deleteProjectPageArtifacts: async ({ projectId }) => {
+    const projectDir = path.join(DIR, safe(projectId));
+    let names = [];
+    try {
+      names = await fs.readdir(projectDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      names
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && !entry.name.startsWith("_project."))
+        .map(async (entry) => {
+          try {
+            await fs.unlink(path.join(projectDir, entry.name));
+          } catch {}
+        })
+    );
+  },
   readProjectArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`)),
   upsertProjectArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`), i),
+  deleteProjectArtifact: async (i) => {
+    try {
+      await fs.unlink(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`));
+    } catch {}
+  },
+  readPluginData: ({ pluginName, key }) =>
+    readJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`)),
+  writePluginData: ({ pluginName, key, value }) =>
+    writeJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`), value),
+  deletePluginData: async ({ pluginName, key }) => {
+    try {
+      await fs.unlink(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`));
+    } catch {}
+  },
+  async listPluginData({ pluginName, prefix = "" }) {
+    const dir = path.join(DIR, "_plugins", safe(pluginName));
+    let names = [];
+    try {
+      names = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    return names
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name.slice(0, -5))
+      .filter((key) => key.startsWith(prefix));
+  },
 };
 ```
 

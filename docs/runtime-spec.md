@@ -49,7 +49,7 @@ The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It
 
 By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
 
-A cacheStore is an object you pass to `createCore()`. It has four methods — two for page artifacts, two for project artifacts:
+A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus up to three optional delete-through artifact methods used by plugin purge mutations, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
 
 ### readPageArtifact
 
@@ -103,6 +103,22 @@ Called after a successful compile to persist the result. Fires asynchronously af
 
 Your implementation should write this to whatever storage you're using. The `expiresAt` field tells you when this artifact can be pruned.
 
+### deletePageArtifact (optional)
+
+Called by `purgePage(projectId, pageId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app",
+  pageId: "hero",
+  bundle: "full" // called separately for full/utilities/theme
+}
+```
+
+If implemented, it should remove the artifact for that page + bundle from persistence.
+
 ### readProjectArtifact
 
 Called when project-level CSS (`GET /api/projects/:id/css`) isn't found in memory.
@@ -146,11 +162,143 @@ Called after project-level CSS is compiled, to persist the aggregate. Also fires
 }
 ```
 
+### deleteProjectArtifact (optional)
+
+Called by `purgeProject(projectId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app",
+  bundle: "full" // called separately for full/utilities/theme
+}
+```
+
+If implemented, it should remove the project aggregate artifact for that bundle from persistence.
+
+### deleteProjectPageArtifacts (optional)
+
+Called by `purgeProject(projectId)` from plugin context for project-wide page artifact cleanup in persistence. This is especially important when purging from a cold replica that has no local page list.
+
+**Receives:**
+
+```js
+{
+  projectId: "my-app"
+}
+```
+
+If implemented, it should remove all persisted page artifacts for the project across bundles (`full` / `utilities` / `theme`).
+
+### Plugin data methods (optional)
+
+These methods back the plugin storage API described in [Plugin System](/docs/plugin-system#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
+
+#### readPluginData
+
+Called by `ctx.storage.get(key)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics", // plugin route name (lowercased plugin name)
+  key: "metrics_v1"
+}
+```
+
+**Should return** the stored value or `null`.
+
+#### writePluginData
+
+Called by `ctx.storage.set(key, value)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  key: "metrics_v1",
+  value: { compileCount: 42 } // adapter-defined serialization
+}
+```
+
+#### deletePluginData
+
+Called by `ctx.storage.delete(key)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  key: "metrics_v1"
+}
+```
+
+#### listPluginData
+
+Called by `ctx.storage.list(prefix?)`.
+
+**Receives:**
+
+```js
+{
+  pluginName: "analytics",
+  prefix: "metrics" // optional; empty string when omitted
+}
+```
+
+**Should return** an array of keys for that plugin namespace, for example:
+
+```js
+["metrics_v1", "metrics_daily_2026_02_16"]
+```
+
+Rich Wind sanitizes list output before returning it to plugins: non-string keys are dropped, invalid keys are dropped, keys are deduplicated, and `prefix` filtering is enforced again defensively.
+
 ### Failure behavior
 
 The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](/docs/plugin-system#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
 
+For plugin storage specifically:
+- `ctx.storage.get(key)` falls back to `null`
+- `ctx.storage.set(key, value)` and `ctx.storage.delete(key)` fall back to `false`
+- `ctx.storage.list(prefix?)` falls back to `[]`
+
+For purge mutations specifically:
+- `ctx.purgePage(projectId, pageId)` and `ctx.purgeProject(projectId)` return `false` if required delete operations fail, time out, or are missing
+- `ctx.purgeProject(projectId)` can still purge known local pages without `deleteProjectPageArtifacts`, but a cold-replica purge (no local pages) requires `deleteProjectPageArtifacts` for full remote cleanup
+- local in-memory eviction still happens, so the process remains healthy and operational
+
 This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
+
+## Replica Roles
+
+Rich Wind supports explicit replica roles through `config.nodeRole` (or `RW_NODE_ROLE`):
+
+| Role | Intended use |
+| --- | --- |
+| `hybrid` (default) | Single-node setups or simple deployments that allow reads and writes everywhere |
+| `writer` | Mutation pool replicas (`compile`, purge, plugin writes) |
+| `reader` | Read pool replicas (serve CSS and suggestions only) |
+
+On `reader` replicas:
+
+- `POST /api/compile` returns `409` (`READ_ONLY_REPLICA`)
+- write helpers are blocked:
+  - `ctx.compile` returns `{ status: 409, code: "READ_ONLY_REPLICA" }`
+  - `ctx.purge*` and `ctx.hydrate*` return `false`
+  - `ctx.evict*` does nothing
+- plugin storage writes are blocked (`ctx.storage.set/delete`)
+- plugin storage reads still work (`ctx.storage.get/list`)
+- if `cacheStore` is enabled, CSS reads check shared storage first; if the shared entry is gone, readers return `404` instead of stale local CSS
+
+Recommended production shape:
+1. Route all writes to `writer` replicas.
+2. Route read traffic to `reader` replicas.
+3. Keep both pools on the same shared `cacheStore`.
 
 ### Artifact validation
 

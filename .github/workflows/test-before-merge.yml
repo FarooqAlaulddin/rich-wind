@@ -39,11 +39,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install UI dependencies
-        run: npm ci --prefix ui
-
       - name: Run test suite
         run: npm test
 
-      - name: Build UI production bundle
-        run: npm --prefix ui run build
+      - name: Run package smoke test
+        run: npm run test:pack
+
+      - name: Build demo production bundle
+        run: npm run build --workspace=demo
+
+      - name: Build lexical demo production bundle
+        run: npm run build --workspace=lexical-demo

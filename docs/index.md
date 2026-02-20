@@ -4,6 +4,25 @@ Rich Wind is a runtime Tailwind CSS compiler. You send it HTML or a list of Tail
 
 It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders. Anywhere you don't know the final set of Tailwind classes until runtime.
 
+## Why It Helps
+
+- Handles dynamic pages where class names are not known during CI/build.
+- Centralizes CSS generation so every product does not need its own Tailwind build pipeline.
+- Improves response time on repeated requests using per-page/per-project cache.
+- Scales to multi-replica deployments with a shared `cacheStore`.
+
+## When to Use It
+
+- You are building a CMS, site/page editor, email/template builder, or preview environment.
+- You generate HTML/classes at runtime and need correct CSS immediately.
+- You want one core service for runtime CSS across multiple teams or apps.
+
+## When Not to Use It
+
+- Your app is mostly static and build-time Tailwind gives you simpler operations.
+- You need zero runtime compilation cost and can precompile everything.
+- You require request-time custom Tailwind config uploads (not a Rich Wind goal).
+
 ## Mental Model
 
 Rich Wind organizes CSS around **projects** and **pages**.
@@ -62,6 +81,8 @@ Splitting makes sense when many pages share the same design tokens but have diff
 ## What's in the Docs
 
 - **[API Reference](/docs/api-reference)** — every endpoint, every parameter, every config option
+- **[OpenAPI Contract](/docs/openapi.json)** — machine-readable API schema for tooling and client generation
 - **[Runtime Spec](/docs/runtime-spec)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
-- **[Plugin System](/docs/plugin-system)** — lifecycle hooks for logging, metrics, and custom behavior
+- **[Plugin System](/docs/plugin-system)** — lifecycle hooks, setup context, plugin storage, and custom behavior
 - **[Integration Cookbook](/docs/integration-cookbook)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
+- **[FAQ](/docs/faq)** — common implementation and architecture questions

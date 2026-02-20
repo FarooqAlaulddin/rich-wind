@@ -168,6 +168,63 @@ describe('Cache store integration', () => {
     }
   });
 
+  it('reports missing cacheStore artifact methods through onError and fails open', async () => {
+    const errors = [];
+    const plugin = {
+      onError: (ctx) => errors.push(ctx)
+    };
+    const store = {};
+
+    const { baseUrl, close } = await createTestServer({}, {
+      cacheStore: store,
+      plugins: [plugin],
+      config: { rateLimitDisabled: true }
+    });
+
+    try {
+      const pageRead = await fetch(`${baseUrl}/api/css?projectId=missing-ops&pageId=home`);
+      expect(pageRead.status).toBe(404);
+
+      const projectRead = await fetch(`${baseUrl}/api/projects/missing-ops/css`);
+      expect(projectRead.status).toBe(404);
+
+      const compile = await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'missing-ops',
+          pageId: 'home',
+          classes: 'bg-red-500'
+        })
+      });
+      expect(compile.status).toBe(200);
+
+      const projectWrite = await fetch(`${baseUrl}/api/projects/missing-ops/css`);
+      expect(projectWrite.status).toBe(200);
+
+      const done = await waitFor(() => {
+        const ops = errors
+          .filter((entry) => entry?.stage === 'cache-store')
+          .map((entry) => entry.op);
+        return (
+          ops.includes('readPageArtifact') &&
+          ops.includes('readProjectArtifact') &&
+          ops.includes('upsertPageArtifact') &&
+          ops.includes('upsertProjectArtifact')
+        );
+      }, { timeoutMs: 2000 });
+      expect(done).toBe(true);
+
+      const readPageError = errors.find(
+        (entry) => entry?.stage === 'cache-store' && entry?.op === 'readPageArtifact'
+      );
+      expect(readPageError?.error?.code).toBe('CACHE_STORE_METHOD_MISSING');
+      expect(readPageError?.timedOut).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
   it('writes page artifacts through store after compile', async () => {
     const writes = [];
     const store = {
@@ -204,6 +261,55 @@ describe('Cache store integration', () => {
     } finally {
       await close();
     }
+  });
+
+  it('waits for queued page-artifact writes during close', async () => {
+    let started = false;
+    let finished = false;
+    let releaseWrite;
+    const writeGate = new Promise((resolve) => {
+      releaseWrite = resolve;
+    });
+    const store = {
+      async upsertPageArtifact() {
+        started = true;
+        await writeGate;
+        finished = true;
+      }
+    };
+
+    const { baseUrl, close } = await createTestServer({}, {
+      cacheStore: store,
+      config: { rateLimitDisabled: true }
+    });
+
+    const compile = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'close-drain',
+        pageId: 'home',
+        classes: 'bg-red-500'
+      })
+    });
+    expect(compile.status).toBe(200);
+
+    const closePromise = close();
+    const writeStarted = await waitFor(() => started, { timeoutMs: 1000 });
+    expect(writeStarted).toBe(true);
+
+    let closeFinishedEarly = false;
+    closePromise.then(() => {
+      closeFinishedEarly = true;
+    });
+
+    await sleep(25);
+    expect(closeFinishedEarly).toBe(false);
+    expect(finished).toBe(false);
+
+    releaseWrite();
+    await closePromise;
+    expect(finished).toBe(true);
   });
 
   it('serves theme bundle page CSS from cacheStore on memory miss', async () => {

@@ -2,6 +2,8 @@
 
 Rich Wind exposes four endpoints and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
 
+Machine-readable contract: [`/docs/openapi.json`](/docs/openapi.json)
+
 ## createCore()
 
 Everything starts here. `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function.
@@ -72,6 +74,7 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 | Status | Cause |
 | --- | --- |
 | `400` | Missing `projectId`, invalid ID format, or no valid classes found |
+| `409` | Replica is configured as `nodeRole: "reader"` (`READ_ONLY_REPLICA`) |
 | `413` | HTML too large, class string too large, class count exceeds limit, or JSON body too large |
 | `429` | Rate limit exceeded (includes `Retry-After` header) |
 | `500` | Unexpected internal error |
@@ -171,6 +174,8 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `rateLimitMax` | `RW_RATE_LIMIT_MAX` | `60` | Max requests per IP per window |
 | `rateLimitDisabled` | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting entirely |
 | `trustProxy` | `RW_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for IP detection |
+| `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
+| `corsOrigin` | `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
 
 These options live outside `config` — they're top-level arguments to `createCore()`:
 
@@ -180,7 +185,12 @@ These options live outside `config` — they're top-level arguments to `createCo
 | `pluginTimeoutMs` | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default timeout for plugin hooks |
 | `setupTimeoutMs` | — | computed | Plugin setup timeout (min 1000ms) |
 | `maxPluginCompileChainDepth` | — | `2` | Max depth for plugin-initiated compile chains |
-| `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](/docs/runtime-spec#cachestore)) |
+| `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](/docs/runtime-spec#cachestore), including optional `deletePageArtifact`/`deleteProjectArtifact`/`deleteProjectPageArtifacts` for purge mutations) |
 | `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation |
 
 `PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you call `app.listen()` yourself.
+
+For single-writer deployments, use this split:
+- `writer` nodes: accept compile and other writes
+- `reader` nodes: serve CSS/suggestions only
+- both point to the same `cacheStore`

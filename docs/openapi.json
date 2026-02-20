@@ -1,0 +1,678 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Rich Wind API",
+    "version": "0.0.1",
+    "description": "Runtime Tailwind CSS compilation and cache API."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Local development"
+    },
+    {
+      "url": "https://rich-wind.thinkly.dev",
+      "description": "Hosted demo/docs domain"
+    }
+  ],
+  "paths": {
+    "/api/compile": {
+      "post": {
+        "summary": "Compile and cache page CSS",
+        "description": "Compiles Tailwind CSS from html/classes and caches by projectId + pageId.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompileRequest"
+              },
+              "examples": {
+                "compile_full": {
+                  "value": {
+                    "projectId": "my-app",
+                    "pageId": "home",
+                    "html": "<main class=\"p-6 text-red-500\">Hello</main>",
+                    "classes": [
+                      "rounded-lg",
+                      "shadow-sm"
+                    ],
+                    "bundle": "full"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compilation completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompileSuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Replica is read-only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadOnlyErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload or input too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds until the next allowed request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/css": {
+      "get": {
+        "summary": "Get cached page CSS",
+        "description": "Reads CSS for a cached page. Returns text/css when found.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/projectIdAlias"
+          },
+          {
+            "$ref": "#/components/parameters/pageId"
+          },
+          {
+            "$ref": "#/components/parameters/pageIdAlias"
+          },
+          {
+            "$ref": "#/components/parameters/bundle"
+          },
+          {
+            "$ref": "#/components/parameters/mode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSS was found",
+            "content": {
+              "text/css": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Cache miss",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{projectId}/css": {
+      "get": {
+        "summary": "Get aggregated project CSS",
+        "description": "Returns a project-wide stylesheet built from the union of cached page classes.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/bundle"
+          },
+          {
+            "$ref": "#/components/parameters/mode"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project CSS found",
+            "content": {
+              "text/css": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project cache miss",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/suggest": {
+      "post": {
+        "summary": "Suggest Tailwind classes",
+        "description": "Returns class suggestions from provided classes, project cache, and optional fallback data.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestRequest"
+              },
+              "examples": {
+                "suggest_bg": {
+                  "value": {
+                    "projectId": "my-app",
+                    "prefix": "bg-",
+                    "limit": 10
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Suggestions returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "projectId": {
+        "name": "projectId",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ProjectId"
+        },
+        "description": "Project identifier. Required unless project_id is provided."
+      },
+      "projectIdAlias": {
+        "name": "project_id",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ProjectId"
+        },
+        "description": "Snake-case alias for projectId."
+      },
+      "pageId": {
+        "name": "pageId",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/PageId"
+        },
+        "description": "Page identifier. Defaults to \"default\"."
+      },
+      "pageIdAlias": {
+        "name": "page_id",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/PageId"
+        },
+        "description": "Snake-case alias for pageId."
+      },
+      "projectIdPath": {
+        "name": "projectId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/ProjectId"
+        }
+      },
+      "bundle": {
+        "name": "bundle",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/Bundle"
+        }
+      },
+      "mode": {
+        "name": "mode",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/Bundle"
+        },
+        "description": "Alias for bundle."
+      }
+    },
+    "schemas": {
+      "ProjectId": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9._-]+$",
+        "maxLength": 64
+      },
+      "PageId": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9._-]+$",
+        "maxLength": 64
+      },
+      "Bundle": {
+        "type": "string",
+        "enum": [
+          "full",
+          "base",
+          "theme",
+          "utilities",
+          "preflight",
+          "tokens",
+          "design",
+          "utility",
+          "utils",
+          "util",
+          "utilities-only",
+          "utility-only"
+        ]
+      },
+      "NormalizedBundle": {
+        "type": "string",
+        "enum": [
+          "full",
+          "base",
+          "theme",
+          "utilities"
+        ]
+      },
+      "ClassInput": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "CompileRequest": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "pageId": {
+            "$ref": "#/components/schemas/PageId",
+            "default": "default"
+          },
+          "page_id": {
+            "$ref": "#/components/schemas/PageId",
+            "default": "default"
+          },
+          "html": {
+            "type": "string"
+          },
+          "classes": {
+            "$ref": "#/components/schemas/ClassInput"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/Bundle"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Bundle",
+            "description": "Alias for bundle."
+          }
+        },
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "projectId"
+                ]
+              },
+              {
+                "required": [
+                  "project_id"
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "html"
+                ]
+              },
+              {
+                "required": [
+                  "classes"
+                ]
+              },
+              {
+                "properties": {
+                  "bundle": {
+                    "enum": [
+                      "base",
+                      "preflight"
+                    ]
+                  }
+                },
+                "required": [
+                  "bundle"
+                ]
+              },
+              {
+                "properties": {
+                  "mode": {
+                    "enum": [
+                      "base",
+                      "preflight"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "CompileSuccessResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "projectId",
+          "pageId",
+          "bundle",
+          "hash",
+          "classes",
+          "cached",
+          "css"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "pageId": {
+            "$ref": "#/components/schemas/PageId"
+          },
+          "bundle": {
+            "$ref": "#/components/schemas/NormalizedBundle"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "classes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cached": {
+            "type": "boolean"
+          },
+          "css": {
+            "type": "string"
+          }
+        }
+      },
+      "SuggestRequest": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "classes": {
+            "$ref": "#/components/schemas/ClassInput"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "SuggestResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "projectId",
+          "prefix",
+          "count",
+          "suggestions"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "const": true
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "ReadOnlyErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          },
+          {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "const": "READ_ONLY_REPLICA"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -29,6 +29,57 @@ const parseBoolean = (value, fallback = false) => {
     return fallback;
 };
 
+const parseCorsOrigin = (value) => {
+    if (value === undefined || value === null) return null;
+    const tokens = (Array.isArray(value) ? value : [value])
+        .flatMap((part) => String(part).split(','))
+        .map((part) => part.trim())
+        .filter(Boolean);
+    if (tokens.length === 0) return null;
+    if (
+        tokens.length === 1 &&
+        ['0', 'false', 'off', 'none', 'disabled'].includes(tokens[0].toLowerCase())
+    ) {
+        return null;
+    }
+    if (tokens.includes('*')) return '*';
+    return Array.from(new Set(tokens));
+};
+
+const resolveCorsOrigin = (corsOrigin, requestOrigin) => {
+    if (!corsOrigin) return null;
+    if (corsOrigin === '*') return '*';
+    if (typeof requestOrigin !== 'string' || !requestOrigin) return null;
+    return corsOrigin.includes(requestOrigin) ? requestOrigin : null;
+};
+
+const appendVaryHeader = (existingValue, nextToken) => {
+    const existing = String(existingValue || '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+    if (!existing.includes(nextToken)) existing.push(nextToken);
+    return existing.join(', ');
+};
+
+const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
+const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
+
+function normalizeNodeRole(value) {
+    if (typeof value !== 'string') return 'hybrid';
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'read') return 'reader';
+    if (normalized === 'write') return 'writer';
+    return NODE_ROLES.has(normalized) ? normalized : 'hybrid';
+}
+
+function createReadOnlyError(action) {
+    const error = new Error(`"${action}" is not allowed on read-only replicas.`);
+    error.code = READ_ONLY_ERROR_CODE;
+    error.action = action;
+    return error;
+}
+
 function buildConfig(overrides = {}) {
     const cacheTtlMs = parseIntWithDefault(
         overrides.cacheTtlMs ?? process.env.RW_CACHE_TTL_MS,
@@ -93,7 +144,7 @@ function buildConfig(overrides = {}) {
         cacheMaxPages: parseIntWithDefault(
             overrides.cacheMaxPages ?? process.env.RW_CACHE_MAX_PAGES,
             200,
-            0
+            1
         ),
         cacheTtlMs,
         projectCacheTtlMs: parseIntWithDefault(
@@ -101,10 +152,16 @@ function buildConfig(overrides = {}) {
             cacheTtlMs,
             0
         ),
+        corsOrigin: parseCorsOrigin(
+            overrides.corsOrigin ?? process.env.RW_CORS_ORIGIN
+        ),
         maxCssChars: parseIntWithDefault(
             overrides.maxCssChars ?? process.env.RW_MAX_CSS_CHARS,
             2000000,
             1
+        ),
+        nodeRole: normalizeNodeRole(
+            overrides.nodeRole ?? process.env.RW_NODE_ROLE
         )
     };
 }
@@ -165,6 +222,36 @@ function createRateLimiter(config) {
 // =============================================================================
 function makePageKey(projectId, pageId) {
     return `${projectId}::${pageId}`;
+}
+
+function createAsyncTaskQueue() {
+    let pendingCount = 0;
+    const waiters = new Set();
+
+    const flushWaiters = () => {
+        if (pendingCount !== 0) return;
+        for (const resolve of waiters) resolve();
+        waiters.clear();
+    };
+
+    return {
+        queue(taskFactory) {
+            pendingCount += 1;
+            queueMicrotask(() => {
+                Promise.resolve()
+                    .then(taskFactory)
+                    .catch(() => {})
+                    .finally(() => {
+                        pendingCount -= 1;
+                        flushWaiters();
+                    });
+            });
+        },
+        drain() {
+            if (pendingCount === 0) return Promise.resolve();
+            return new Promise((resolve) => waiters.add(resolve));
+        }
+    };
 }
 
 function touchPageKey(state, key) {
@@ -408,6 +495,8 @@ function createCacheStoreRunner(cacheStore, options = {}) {
     );
     const onError = typeof options.onError === 'function' ? options.onError : null;
     const store = cacheStore && typeof cacheStore === 'object' ? cacheStore : null;
+    const missingMethodOps = new Set();
+    const hasMethod = (op) => Boolean(store && typeof store[op] === 'function');
 
     const withTimeout = (promise, method) => {
         if (!defaultTimeout || defaultTimeout <= 0) return promise;
@@ -433,14 +522,29 @@ function createCacheStoreRunner(cacheStore, options = {}) {
             context: {
                 projectId: input?.projectId ?? null,
                 pageId: input?.pageId ?? null,
-                bundle: input?.bundle ?? null
+                bundle: input?.bundle ?? null,
+                pluginName: input?.pluginName ?? null,
+                key: input?.key ?? null,
+                prefix: input?.prefix ?? null
             }
         });
     };
 
+    const reportMissingMethod = async (op, input) => {
+        if (missingMethodOps.has(op)) return;
+        missingMethodOps.add(op);
+        const error = new Error(`cacheStore.${op} is not implemented`);
+        error.code = 'CACHE_STORE_METHOD_MISSING';
+        error.method = op;
+        await reportError(error, op, input);
+    };
+
     const read = async (op, input) => {
-        const fn = store && typeof store[op] === 'function' ? store[op] : null;
-        if (!fn) return null;
+        if (!hasMethod(op)) {
+            await reportMissingMethod(op, input);
+            return null;
+        }
+        const fn = store[op];
         try {
             return await withTimeout(Promise.resolve(fn(input)), op);
         } catch (error) {
@@ -450,8 +554,11 @@ function createCacheStoreRunner(cacheStore, options = {}) {
     };
 
     const write = async (op, input) => {
-        const fn = store && typeof store[op] === 'function' ? store[op] : null;
-        if (!fn) return false;
+        if (!hasMethod(op)) {
+            await reportMissingMethod(op, input);
+            return false;
+        }
+        const fn = store[op];
         try {
             await withTimeout(Promise.resolve(fn(input)), op);
             return true;
@@ -463,10 +570,18 @@ function createCacheStoreRunner(cacheStore, options = {}) {
 
     return {
         enabled: Boolean(store),
+        hasMethod,
         readPageArtifact: (input) => read('readPageArtifact', input),
         upsertPageArtifact: (input) => write('upsertPageArtifact', input),
+        deletePageArtifact: (input) => write('deletePageArtifact', input),
+        deleteProjectPageArtifacts: (input) => write('deleteProjectPageArtifacts', input),
         readProjectArtifact: (input) => read('readProjectArtifact', input),
-        upsertProjectArtifact: (input) => write('upsertProjectArtifact', input)
+        upsertProjectArtifact: (input) => write('upsertProjectArtifact', input),
+        deleteProjectArtifact: (input) => write('deleteProjectArtifact', input),
+        readPluginData: (input) => read('readPluginData', input),
+        writePluginData: (input) => write('writePluginData', input),
+        deletePluginData: (input) => write('deletePluginData', input),
+        listPluginData: (input) => read('listPluginData', input)
     };
 }
 
@@ -743,7 +858,21 @@ async function resolveClassesFromInput({ html, classes }) {
     return valid.sort();
 }
 
-async function compileAndCachePage({ state, config, projectId, pageId, html, classes, bundle = 'full', pluginRunner, cacheStoreRunner, skipHooks = false, source = 'http', request = null }) {
+async function compileAndCachePage({
+    state,
+    config,
+    projectId,
+    pageId,
+    html,
+    classes,
+    bundle = 'full',
+    pluginRunner,
+    cacheStoreRunner,
+    queueStoreWrite,
+    skipHooks = false,
+    source = 'http',
+    request = null
+}) {
     const normalizedBundle = normalizeBundle(bundle);
 
     // Base bundle handling
@@ -778,7 +907,10 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
         }
     }
 
-    if (resolvedClasses.length === 0) {
+    const allowEmptyClassSet =
+        normalizedBundle === 'utilities' ||
+        normalizedBundle === 'theme';
+    if (resolvedClasses.length === 0 && !allowEmptyClassSet) {
         const err = { error: 'No valid classes found.', classes: [], css: '', status: 400 };
         if (!skipHooks && pluginRunner) {
             await pluginRunner.runHook('onError', { error: new Error(err.error), stage: 'compile', source, request, context: { projectId, pageId, bundle: normalizedBundle } });
@@ -814,7 +946,7 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
         existing.updatedAt = now;
         const pageKey = makePageKey(projectId, pageId);
         touchPageKey(state, pageKey);
-        if (existing[bundleKey]) {
+        if (existing[bundleKey] !== null && existing[bundleKey] !== undefined) {
             if (!skipHooks && pluginRunner) {
                 await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: normalizedBundle, source, request });
                 await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css: existing[bundleKey], hash: classHash, cached: true, source, request });
@@ -893,13 +1025,20 @@ async function compileAndCachePage({ state, config, projectId, pageId, html, cla
     // CacheStore write-through
     if (cacheStoreRunner?.enabled && normalizedBundle !== 'base') {
         const writeNow = Date.now();
-        queueMicrotask(() => {
+        const queueWrite = typeof queueStoreWrite === 'function'
+            ? queueStoreWrite
+            : (fn) => {
+                queueMicrotask(() => {
+                    Promise.resolve(fn()).catch(() => {});
+                });
+            };
+        queueWrite(() =>
             cacheStoreRunner.upsertPageArtifact({
                 projectId, pageId, bundle: normalizedBundle,
                 css, hash: classHash, classes: resolvedClasses,
                 cached: false, updatedAt: writeNow, expiresAt: writeNow + config.cacheTtlMs
-            }).catch(() => {});
-        });
+            })
+        );
     }
 
     return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
@@ -922,14 +1061,14 @@ async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full
     page.expiresAt = Date.now() + config.cacheTtlMs;
     touchPageKey(state, makePageKey(projectId, pageId));
     if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
-        if (!page.utilitiesCss || !page.themeCss) {
+        if (page.utilitiesCss === null || page.utilitiesCss === undefined || page.themeCss === null || page.themeCss === undefined) {
             const split = await generateThemeUtilitiesForClasses(Array.from(page.classes || []));
             page.utilitiesCss = split.utilitiesCss;
             page.themeCss = split.themeCss;
         }
         return { css: normalizedBundle === 'utilities' ? page.utilitiesCss : page.themeCss };
     }
-    if (!page.css) {
+    if (page.css === null || page.css === undefined) {
         page.css = await generateCssForClasses(Array.from(page.classes || []));
     }
     return { css: page.css };
@@ -957,7 +1096,7 @@ async function getProjectCss(state, config, projectId, bundle = 'full') {
 
     const classes = Array.from(project.classCounts.keys()).sort();
     const hash = hashClasses(classes);
-    if (cacheEntry && cacheEntry.hash === hash && !isExpired(cacheEntry)) {
+    if (cacheEntry && cacheEntry.hash === hash) {
         cacheEntry.expiresAt = now + config.projectCacheTtlMs;
         return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
     }
@@ -1035,6 +1174,10 @@ const hookStore = new AsyncLocalStorage();
 
 const PLUGIN_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const MAX_PLUGIN_NAME_LENGTH = 64;
+const PLUGIN_STORAGE_KEY_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
+const PLUGIN_STORAGE_KEY_DESC = '[a-zA-Z0-9._:-]{1,128}';
+const PLUGIN_STORAGE_PREFIX_RE = /^[a-zA-Z0-9._:-]{0,128}$/;
+const PLUGIN_STORAGE_PREFIX_DESC = '[a-zA-Z0-9._:-]{0,128}';
 
 function createPluginRunner(plugins = [], options = {}) {
     const defaultTimeoutMs = parseIntWithDefault(
@@ -1042,6 +1185,16 @@ function createPluginRunner(plugins = [], options = {}) {
         200,
         0
     );
+    const pluginContext = options.pluginContext && typeof options.pluginContext === 'object'
+        ? options.pluginContext
+        : null;
+    const buildHookContext = (context) => {
+        if (!pluginContext) return context || {};
+        return {
+            ...pluginContext,
+            ...(context || {})
+        };
+    };
     const list = (Array.isArray(plugins) ? plugins : [plugins])
         .filter(Boolean)
         .map((plugin, index) => {
@@ -1117,6 +1270,7 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runHook = async (hook, context) => {
+        const hookContext = buildHookContext(context);
         for (const plugin of list) {
             if (shouldDefer(plugin, hook)) {
                 const p = plugin;
@@ -1125,19 +1279,20 @@ function createPluginRunner(plugins = [], options = {}) {
                 queueMicrotask(() => {
                     hookStore.run(
                         { inHook: false, deferred: true, compileChainDepth: chainDepth },
-                        () => runSingle(p, hook, context)
+                        () => runSingle(p, hook, hookContext)
                     );
                 });
                 continue;
             }
             await hookStore.run(
                 { inHook: true },
-                () => runSingle(plugin, hook, context)
+                () => runSingle(plugin, hook, hookContext)
             );
         }
     };
 
     const runPipeline = async (hook, context, initialValue) => {
+        const hookContext = buildHookContext(context);
         let value = initialValue;
         for (const plugin of list) {
             if (!plugin.active || plugin.failed) continue;
@@ -1146,7 +1301,7 @@ function createPluginRunner(plugins = [], options = {}) {
             try {
                 const result = await hookStore.run(
                     { inHook: true },
-                    () => withTimeout(Promise.resolve(fn({ ...context, value })), plugin.timeoutMs)
+                    () => withTimeout(Promise.resolve(fn({ ...hookContext, value })), plugin.timeoutMs)
                 );
                 if (result !== undefined) {
                     value = result;
@@ -1154,7 +1309,7 @@ function createPluginRunner(plugins = [], options = {}) {
             } catch (error) {
                 const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
                 await runHook('onError', {
-                    error, hook, plugin: plugin.name, timedOut, context
+                    error, hook, plugin: plugin.name, timedOut, context: hookContext
                 });
             }
         }
@@ -1162,6 +1317,7 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runResolve = async (hook, context, resolveConfig) => {
+        const hookContext = buildHookContext(context);
         for (const plugin of list) {
             if (!plugin.active || plugin.failed) continue;
             const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
@@ -1169,7 +1325,7 @@ function createPluginRunner(plugins = [], options = {}) {
             try {
                 const result = await hookStore.run(
                     { inHook: true },
-                    () => withTimeout(Promise.resolve(fn(context)), plugin.timeoutMs)
+                    () => withTimeout(Promise.resolve(fn(hookContext)), plugin.timeoutMs)
                 );
                 if (result == null) continue;
                 if (typeof result.css !== 'string') continue;
@@ -1184,7 +1340,7 @@ function createPluginRunner(plugins = [], options = {}) {
             } catch (error) {
                 const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
                 await runHook('onError', {
-                    error, hook, plugin: plugin.name, timedOut, context
+                    error, hook, plugin: plugin.name, timedOut, context: hookContext
                 });
             }
         }
@@ -1197,7 +1353,7 @@ function createPluginRunner(plugins = [], options = {}) {
 // =============================================================================
 // HTTP routes
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner) {
+function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}, runtimeHelpers = {}) {
     const withRequestHooks = (req, res, context) => {
         const start = Date.now();
         pluginRunner.runHook('onRequestStart', context);
@@ -1209,20 +1365,29 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner) {
             });
         });
     };
-    const queueStoreWrite = (fn) => {
-        queueMicrotask(() => {
-            Promise.resolve(fn()).catch(() => {});
-        });
-    };
+    const queueStoreWrite = typeof runtimeHelpers.queueStoreWrite === 'function'
+        ? runtimeHelpers.queueStoreWrite
+        : (fn) => {
+            queueMicrotask(() => {
+                Promise.resolve(fn()).catch(() => {});
+            });
+        };
+    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
+        ? roleHelpers.isWriteAllowed
+        : (() => true);
+    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
+        ? roleHelpers.reportWriteBlocked
+        : (async () => {});
 // API Routes
 
 // Compile CSS for a project/page (in-memory cache)
 app.post('/api/compile', async (req, res) => {
     try {
-        const projectId = req.body.projectId ?? req.body.project_id;
-        const pageId = req.body.pageId ?? req.body.page_id ?? 'default';
-        const { html, classes } = req.body;
-        const bundle = normalizeBundle(req.body.bundle ?? req.body.mode);
+        const body = req.body || {};
+        const projectId = body.projectId ?? body.project_id;
+        const pageId = body.pageId ?? body.page_id ?? 'default';
+        const { html, classes } = body;
+        const bundle = normalizeBundle(body.bundle ?? body.mode);
         const hookContext = {
             projectId,
             pageId,
@@ -1232,6 +1397,20 @@ app.post('/api/compile', async (req, res) => {
             request: { ip: getClientIp(req), method: req.method, path: req.path }
         };
         withRequestHooks(req, res, { ...hookContext, action: 'compile' });
+
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('http-compile', {
+                source: 'http',
+                request: hookContext.request,
+                projectId,
+                pageId,
+                bundle
+            });
+            return res.status(409).json({
+                error: 'This replica is read-only. Route compile writes to a writer replica.',
+                code: READ_ONLY_ERROR_CODE
+            });
+        }
 
         if (!projectId) {
             return res.status(400).json({ error: 'projectId is required.' });
@@ -1259,6 +1438,7 @@ app.post('/api/compile', async (req, res) => {
         const result = await compileAndCachePage({
             state, config, projectId, pageId, html, classes, bundle,
             pluginRunner, cacheStoreRunner,
+            queueStoreWrite,
             skipHooks: false, source: 'http', request: hookContext.request
         });
         if (result.error) {
@@ -1309,8 +1489,57 @@ app.get('/api/css', async (req, res) => {
             });
         }
 
-        const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
-        if (!cached) {
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+
+        if (readerStoreFirst) {
+            const storeArtifact = await readPageArtifactFromStore(
+                cacheStoreRunner,
+                config,
+                projectId,
+                pageId,
+                bundle
+            );
+            if (storeArtifact) {
+                hydratePageFromArtifact(
+                    state,
+                    config,
+                    projectId,
+                    pageId,
+                    bundle,
+                    storeArtifact
+                );
+                await pluginRunner.runHook('onCacheHit', {
+                    projectId,
+                    pageId,
+                    bundle,
+                    source: 'page-store',
+                    request: hookContext.request
+                });
+                return res.type('text/css').send(storeArtifact.css);
+            }
+            await pluginRunner.runHook('onCacheMiss', {
+                projectId,
+                pageId,
+                bundle,
+                source: 'page-store',
+                request: hookContext.request
+            });
+        } else {
+            const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
+            if (cached) {
+                await pluginRunner.runHook('onCacheHit', {
+                    projectId,
+                    pageId,
+                    bundle,
+                    source: 'page',
+                    request: hookContext.request
+                });
+                return res.type('text/css').send(cached.css);
+            }
+
             const storeArtifact = await readPageArtifactFromStore(
                 cacheStoreRunner,
                 config,
@@ -1343,26 +1572,17 @@ app.get('/api/css', async (req, res) => {
                 source: 'page',
                 request: hookContext.request
             });
-
-            // Resolve hook: let plugins provide CSS on cache miss
-            const resolved = await pluginRunner.runResolve('resolvePageCss', {
-                projectId, pageId, bundle, source: 'http', request: hookContext.request
-            }, config);
-            if (resolved) {
-                return res.type('text/css').send(resolved.css);
-            }
-
-            return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
         }
 
-        await pluginRunner.runHook('onCacheHit', {
-            projectId,
-            pageId,
-            bundle,
-            source: 'page',
-            request: hookContext.request
-        });
-        res.type('text/css').send(cached.css);
+        // Resolve hook: let plugins provide CSS on cache miss
+        const resolved = await pluginRunner.runResolve('resolvePageCss', {
+            projectId, pageId, bundle, source: 'http', request: hookContext.request
+        }, config);
+        if (resolved) {
+            return res.type('text/css').send(resolved.css);
+        }
+
+        return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
     } catch (err) {
         await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: hookContext.request });
         res.status(500).json({ error: err.message });
@@ -1385,8 +1605,13 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
                 error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
             });
         }
-        let result = await getProjectCss(state, config, projectId, bundle);
-        if (!result && bundle !== 'base') {
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+        let result = null;
+
+        if (readerStoreFirst) {
             const storeArtifact = await readProjectArtifactFromStore(
                 cacheStoreRunner,
                 config,
@@ -1401,6 +1626,24 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
                     source: 'store'
                 };
             }
+        } else {
+            result = await getProjectCss(state, config, projectId, bundle);
+            if (!result && bundle !== 'base') {
+                const storeArtifact = await readProjectArtifactFromStore(
+                    cacheStoreRunner,
+                    config,
+                    projectId,
+                    bundle
+                );
+                if (storeArtifact) {
+                    result = {
+                        css: storeArtifact.css,
+                        hash: storeArtifact.hash ?? null,
+                        cached: true,
+                        source: 'store'
+                    };
+                }
+            }
         }
         if (!result) {
             // Resolve hook: let plugins provide project CSS on cache miss
@@ -1413,7 +1656,12 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             return res.status(404).json({ error: 'Project not found in cache.' });
         }
 
-        if (cacheStoreRunner?.enabled && bundle !== 'base' && result.source !== 'store') {
+        if (
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base' &&
+            result.source !== 'store' &&
+            isWriteAllowed()
+        ) {
             const now = Date.now();
             queueStoreWrite(() =>
                 cacheStoreRunner.upsertProjectArtifact({
@@ -1447,11 +1695,12 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
 // Suggest Tailwind classes based on cached project data and/or input
 app.post('/api/suggest', async (req, res) => {
     try {
-        const projectId = req.body.projectId ?? req.body.project_id ?? null;
-        const prefix = typeof req.body.prefix === 'string' ? req.body.prefix.trim() : '';
-        const limitRaw = req.body.limit ?? req.body.max ?? req.body.count;
+        const body = req.body || {};
+        const projectId = body.projectId ?? body.project_id ?? null;
+        const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
+        const limitRaw = body.limit ?? body.max ?? body.count;
         const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
-        const includeInput = normalizeClassList(req.body.classes);
+        const includeInput = normalizeClassList(body.classes);
         const hookContext = {
             projectId,
             prefix,
@@ -1501,7 +1750,7 @@ app.post('/api/suggest', async (req, res) => {
         await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions, source: 'http' });
         return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: hookContext.request });
+        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
         res.status(500).json({ error: err.message });
     }
 });
@@ -1611,7 +1860,21 @@ function withTimeoutGeneric(promise, timeoutMs, label = 'Operation') {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function mountPluginRoutes(app, pluginList, pluginContext, globalSetupTimeoutMs) {
+async function mountPluginRoutes(
+    app,
+    pluginList,
+    pluginContext,
+    cacheStoreRunner,
+    globalSetupTimeoutMs,
+    roleHelpers = {}
+) {
+    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
+        ? roleHelpers.isWriteAllowed
+        : (() => true);
+    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
+        ? roleHelpers.reportWriteBlocked
+        : (async () => {});
+
     for (const plugin of pluginList) {
         if (typeof plugin.instance.setup !== 'function') {
             plugin.active = true;
@@ -1636,10 +1899,79 @@ async function mountPluginRoutes(app, pluginList, pluginContext, globalSetupTime
             router[m](routePath, handler);
         };
 
+        const storage = Object.freeze({
+            async get(key) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                return cacheStoreRunner.readPluginData({
+                    pluginName: plugin.routeName,
+                    key
+                });
+            },
+            async set(key, value) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                if (!isWriteAllowed()) {
+                    await reportWriteBlocked('plugin-storage-set', {
+                        source: 'plugin',
+                        pluginName: plugin.name,
+                        key
+                    });
+                    return false;
+                }
+                return cacheStoreRunner.writePluginData({
+                    pluginName: plugin.routeName,
+                    key,
+                    value
+                });
+            },
+            async delete(key) {
+                if (typeof key !== 'string' || !PLUGIN_STORAGE_KEY_RE.test(key)) {
+                    throw new Error(`Invalid storage key "${key}". Must match ${PLUGIN_STORAGE_KEY_DESC}.`);
+                }
+                if (!isWriteAllowed()) {
+                    await reportWriteBlocked('plugin-storage-delete', {
+                        source: 'plugin',
+                        pluginName: plugin.name,
+                        key
+                    });
+                    return false;
+                }
+                return cacheStoreRunner.deletePluginData({
+                    pluginName: plugin.routeName,
+                    key
+                });
+            },
+            async list(prefix = '') {
+                const normalizedPrefix = prefix == null ? '' : prefix;
+                if (typeof normalizedPrefix !== 'string' || !PLUGIN_STORAGE_PREFIX_RE.test(normalizedPrefix)) {
+                    throw new Error(`Invalid storage prefix "${prefix}". Must match ${PLUGIN_STORAGE_PREFIX_DESC}.`);
+                }
+                const result = await cacheStoreRunner.listPluginData({
+                    pluginName: plugin.routeName,
+                    prefix: normalizedPrefix
+                });
+                if (!Array.isArray(result)) return [];
+                const seen = new Set();
+                const filtered = [];
+                for (const key of result) {
+                    if (typeof key !== 'string') continue;
+                    if (!PLUGIN_STORAGE_KEY_RE.test(key)) continue;
+                    if (normalizedPrefix && !key.startsWith(normalizedPrefix)) continue;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    filtered.push(key);
+                }
+                return filtered;
+            }
+        });
+
         try {
             const perPluginTimeout = plugin.instance.setupTimeoutMs ?? globalSetupTimeoutMs;
             await withTimeoutGeneric(
-                Promise.resolve(plugin.instance.setup({ ...pluginContext, addRoute })),
+                Promise.resolve(plugin.instance.setup({ ...pluginContext, addRoute, storage })),
                 perPluginTimeout,
                 `Plugin "${plugin.name}" setup`
             );
@@ -1668,6 +2000,8 @@ export async function createCore({
     const chainDepthLimit = Math.max(1, parseIntWithDefault(maxPluginCompileChainDepth, 2, 1));
     const config = buildConfig(configOverrides);
     const state = createCacheState();
+    const storeWriteQueue = createAsyncTaskQueue();
+    const queueStoreWrite = (fn) => storeWriteQueue.queue(fn);
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
@@ -1680,32 +2014,170 @@ export async function createCore({
         next();
     });
 
+    app.use((req, res, next) => {
+        const resolvedOrigin = resolveCorsOrigin(config.corsOrigin, req.headers.origin);
+        const corsEnabled = Boolean(config.corsOrigin);
+
+        if (resolvedOrigin) {
+            res.setHeader('Access-Control-Allow-Origin', resolvedOrigin);
+            if (resolvedOrigin !== '*') {
+                res.setHeader(
+                    'Vary',
+                    appendVaryHeader(res.getHeader('Vary'), 'Origin')
+                );
+            }
+            res.setHeader(
+                'Access-Control-Allow-Methods',
+                'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+            );
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+            res.setHeader('Access-Control-Max-Age', '86400');
+        }
+
+        if (req.method === 'OPTIONS' && corsEnabled) {
+            if (req.headers.origin && !resolvedOrigin) {
+                return res.status(403).json({ error: 'CORS origin not allowed.' });
+            }
+            return res.status(204).end();
+        }
+
+        return next();
+    });
+
     app.use(express.json({ limit: config.maxBodyBytes }));
     const rateLimiter = createRateLimiter(config);
     app.use(rateLimiter.middleware);
 
     const pluginContext = buildPluginContext(state, config);
-    const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs });
+    const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs, pluginContext });
     const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
     });
+    const persistedBundles = ['full', 'utilities', 'theme'];
+    const readOnlyWriteMessage = 'This replica is read-only. Route writes to a writer replica.';
+    const isWriteAllowed = () => config.nodeRole !== 'reader';
+    const reportWriteBlocked = async (action, context = {}) => {
+        await pluginRunner.runHook('onError', {
+            error: createReadOnlyError(action),
+            stage: 'replica-role',
+            code: READ_ONLY_ERROR_CODE,
+            source: context.source ?? 'core',
+            request: context.request ?? null,
+            context: {
+                ...context,
+                nodeRole: config.nodeRole,
+                action
+            }
+        });
+    };
+    const reportWriteBlockedAsync = (action, context = {}) => {
+        queueMicrotask(() => {
+            reportWriteBlocked(action, context).catch(() => {});
+        });
+    };
 
     // Wire mutation functions onto pluginContext
+    const evictProjectLocal = (projectId) => {
+        const project = state.projects.get(projectId);
+        if (!project) return [];
+        const pageIds = Array.from(project.pages.keys());
+        for (const pageId of pageIds) {
+            evictPageByKey(state, makePageKey(projectId, pageId));
+        }
+        state.projects.delete(projectId);
+        return pageIds;
+    };
+
+    const purgePageArtifactsFromStore = async (projectId, pageId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        const results = await Promise.all(
+            persistedBundles.map((bundle) =>
+                cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle })
+            )
+        );
+        return results.every(Boolean);
+    };
+
+    const purgeProjectArtifactsFromStore = async (projectId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        const results = await Promise.all(
+            persistedBundles.map((bundle) =>
+                cacheStoreRunner.deleteProjectArtifact({ projectId, bundle })
+            )
+        );
+        return results.every(Boolean);
+    };
+
+    const purgeProjectPagesFromStore = async (projectId) => {
+        if (!cacheStoreRunner?.enabled) return true;
+        return cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
+    };
+
     pluginContext.evictPage = (projectId, pageId) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-evict-page', { source: 'plugin', projectId, pageId });
+            return;
+        }
         evictPageByKey(state, makePageKey(projectId, pageId));
     };
 
     pluginContext.evictProject = (projectId) => {
-        const project = state.projects.get(projectId);
-        if (!project) return;
-        for (const pageId of Array.from(project.pages.keys())) {
-            evictPageByKey(state, makePageKey(projectId, pageId));
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-evict-project', { source: 'plugin', projectId });
+            return;
         }
-        state.projects.delete(projectId);
+        evictProjectLocal(projectId);
+    };
+
+    pluginContext.purgePage = async (projectId, pageId) => {
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-purge-page', { source: 'plugin', projectId, pageId });
+            return false;
+        }
+        if (!isValidId(projectId, config) || !isValidId(pageId, config)) return false;
+        evictPageByKey(state, makePageKey(projectId, pageId));
+        return purgePageArtifactsFromStore(projectId, pageId);
+    };
+
+    pluginContext.purgeProject = async (projectId) => {
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-purge-project', { source: 'plugin', projectId });
+            return false;
+        }
+        if (!isValidId(projectId, config)) return false;
+        const pageIds = evictProjectLocal(projectId);
+        let pageResult = true;
+        if (pageIds.length > 0) {
+            const pageResults = await Promise.all(
+                pageIds.map((pageId) => purgePageArtifactsFromStore(projectId, pageId))
+            );
+            pageResult = pageResults.every(Boolean);
+        }
+
+        const hasBulkProjectPageDelete = cacheStoreRunner?.hasMethod?.('deleteProjectPageArtifacts');
+        if (cacheStoreRunner?.enabled && (hasBulkProjectPageDelete || pageIds.length === 0)) {
+            const bulkResult = await purgeProjectPagesFromStore(projectId);
+            pageResult = pageResult && bulkResult;
+        }
+
+        const projectResult = await purgeProjectArtifactsFromStore(projectId);
+        return pageResult && projectResult;
     };
 
     pluginContext.compile = async (input) => {
+        const blockedProjectId = input?.projectId ?? null;
+        const blockedPageId = input?.pageId ?? null;
+        const blockedBundle = normalizeBundle(input?.bundle);
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked('plugin-compile', {
+                source: 'plugin',
+                projectId: blockedProjectId,
+                pageId: blockedPageId,
+                bundle: blockedBundle
+            });
+            return { error: readOnlyWriteMessage, status: 409, code: READ_ONLY_ERROR_CODE };
+        }
         const { projectId, pageId, html, classes, bundle } = input || {};
         if (!projectId || !isValidId(projectId, config)) return { error: 'Invalid projectId.', status: 400 };
         if (!pageId || !isValidId(pageId, config)) return { error: 'Invalid pageId.', status: 400 };
@@ -1732,6 +2204,7 @@ export async function createCore({
             () => compileAndCachePage({
                 state, config, projectId, pageId, html, classes, bundle,
                 pluginRunner, cacheStoreRunner,
+                queueStoreWrite,
                 skipHooks,
                 source: 'plugin',
                 request: null
@@ -1740,6 +2213,15 @@ export async function createCore({
     };
 
     pluginContext.hydratePageArtifact = (input) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-hydrate-page-artifact', {
+                source: 'plugin',
+                projectId: input?.projectId ?? null,
+                pageId: input?.pageId ?? null,
+                bundle: normalizeBundle(input?.bundle)
+            });
+            return false;
+        }
         const { projectId, pageId, bundle, ...rest } = input || {};
         if (!projectId || !isValidId(projectId, config)) return false;
         if (!pageId || !isValidId(pageId, config)) return false;
@@ -1749,6 +2231,14 @@ export async function createCore({
     };
 
     pluginContext.hydrateProjectArtifact = (input) => {
+        if (!isWriteAllowed()) {
+            reportWriteBlockedAsync('plugin-hydrate-project-artifact', {
+                source: 'plugin',
+                projectId: input?.projectId ?? null,
+                bundle: normalizeBundle(input?.bundle)
+            });
+            return false;
+        }
         const { projectId, bundle, ...rest } = input || {};
         if (!projectId || !isValidId(projectId, config)) return false;
         const project = state.projects.get(projectId);
@@ -1771,14 +2261,30 @@ export async function createCore({
     Object.freeze(pluginContext);
 
     const defaultSetupTimeout = Math.max((pluginTimeoutMs ?? 200) * 5, 1000);
-    await mountPluginRoutes(app, pluginRunner.list, pluginContext, setupTimeoutMs ?? defaultSetupTimeout);
+    await mountPluginRoutes(
+        app,
+        pluginRunner.list,
+        pluginContext,
+        cacheStoreRunner,
+        setupTimeoutMs ?? defaultSetupTimeout,
+        { isWriteAllowed, reportWriteBlocked }
+    );
 
-    registerRoutes(app, pluginRunner, config, state, cacheStoreRunner);
+    registerRoutes(
+        app,
+        pluginRunner,
+        config,
+        state,
+        cacheStoreRunner,
+        { isWriteAllowed, reportWriteBlocked },
+        { queueStoreWrite }
+    );
 
     let closePromise = null;
     const close = () => {
         if (closePromise) return closePromise;
         closePromise = (async () => {
+            await storeWriteQueue.drain();
             for (const plugin of [...pluginRunner.list].reverse()) {
                 if (typeof plugin.instance.teardown === 'function') {
                     try {
@@ -1790,6 +2296,7 @@ export async function createCore({
                     } catch { /* teardown errors are silent */ }
                 }
             }
+            await storeWriteQueue.drain();
         })();
         return closePromise;
     };

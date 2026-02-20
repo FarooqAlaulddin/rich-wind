@@ -4,11 +4,20 @@
   "description": "A stateless Tailwind CSS runtime service for compiling CSS from HTML and class lists",
   "type": "module",
   "main": "./services/index.js",
+  "types": "./services/index.d.ts",
   "exports": {
-    ".": "./services/index.js"
+    ".": {
+      "types": "./services/index.d.ts",
+      "import": "./services/index.js",
+      "default": "./services/index.js"
+    }
   },
   "files": [
     "services/"
+  ],
+  "workspaces": [
+    "demo",
+    "lexical-demo"
   ],
   "engines": {
     "node": ">=20"
@@ -16,9 +25,15 @@
   "scripts": {
     "start": "node ./services/index.js",
     "dev": "node --watch ./services/index.js",
+    "dev:demo": "node --watch ./scripts/dev-server.js",
+    "dev:ui": "npm run dev --workspace=demo",
     "prod": "node ./services/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "node ./scripts/clean-package.js clean",
+    "postpack": "node ./scripts/clean-package.js restore",
+    "test:pack": "node ./scripts/pack-smoke.js",
+    "test:load": "node ./scripts/load-single-writer.js"
   },
   "keywords": [
     "tailwindcss",

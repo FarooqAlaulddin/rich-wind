@@ -25,7 +25,7 @@ Plugins have an optional `setup()` and `teardown()` lifecycle.
 
 ### setup(context)
 
-Called once during `createCore()`, before routes are registered. Receives the full [plugin context](#plugin-context) including query functions, mutation functions, and `addRoute()` for registering custom HTTP routes. Can be async.
+Called once during `createCore()`, before routes are registered. Receives the full [plugin context](#plugin-context) including query functions, mutation functions, plugin storage, and `addRoute()` for registering custom HTTP routes. Can be async.
 
 ```js
 const dashboard = {
@@ -68,7 +68,7 @@ await close();                                         // 2. teardown plugins
 
 ## Plugin Context
 
-Every plugin's `setup()` receives a context object with query functions, mutation functions, and `addRoute()`. The same query and mutation functions are also available in hook contexts.
+Every plugin's `setup()` receives a context object with query functions, mutation functions, plugin storage, and `addRoute()`. The same query and mutation functions are also available in hook contexts. Storage is setup-scoped (not injected into hook context objects), so plugins should keep a local reference if hooks or teardown need it.
 
 ### Query Functions (read-only)
 
@@ -93,15 +93,67 @@ All query functions return copies or frozen snapshots — never live references.
 | --- | --- |
 | `evictPage(projectId, pageId)` | Remove a page from cache (updates class counts, LRU, project aggregates) |
 | `evictProject(projectId)` | Remove an entire project and all its pages |
+| `purgePage(projectId, pageId)` | Evict a page from memory and delete persisted page artifacts (`full`/`utilities`/`theme`) via `cacheStore` |
+| `purgeProject(projectId)` | Evict a project from memory and delete persisted project artifacts plus page artifacts via `cacheStore` |
 | `compile({ projectId, pageId, html?, classes?, bundle? })` | Compile and cache a page programmatically |
 | `hydratePageArtifact({ projectId, pageId, bundle, css, classes?, ... })` | Inject a pre-built artifact into cache without compilation |
 | `hydrateProjectArtifact({ projectId, bundle, css, hash?, ... })` | Inject a pre-built project aggregate into cache |
 
-**`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it automatically skips hooks to prevent infinite recursion (reentrancy guard).
+**`evictPage()` / `evictProject()` are memory-only.** They intentionally do not mutate remote persistence.
+
+**`purgePage()` / `purgeProject()` remove from memory and then try to remove from `cacheStore`.** For full shared cleanup, implement `deletePageArtifact` and `deleteProjectArtifact`. For project purges on cold replicas (no local page list), also implement `deleteProjectPageArtifacts`.
+
+**`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it skips hook execution to avoid recursive loops.
+
+When `nodeRole` is `reader`, mutation helpers are blocked:
+- `compile()` returns `{ error, status: 409, code: "READ_ONLY_REPLICA" }`
+- `purge*` and `hydrate*` return `false`
+- `evict*` are no-ops
 
 **`hydratePageArtifact()`** is useful for fast restart from persistence — a plugin reads artifacts from Redis/DB in `setup()` and populates the cache without recompilation. Returns `true` if hydrated, `false` if rejected. New pages require `classes`; existing pages can update CSS only.
 
 **`hydrateProjectArtifact()`** injects project-level aggregate CSS. The project must already exist (hydrate pages first). Returns `true` if hydrated, `false` if rejected.
+
+### Plugin Storage
+
+`setup()` also receives `storage`, a plugin-scoped key/value API backed by `cacheStore` when available.
+
+| Function | Returns | Effect |
+| --- | --- | --- |
+| `storage.get(key)` | `value` or `null` | Read a plugin-owned key |
+| `storage.set(key, value)` | `true` or `false` | Write a plugin-owned key |
+| `storage.delete(key)` | `true` or `false` | Delete a plugin-owned key |
+| `storage.list(prefix?)` | `string[]` | List plugin-owned keys (optionally filtered by prefix) |
+
+- Keys must match `[a-zA-Z0-9._:-]{1,128}`
+- `list(prefix)` prefixes must match `[a-zA-Z0-9._:-]{0,128}`
+- Namespacing is automatic per plugin route name (lowercased plugin name)
+- Storage methods are always available (even without `cacheStore`) and fail open: `get` returns `null`, `set/delete` return `false`, `list` returns `[]`
+- Adapters are responsible for value serialization; JSON-serializable values are recommended for portability
+- On `nodeRole: "reader"`, `storage.set/delete` are blocked. They return `false` and trigger `onError` with `stage: "replica-role"` and code `READ_ONLY_REPLICA`.
+
+```js
+function createAnalyticsPlugin() {
+  let storage;
+  let metrics = { compileCount: 0 };
+
+  return {
+    name: "analytics",
+    async setup(ctx) {
+      storage = ctx.storage;
+      const saved = await storage.get("metrics_v1");
+      if (saved && typeof saved === "object") metrics = saved;
+    },
+    onCompileResult() {
+      metrics.compileCount += 1;
+      storage.set("metrics_v1", metrics); // fail-open fire-and-forget is fine
+    },
+    async teardown() {
+      await storage.set("metrics_v1", metrics);
+    }
+  };
+}
+```
 
 ### Route Registration
 
@@ -324,3 +376,30 @@ const metrics = {
   }
 };
 ```
+
+## Example: Auto-Promote (Real-World Demo)
+
+The auto-promote plugin tracks which CSS classes appear across pages. When a class is used on enough pages (default: 5), it's "promoted" to a shared stylesheet — reducing per-page CSS duplication. This demo exercises nearly every plugin capability: `setup` seeding, `transformClasses` pipeline, deferred `onCompileResult`, custom routes, and `ctx.compile()`.
+
+```js
+import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote.js";
+
+const { app, close } = await createCore({
+  plugins: [createAutoPromotePlugin({ threshold: 5 })],
+  maxPluginCompileChainDepth: 3
+});
+
+app.listen(3001);
+// GET /plugins/auto-promote/css/:projectId  → promoted CSS bundle
+// GET /plugins/auto-promote/stats            → usage statistics
+```
+
+**How it works:**
+
+1. **`setup()`** seeds tracking state from any pages already in cache, and registers two custom routes (promoted CSS bundle, usage stats).
+2. **`transformClasses`** runs on every compile. It records which classes appear on which pages (before stripping), then removes promoted classes from the output so per-page CSS only contains unique utilities. If *all* classes would be stripped, it returns `undefined` to keep the original list (avoiding a 400 error).
+3. **`onCompileResult`** (deferred) recalculates the promoted set after each compile. When the set changes, it calls `ctx.compile()` to pre-generate CSS for a synthetic `__auto_promote__` page, caching the result for the custom route.
+
+The plugin uses `deferHooks: ["onCompileResult"]` so the promoted-CSS regeneration happens asynchronously and doesn't slow down the HTTP response. The synthetic `__auto_promote__` page ID is excluded from stripping logic, so the promoted CSS compile always receives the full class list.
+
+See `plugins/auto-promote.js` for the full implementation and `tests/auto-promote.test.js` for test coverage.

@@ -1,8 +1,13 @@
 .DS_Store
 /node_modules/
-/ui/node_modules/
-/ui/public/docs/
+/demo/node_modules/
+/demo/dist/
+/lexical-demo/node_modules/
+/lexical-demo/dist/
+/demo/public/docs/
 
 # React Router
 /.react-router/
 /build/
+package.json.bak
+*.tgz
