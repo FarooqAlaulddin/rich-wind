@@ -31,6 +31,22 @@ body {
   font-weight: 600;
 }
 
+.reset-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-btn:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
 /* Split layout */
 .split-layout {
   display: flex;
@@ -69,6 +85,94 @@ body {
   background: #fff;
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
+}
+
+.page-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid #e2e8f0;
+}
+
+.page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 2px 2px 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.page-tab:hover {
+  background: #f1f5f9;
+}
+
+.page-tab.active {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.page-tab-label {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.page-tab.active .page-tab-label {
+  color: #1e40af;
+  font-weight: 600;
+}
+
+.page-tab-delete {
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  border: none;
+  background: none;
+  color: #cbd5e1;
+  cursor: pointer;
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.page-tab:hover .page-tab-delete {
+  opacity: 1;
+}
+
+.page-tab-delete:hover {
+  color: #ef4444;
+  background: #fef2f2;
+}
+
+.page-tab-add {
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+  background: none;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.page-tab-add:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #eff6ff;
 }
 
 .format-bar select {
@@ -181,6 +285,17 @@ body {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+@keyframes sizeBump {
+  0% { transform: scale(1); color: #64748b; }
+  30% { transform: scale(1.15); color: #3b82f6; }
+  100% { transform: scale(1); color: #64748b; }
+}
+
+.size-bump {
+  animation: sizeBump 0.4s ease-out;
+  display: inline-block;
 }
 
 /* Class chips */
@@ -328,4 +443,156 @@ body {
 
 .autocomplete-dropdown li.active:hover {
   background: #3b82f6;
+}
+
+.bundle-section {
+  border-top: 1px solid #e2e8f0;
+}
+
+.bundle-sizes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bundle-row {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.bundle-row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.bundle-row-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bundle-chevron {
+  font-size: 11px;
+  color: #94a3b8;
+  width: 12px;
+  text-align: center;
+}
+
+.bundle-css-preview {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  margin: 0 6px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.bundle-row.bundle-active {
+  border-color: #bfdbfe;
+  background: #f0f7ff;
+}
+
+.bundle-row.bundle-active .bundle-name {
+  color: #1e40af;
+  font-weight: 500;
+}
+
+.bundle-row.bundle-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.bundle-name {
+  color: #334155;
+}
+
+.bundle-size {
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.export-section {
+  border-top: 1px solid #e2e8f0;
+}
+
+.export-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.export-chevron {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.export-content {
+  margin-top: 12px;
+}
+
+.export-code {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 12px;
+  border-radius: 6px;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.export-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.export-btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.export-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
 }

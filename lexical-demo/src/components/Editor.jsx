@@ -75,12 +75,22 @@ function EditorBridge({ onEditor }) {
   return null;
 }
 
-export default function Editor({ onContentChange, onEditor }) {
+export default function Editor({
+  onContentChange,
+  onEditor,
+  initialEditorState,
+  pages,
+  pageOrder,
+  activePage,
+  onPageSwitch,
+  onAddPage,
+  onDeletePage,
+}) {
   const initialConfig = {
     namespace: 'RichWindLexical',
     theme: EDITOR_THEME,
     onError,
-    editorState: createSampleContent(),
+    editorState: initialEditorState || createSampleContent(),
     nodes: [
       StyledParagraphNode,
       StyledHeadingNode,
@@ -99,7 +109,14 @@ export default function Editor({ onContentChange, onEditor }) {
   return (
     <div className="editor-container">
       <LexicalComposer initialConfig={initialConfig}>
-        <FormatBarPlugin />
+        <FormatBarPlugin
+          pages={pages}
+          pageOrder={pageOrder}
+          activePage={activePage}
+          onPageSwitch={onPageSwitch}
+          onAddPage={onAddPage}
+          onDeletePage={onDeletePage}
+        />
         <div className="editor-scroller">
           <RichTextPlugin
             contentEditable={<ContentEditable className="editor-input" />}

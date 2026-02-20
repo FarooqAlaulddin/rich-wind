@@ -15,7 +15,7 @@ const BLOCK_FORMATS = [
   { value: 'h6', label: 'Heading 6' },
 ];
 
-export default function FormatBarPlugin() {
+export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSwitch, onAddPage, onDeletePage }) {
   const [editor] = useLexicalComposerContext();
   const [blockType, setBlockType] = useState('paragraph');
 
@@ -48,8 +48,35 @@ export default function FormatBarPlugin() {
     });
   }, [editor]);
 
+  const canDelete = pageOrder && pageOrder.length > 1;
+
   return (
     <div className="format-bar">
+      {pages && pageOrder && (
+        <div className="page-tabs">
+          {pageOrder.map(id => {
+            const page = pages[id];
+            if (!page) return null;
+            return (
+              <div key={id} className={`page-tab${id === activePage ? ' active' : ''}`}>
+                <button className="page-tab-label" onClick={() => onPageSwitch(id)}>
+                  {page.label}
+                </button>
+                {canDelete && (
+                  <button
+                    className="page-tab-delete"
+                    onClick={(e) => { e.stopPropagation(); onDeletePage(id); }}
+                    title={`Delete ${page.label}`}
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <button className="page-tab-add" onClick={onAddPage} title="Add page">+</button>
+        </div>
+      )}
       <select value={blockType} onChange={handleBlockFormat}>
         {BLOCK_FORMATS.map(f => (
           <option key={f.value} value={f.value}>{f.label}</option>

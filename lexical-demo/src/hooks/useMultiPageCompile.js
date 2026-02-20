@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { compile as apiCompile } from '../api';
+import { compile as apiCompile, getPageCss, getProjectCss } from '../api';
 
 const PROJECT_ID = 'lexical-demo';
 const STORAGE_KEY = 'rw-lexical-demo-v2';
@@ -116,6 +116,7 @@ export function useMultiPageCompile() {
   const pagesRef = useRef(pages);
   const activePageRef = useRef(activePage);
   const pageOrderRef = useRef(pageOrder);
+  const suppressPersistRef = useRef(false);
   pagesRef.current = pages;
   activePageRef.current = activePage;
   pageOrderRef.current = pageOrder;
@@ -134,7 +135,10 @@ export function useMultiPageCompile() {
   const initialEditorState = useRef(
     initialPages[initialActivePage]?.editorStateJSON
       ? JSON.stringify(initialPages[initialActivePage].editorStateJSON)
-      : null
+      : JSON.stringify(
+        DEFAULT_CONTENT[initialActivePage] ||
+        makeEditorState([para('', [textNode('Start typing...')])])
+      )
   ).current;
 
   const setEditor = useCallback((editor) => {
@@ -144,6 +148,7 @@ export function useMultiPageCompile() {
   // Save editor state to localStorage before unload
   useEffect(() => {
     const handleBeforeUnload = () => {
+      if (suppressPersistRef.current) return;
       const editor = editorRef.current;
       if (!editor) return;
       const currentState = editor.getEditorState().toJSON();
@@ -160,6 +165,7 @@ export function useMultiPageCompile() {
 
   // Persist to localStorage on changes
   useEffect(() => {
+    if (suppressPersistRef.current) return;
     debouncedSave(pages, activePage, pageOrder);
   }, [pages, activePage, pageOrder]);
 
@@ -178,18 +184,24 @@ export function useMultiPageCompile() {
       [page]: { ...prev[page], html: newHtml, classes, editorStateJSON },
     }));
 
-    if (!classes || classes.length === 0) {
-      setFullCss('');
-      setCached(false);
-      setPages(prev => ({
-        ...prev,
-        [page]: { ...prev[page], cssSize: 0 },
-      }));
-      return;
-    }
-
     setLoading(true);
     try {
+      if (!classes || classes.length === 0) {
+        // Keep base + theme applied even when a page has no utility classes.
+        const [baseData, themeData] = await Promise.all([
+          getPageCss({ projectId: PROJECT_ID, pageId: page, bundle: 'base' }),
+          getProjectCss({ projectId: PROJECT_ID, bundle: 'theme' }),
+        ]);
+        const css = [baseData.css || '', themeData.css || ''].filter(Boolean).join('\n\n');
+        setFullCss(css);
+        setCached(Boolean(baseData.cached) && Boolean(themeData.cached));
+        setPages(prev => ({
+          ...prev,
+          [page]: { ...prev[page], cssSize: css.length },
+        }));
+        return;
+      }
+
       const fullData = await apiCompile({
         projectId: PROJECT_ID,
         pageId: page,
@@ -316,6 +328,11 @@ export function useMultiPageCompile() {
   }, [activePage, pageOrder, pages]);
 
   const resetDemo = useCallback(() => {
+    suppressPersistRef.current = true;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem('rw-lexical-demo'); // clear old key too
     window.location.reload();

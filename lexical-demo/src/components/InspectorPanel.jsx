@@ -62,14 +62,22 @@ function BundleRow({ name, bytes, cssText, className }) {
   );
 }
 
-function buildExportHtml(html, projectId, activePage) {
-  const cssHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=full`;
+function buildExportHtml(html, projectId, activePage, hasPageClasses) {
+  const baseHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
+  const themeHref = `/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
+  const fullHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=full`;
+  const cssLinks = hasPageClasses
+    ? [`<link rel="stylesheet" href="${fullHref}">`]
+    : [
+      `<link rel="stylesheet" href="${baseHref}">`,
+      `<link rel="stylesheet" href="${themeHref}">`,
+    ];
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="${cssHref}">
+  ${cssLinks.join('\n  ')}
 </head>
 <body>
 ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
@@ -221,7 +229,8 @@ export default function InspectorPanel({ editor, html, css, loading, cached, pro
 
   // Compute total from all pages
   const total = (pageOrder || []).reduce((sum, id) => sum + (pages?.[id]?.cssSize || 0), 0);
-  const exportHtml = buildExportHtml(html, projectId, activePage);
+  const hasPageClasses = Boolean(pages?.[activePage]?.classes?.length);
+  const exportHtml = buildExportHtml(html, projectId, activePage, hasPageClasses);
 
   return (
     <div className="inspector-panel">
