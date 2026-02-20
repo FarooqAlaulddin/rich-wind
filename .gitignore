@@ -2,8 +2,12 @@
 /node_modules/
 /demo/node_modules/
 /demo/dist/
+/lexical-demo/node_modules/
+/lexical-demo/dist/
 /demo/public/docs/
 
 # React Router
 /.react-router/
 /build/
+package.json.bak
+*.tgz
