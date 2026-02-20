@@ -40,7 +40,7 @@ services:
     env: node
     plan: free
     rootDir: .
-    buildCommand: npm ci --include=dev && npm run build --workspace=demo
+    buildCommand: npm ci --include=dev && npm run build --workspace=demo && npm run build --workspace=lexical-demo && cp -r lexical-demo/dist demo/dist/lexical-demo
     startCommand: npm run preview --workspace=demo -- --host 0.0.0.0 --port $PORT
     autoDeploy: false
     envVars:

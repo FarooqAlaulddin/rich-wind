@@ -6,6 +6,7 @@ const coreOrigin = `http://localhost:${corePort}`;
 
 export default defineConfig({
   plugins: [react()],
+  base: '/lexical-demo/',
   root: '.',
   build: {
     outDir: 'dist',

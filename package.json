@@ -16,7 +16,8 @@
     "services/"
   ],
   "workspaces": [
-    "demo"
+    "demo",
+    "lexical-demo"
   ],
   "engines": {
     "node": ">=20"

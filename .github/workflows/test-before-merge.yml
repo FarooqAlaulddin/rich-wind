@@ -47,3 +47,6 @@ jobs:
 
       - name: Build demo production bundle
         run: npm run build --workspace=demo
+
+      - name: Build lexical demo production bundle
+        run: npm run build --workspace=lexical-demo
