@@ -48,7 +48,7 @@ You must provide at least one of `html` or `classes`, unless you're requesting t
 
 If you provide both `html` and `classes`, they're merged. Duplicates are removed, invalid classes are filtered out, and the final list is sorted before compilation.
 
-**Bundle aliases:** the `bundle` field is flexible. `"preflight"` maps to `base`, `"tokens"` or `"design"` map to `theme`, `"utils"`, `"util"`, or `"utility"` map to `utilities`. Unrecognized values fall back to `full`. A `mode` field is also accepted as an alias for `bundle`.
+**Bundle aliases:** the `bundle` field is flexible. `"preflight"` maps to `base`, `"tokens"` or `"design"` map to `theme`, `"utils"`, `"util"`, `"utility"`, `"utilities-only"`, or `"utility-only"` map to `utilities`. Unrecognized values fall back to `full`. A `mode` field is also accepted as an alias for `bundle`.
 
 **Response (200):**
 
