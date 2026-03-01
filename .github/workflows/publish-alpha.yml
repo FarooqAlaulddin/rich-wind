@@ -1,12 +1,7 @@
 name: Publish Alpha to npm
 
 on:
-  push:
-    branches:
-      - dev
-    paths:
-      - 'services/**'
-      - 'package.json'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,12 +9,13 @@ permissions:
 
 concurrency:
   group: publish-alpha
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
     name: Test and publish alpha
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
     timeout-minutes: 15
 
     env:
