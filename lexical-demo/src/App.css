@@ -218,6 +218,12 @@ body {
   font-size: 15px;
 }
 
+/* Preserved selection highlight (shown when editor loses focus) */
+.selection-preserve-highlight {
+  background: rgba(59, 130, 246, 0.2);
+  border-radius: 2px;
+}
+
 /* Inspector panel */
 .inspector-panel {
   display: flex;

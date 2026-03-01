@@ -136,9 +136,7 @@ function buildConfig(overrides = {}) {
             false
         ),
         trustProxy: parseBoolean(
-            overrides.trustProxy ??
-                (process.env.RW_TRUST_PROXY ??
-                    (process.env.RENDER_EXTERNAL_URL ? '1' : '0')),
+            overrides.trustProxy ?? process.env.RW_TRUST_PROXY,
             false
         ),
         cacheMaxPages: parseIntWithDefault(
@@ -762,6 +760,11 @@ async function filterValidClasses(classes) {
     return classes.filter((_, i) => cssResults[i] !== null);
 }
 
+function stampCss(css) {
+    const stamp = '/*! managed by rich-wind */';
+    return css.replace(/(\/\*! tailwindcss[^*]*\*\/)/, `$1\n${stamp}`);
+}
+
 // Generate CSS for a set of classes
 async function generateCssForClasses(classes) {
     let inputCss = '@layer theme, base, components, utilities;\n';
@@ -780,7 +783,7 @@ async function generateCssForClasses(classes) {
         onDependency: () => {}
     });
     
-    return compiled.build(classes);
+    return stampCss(compiled.build(classes));
 }
 
 // =============================================================================
@@ -817,7 +820,7 @@ async function generateThemeUtilitiesForClasses(classes) {
         onDependency: () => {}
     });
 
-    const css = compiled.build(classes);
+    const css = stampCss(compiled.build(classes));
     return splitThemeUtilitiesCss(css);
 }
 
@@ -828,7 +831,7 @@ async function generateBaseCss() {
         base: __dirname,
         onDependency: () => {}
     });
-    cachedBaseCss = compiled.build([]);
+    cachedBaseCss = stampCss(compiled.build([]));
     return cachedBaseCss;
 }
 

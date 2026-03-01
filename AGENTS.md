@@ -4,19 +4,25 @@ This file is for AI agents and contributors who clone the repo. It captures proj
 
 ## What This Repo Is
 - **Core library / service** for compiling Tailwind CSS from HTML/classes at runtime.
-- **Demo** is a single HTML file (`demo/index.html`) using HTMX, served by the dev server. It dogfoods rich-wind for its own shell CSS.
+- **Demo** is a Preact SPA (`demo/src/`) with Monaco editor, live preview, docs, and plugin showcases. Built with Vite.
+- **Lexical Demo** (`lexical-demo/src/`) is a separate Preact app demonstrating Rich Wind with a Lexical rich text editor.
 - The core is intentionally **auth-agnostic**. Callers must supply a safe tenant-scoped `projectId`.
 
 ## Quick Map
-- `services/index.js` — Express API, in-memory cache, compile/suggest endpoints.
-- `tests/*.test.js` — Vitest tests for API, cache, docs examples.
-- `demo/` — single-page HTMX demo that dogfoods rich-wind.
-  - `demo/index.html` — the entire UI in one HTML file with Tailwind utility classes.
-  - `demo/demo.css` — hand-written CSS for things Tailwind can't express (vars, animations, pseudo-elements, media queries).
-  - `demo/scripts/` — vanilla JS client scripts (tab switching, preview sync, auto-compile, layout, etc.).
-- `scripts/dev-server.js` — starts rich-wind core + serves the demo.
-- `scripts/demo-routes.js` — Express handlers for `/htmx/compile` and `/demo/shell.css`.
-- `scripts/demo-helpers.js` — HTML fragment generators for HTMX OOB swaps.
+- `services/index.js` — Express API, in-memory cache, compile/suggest endpoints, plugin system.
+- `services/index.d.ts` — TypeScript definitions for the public API and plugin interfaces.
+- `tests/*.test.js` — Vitest tests (239 tests across 18 files).
+- `plugins/auto-promote/` — built-in auto-promote plugin.
+- `demo/` — Preact SPA demo (Vite + `@preact/preset-vite`).
+  - `demo/src/App.jsx` — root component with preact-router (5 routes: playground, docs, plugin showcases).
+  - `demo/src/components/` — EditorPane, PreviewFrame, MonacoEditor, DocsShell, DocsSidebar, etc.
+  - `demo/src/pages/` — Docs, Analytics, AutoPromote page components.
+  - `demo/demo.css` — hand-written CSS for things Tailwind can't express.
+- `lexical-demo/` — Lexical rich text editor demo (separate Vite app, deployed under `/lexical-demo/`).
+- `scripts/dev-server.js` — starts rich-wind core + serves the demo (dev and production modes).
+- `scripts/demo-routes.js` — Express handlers for documentation API (`/api/docs/*`).
+- `scripts/docs-catalog.js` — scans `/docs` directory, builds navigation catalog from markdown files.
+- `docs/` — Markdown documentation rendered inside the demo at `/docs`.
 
 ## Environment & Prereqs
 - Node.js **>= 20** (see `package.json`).
@@ -47,6 +53,7 @@ Key endpoints in `services/index.js`:
 - `POST /api/suggest`
 - `GET /api/css`
 - `GET /api/projects/:projectId/css`
+- `GET /health`
 
 Core runtime is stateless except for process-local in-memory caches.
 
@@ -65,24 +72,19 @@ Config can be set via `createCore({ config: { ... } })` or env vars:
 
 Arbitrary values (`text-[18px]`) are not enumerated.
 
-## Demo / Preview Pipeline (Important)
-The demo uses HTMX for server communication and client-side JS for preview rendering:
-- HTMX responses include a base64 `preview-data` payload via OOB swaps.
-- `demo/scripts/preview-sync.js` decodes it and updates the iframe DOM.
-- iframe host doc is intentionally minimal; styling is controlled by **Custom CSS** in the editor.
-- CSP allows Google Fonts from `fonts.googleapis.com` / `fonts.gstatic.com`.
-- Shell CSS (`/demo/shell.css`) compiles the demo's own HTML through rich-wind — dogfooding.
+## Demo Architecture
+The demo is a Preact SPA built with Vite:
+- **Playground** (`/`) — Monaco code editor with live preview iframe, auto-compile on keystroke.
+- **Docs** (`/docs`, `/docs/:slug`) — markdown docs fetched from `/api/docs/*` endpoints, rendered client-side.
+- **Plugin showcases** (`/plugins/analytics`, `/plugins/auto-promote`) — interactive dashboards for built-in plugins.
+- Preview iframe renders compiled HTML with CSS injected via `<style>` tags.
+- `VITE_RW_CORE_URL` env var controls the core API base URL (defaults to `http://localhost:3001`).
 
-If you change preview behavior:
-- Keep CSP consistent.
-- Avoid inline scripts inside `srcdoc` (sandboxed).
-- Keep OOB ids stable (`status-pill`, `cache-badge`, `class-list`, `preview-badge`, etc.).
-
-## Demo Layout Notes
-- Layout modes: split/editor/preview/collapsed (stored in `localStorage`).
-- Splitter and pane height resizers are in `demo/scripts/splitter.js` and `demo/scripts/pane-resizers.js`.
-- Body scroll is locked in split mode and unlocked for stacked/resized layouts.
-- Editor tabs use `data-tab`/`data-panel` attributes; preview tabs use `data-preview-tab`/`data-preview-panel`.
+## Lexical Demo
+The lexical-demo is a separate Preact app at `lexical-demo/`:
+- Multi-page editor with Tailwind class inspector panel.
+- Built with Vite, deployed under `/lexical-demo/` base path.
+- Shares the same core API via `VITE_RW_CORE_URL`.
 
 ## Conventions
 - ESM modules (`type: module` in root).
@@ -90,14 +92,16 @@ If you change preview behavior:
 - Keep the core library free of auth/session logic. Multi-tenant protection belongs in wrappers/host apps.
 
 ## Safe Changes Checklist
-1. **Core API changes** -> update README + tests.
-2. **HTMX OOB markup changes** -> verify IDs used in demo/index.html and scripts still exist.
-3. **Preview/CSP changes** -> verify Google Fonts and custom CSS still work.
-4. **Demo layout changes** -> verify split/stacked modes + resizer behavior.
+1. **Core API changes** → update README + tests + `docs/api-reference.md`.
+2. **Plugin system changes** → update `docs/plugin-system.md` + `services/index.d.ts` + tests.
+3. **Demo component changes** → verify all 5 routes still render correctly.
+4. **Preview/CSP changes** → verify Google Fonts and custom CSS still work in iframe.
+5. **Documentation changes** → verify `/api/docs/catalog` and `/api/docs/:slug` still serve correctly.
 
 ## Common Gotchas
 - Do not hardcode preview styles in the compile route; keep styles in Custom CSS.
 - `RW_TRUST_PROXY` affects rate-limit IP behavior; default false unless behind a trusted proxy.
+- The demo and lexical-demo are separate Vite apps with separate `package.json` files.
 
 ## Git Workflow Expectations
 - For every meaningful code/documentation change, create a commit with a clear, specific message that explains intent.
@@ -109,4 +113,4 @@ If you change preview behavior:
 - New rules must stay consistent with higher-priority instructions and should be narrowly scoped, actionable, and verifiable.
 
 ## Deployment
-This repo includes `render.yaml` for Render deploys. Keep the core public endpoint in `RW_CORE_URL` for production.
+Set `RW_TRUST_PROXY=1` and `VITE_RW_CORE_URL` for production environments behind a reverse proxy.

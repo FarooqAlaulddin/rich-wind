@@ -58,6 +58,7 @@ export function DocsSidebar({ sections, activeSlug, activePlugin }) {
       </div>
       <div class="docs-nav-footer">
         <a href="/" class="docs-meta-link">Demo</a>
+        <a href="/lexical-demo/" class="docs-meta-link">Lexical Demo</a>
         <a href="https://github.com/FarooqAlaulddin/rich-wind" class="docs-meta-link" target="_blank" rel="noreferrer">GitHub</a>
       </div>
     </aside>
