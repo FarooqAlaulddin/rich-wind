@@ -1,0 +1,64 @@
+name: Publish Alpha to npm
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'services/**'
+      - 'package.json'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-alpha
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Test and publish alpha
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Run package smoke test
+        run: npm run test:pack
+
+      - name: Set alpha version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version="$(node -e "console.log(JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version)")"
+          # Strip any existing pre-release suffix to get the base
+          base_version="${base_version%%-*}"
+          # Use Unix timestamp for monotonically increasing pre-release number
+          ts="$(date +%s)"
+          alpha_version="${base_version}-alpha.${ts}"
+          npm version "$alpha_version" --no-git-tag-version
+          echo "Publishing ${alpha_version}"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public --tag alpha
