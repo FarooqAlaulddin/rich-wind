@@ -12,6 +12,7 @@ import { StyledHeadingNode } from '../nodes/StyledHeadingNode';
 import { TailwindSpanNode } from '../nodes/TailwindSpanNode';
 import FormatBarPlugin from '../plugins/FormatBarPlugin';
 import TailwindClassPlugin from '../plugins/TailwindClassPlugin';
+import SelectionPreservePlugin from '../plugins/SelectionPreservePlugin';
 
 const EDITOR_THEME = {
   paragraph: 'editor-paragraph',
@@ -125,6 +126,7 @@ export default function Editor({
           />
         </div>
         <HistoryPlugin />
+        <SelectionPreservePlugin />
         <TailwindClassPlugin onContentChange={onContentChange} />
         <EditorBridge onEditor={onEditor} />
       </LexicalComposer>

@@ -5,8 +5,25 @@ import tailwindcss from '@tailwindcss/vite';
 const corePort = process.env.RW_CORE_PORT || 3001;
 const coreOrigin = `http://localhost:${corePort}`;
 
+/** Redirect /lexical-demo (no trailing slash) → /lexical-demo/ in preview mode */
+function lexicalDemoRedirect() {
+  return {
+    name: 'lexical-demo-redirect',
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url === '/lexical-demo') {
+          res.writeHead(301, { Location: '/lexical-demo/' });
+          res.end();
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [preact(), tailwindcss()],
+  plugins: [preact(), tailwindcss(), lexicalDemoRedirect()],
   root: '.',
   build: {
     outDir: 'dist',

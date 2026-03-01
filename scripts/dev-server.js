@@ -59,7 +59,7 @@ if (isProd && existsSync(distDir)) {
       res.status(500).send('SPA index.html not found. Run: npm run build --workspace=demo');
     }
   });
-} else {
+} else if (!isProd) {
   // Dev mode: serve demo/ static assets (CSS files, etc.)
   app.use(express.static(path.resolve(__dirname, '../demo')));
 }

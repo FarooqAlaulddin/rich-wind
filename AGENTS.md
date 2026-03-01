@@ -109,4 +109,4 @@ If you change preview behavior:
 - New rules must stay consistent with higher-priority instructions and should be narrowly scoped, actionable, and verifiable.
 
 ## Deployment
-This repo includes `render.yaml` for Render deploys. Keep the core public endpoint in `RW_CORE_URL` for production.
+Set `RW_TRUST_PROXY=1` and `RW_CORE_URL` for production environments behind a reverse proxy.
