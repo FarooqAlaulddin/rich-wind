@@ -9,10 +9,6 @@
     {
       "url": "http://localhost:3001",
       "description": "Local development"
-    },
-    {
-      "url": "https://rich-wind.thinkly.dev",
-      "description": "Hosted demo/docs domain"
     }
   ],
   "paths": {

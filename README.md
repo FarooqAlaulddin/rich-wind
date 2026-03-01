@@ -2,11 +2,6 @@
 
 Rich Wind is a runtime Tailwind CSS core and API. It compiles CSS from HTML/class input, caches by `projectId` + `pageId`, and can share artifacts across replicas with a pluggable `cacheStore`.
 
-Live links:
-- Demo: https://rich-wind.thinkly.dev/
-- Docs: https://rich-wind.thinkly.dev/docs/
-- OpenAPI: https://rich-wind.thinkly.dev/docs/openapi.json
-
 ## Why It Helps
 
 - Supports dynamic content where classes are only known at runtime.
@@ -96,6 +91,8 @@ process.on("SIGINT", close);
 Plugins are optional and isolated: hook errors are caught and forwarded to `onError`.
 
 Available hooks:
+
+Observer (fire-and-forget):
 - `onRequestStart`
 - `onResponseSent`
 - `onCompileStart`
@@ -105,6 +102,15 @@ Available hooks:
 - `onProjectCss`
 - `onSuggest`
 - `onError`
+
+Pipeline (each plugin transforms the previous output):
+- `transformClasses` — modify class list before CSS generation
+- `transformCss` — modify CSS after generation
+- `transformSuggestions` — modify suggestions before response
+
+Resolve (first non-null result wins):
+- `resolvePageCss` — override page CSS on cache miss
+- `resolveProjectCss` — override project CSS on cache miss
 
 Plugin options:
 - `name` (string) — for error reporting.
