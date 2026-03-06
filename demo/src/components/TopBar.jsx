@@ -3,13 +3,13 @@ export function TopBar({ autoCompile, onAutoCompileChange, compact, onCompactCha
     <header class="play-topbar hero-grid">
       <div class="topbar-brand flex items-center gap-3">
         <div class="animate-float flex h-14 w-14 items-center justify-center rounded-3xl shadow-lg">
-          <img src="/rw-icon-128.png" alt="Rich Wind" class="h-12 w-12" />
+          <img src="/rich-wind/rw-icon-128.png" alt="Rich Wind" class="h-12 w-12" />
         </div>
         <div>
           <p class="text-xs uppercase tracking-[0.4em] text-slate-500">Stateless Tailwind Runtime</p>
           <p class="text-xl font-semibold">Rich Wind Studio</p>
           <div class="topbar-links text-xs uppercase tracking-[0.4em] text-slate-500 flex flex-wrap items-center gap-4 mt-1">
-            <a href="/docs" class="text-amber-400/80 hover:text-amber-400">DOCS</a>
+            <a href="/rich-wind/docs" class="text-amber-400/80 hover:text-amber-400">DOCS</a>
             <a href="https://github.com/FarooqAlaulddin/rich-wind" class="text-amber-400/80 hover:text-amber-400">GITHUB</a>
           </div>
         </div>
