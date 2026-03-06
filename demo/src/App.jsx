@@ -7,11 +7,11 @@ import { AutoPromote } from './pages/AutoPromote';
 export function App() {
   return (
     <Router>
-      <Playground path="/" />
-      <Docs path="/docs" />
-      <Docs path="/docs/:slug" />
-      <Analytics path="/plugins/analytics" />
-      <AutoPromote path="/plugins/auto-promote" />
+      <Playground path="/rich-wind/" />
+      <Docs path="/rich-wind/docs" />
+      <Docs path="/rich-wind/docs/:slug" />
+      <Analytics path="/rich-wind/plugins/analytics" />
+      <AutoPromote path="/rich-wind/plugins/auto-promote" />
     </Router>
   );
 }

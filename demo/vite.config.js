@@ -25,6 +25,7 @@ function lexicalDemoRedirect() {
 export default defineConfig({
   plugins: [preact(), tailwindcss(), lexicalDemoRedirect()],
   root: '.',
+  base: '/rich-wind/',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
