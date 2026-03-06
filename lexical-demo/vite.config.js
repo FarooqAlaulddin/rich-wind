@@ -15,7 +15,18 @@ export default defineConfig({
   server: {
     port: 5174,
     allowedHosts: true,
+    hmr: {
+      path: '/rich-wind/lexical-demo/',
+    },
     proxy: {
+      '/rich-wind/api': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
+      },
+      '/rich-wind/plugins': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
+      },
       '/api': coreOrigin,
       '/plugins': coreOrigin,
     },
