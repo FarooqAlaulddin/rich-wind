@@ -1,4 +1,4 @@
-const BASE = (import.meta.env.VITE_RW_CORE_URL || '').replace(/\/+$/, '');
+const BASE = (import.meta.env.VITE_RW_CORE_URL || '/rich-wind').replace(/\/+$/, '');
 
 export async function compile({ projectId, pageId, html, classes, customCss, bundle }) {
   const res = await fetch(`${BASE}/api/compile`, {
