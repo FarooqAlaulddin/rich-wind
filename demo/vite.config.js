@@ -25,7 +25,7 @@ function lexicalDemoRedirect() {
 export default defineConfig({
   plugins: [preact(), tailwindcss(), lexicalDemoRedirect()],
   root: '.',
-  base: '/rich-wind/',
+  base: '/rich-wind/demo/',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -35,6 +35,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    allowedHosts: true,
     proxy: {
       '/api': coreOrigin,
       '/plugins': coreOrigin,
