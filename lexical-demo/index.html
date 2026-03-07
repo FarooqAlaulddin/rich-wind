@@ -6,6 +6,13 @@
   <title>Lexical + Rich Wind Demo</title>
 </head>
 <body>
+  <script>
+    try {
+      var t = localStorage.getItem('rw-lexical-theme');
+      var d = t === 'dark' || (t === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (d) { document.documentElement.classList.add('theme-dark'); document.documentElement.style.colorScheme = 'dark'; }
+    } catch(e) {}
+  </script>
   <div id="root"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>
