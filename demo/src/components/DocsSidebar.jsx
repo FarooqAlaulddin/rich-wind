@@ -1,8 +1,8 @@
 import { useThemeMode } from '../hooks/useThemeMode';
 
 const PLUGIN_NAV = [
-  { slug: 'analytics', title: 'Analytics', href: '/rich-wind/plugins/analytics' },
-  { slug: 'auto-promote', title: 'Auto-Promote', href: '/rich-wind/plugins/auto-promote' },
+  { slug: 'analytics', title: 'Analytics', href: '/rich-wind/demo/plugins/analytics' },
+  { slug: 'auto-promote', title: 'Auto-Promote', href: '/rich-wind/demo/plugins/auto-promote' },
 ];
 
 export function DocsSidebar({ sections, activeSlug, activePlugin }) {
@@ -23,7 +23,7 @@ export function DocsSidebar({ sections, activeSlug, activePlugin }) {
               {section.pages.map((page) => (
                 <a
                   key={page.slug}
-                  href={page.slug ? `/rich-wind/docs/${page.slug}` : '/rich-wind/docs'}
+                  href={page.slug ? `/rich-wind/demo/docs/${page.slug}` : '/rich-wind/demo/docs'}
                   class={`docs-link${!activePlugin && page.slug === activeSlug ? ' is-active' : ''}`}
                 >
                   {page.title}
@@ -57,7 +57,7 @@ export function DocsSidebar({ sections, activeSlug, activePlugin }) {
         </label>
       </div>
       <div class="docs-nav-footer">
-        <a href="/rich-wind/" class="docs-meta-link">Demo</a>
+        <a href="/rich-wind/demo/" class="docs-meta-link">Demo</a>
         <a href="/rich-wind/lexical-demo/" class="docs-meta-link">Lexical Demo</a>
         <a href="https://github.com/FarooqAlaulddin/rich-wind" class="docs-meta-link" target="_blank" rel="noreferrer">GitHub</a>
       </div>
