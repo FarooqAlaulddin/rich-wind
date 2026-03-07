@@ -31,7 +31,14 @@ body {
   font-weight: 600;
 }
 
-.reset-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reset-btn,
+.theme-btn {
   font-size: 12px;
   padding: 4px 10px;
   border: 1px solid #475569;
@@ -42,7 +49,8 @@ body {
   transition: all 0.15s;
 }
 
-.reset-btn:hover {
+.reset-btn:hover,
+.theme-btn:hover {
   background: #334155;
   color: #f1f5f9;
 }
@@ -628,4 +636,227 @@ body {
 .export-btn:hover {
   background: #f1f5f9;
   border-color: #94a3b8;
+}
+
+/* ── Dark mode ── */
+.theme-dark body,
+:root.theme-dark body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.theme-dark .editor-pane {
+  border-right-color: #334155;
+}
+
+.theme-dark .format-bar {
+  background: #1e293b;
+  border-bottom-color: #334155;
+}
+
+.theme-dark .format-bar select {
+  background: #0f172a;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+
+.theme-dark .page-tabs {
+  border-right-color: #475569;
+}
+
+.theme-dark .page-tab:hover {
+  background: #334155;
+}
+
+.theme-dark .page-tab.active {
+  background: #1e3a5f;
+  border-color: #2563eb;
+}
+
+.theme-dark .page-tab-label {
+  color: #94a3b8;
+}
+
+.theme-dark .page-tab.active .page-tab-label {
+  color: #93c5fd;
+}
+
+.theme-dark .page-tab-delete:hover {
+  color: #ef4444;
+  background: #450a0a;
+}
+
+.theme-dark .page-tab-add {
+  border-color: #475569;
+  color: #64748b;
+}
+
+.theme-dark .page-tab-add:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #1e3a5f;
+}
+
+.theme-dark .editor-scroller {
+  background: #1e293b;
+}
+
+.theme-dark .editor-input {
+  color: #e2e8f0;
+}
+
+.theme-dark .editor-placeholder {
+  color: #475569;
+}
+
+.theme-dark .inspector-panel {
+  background: #0f172a;
+}
+
+.theme-dark .inspector-label {
+  color: #94a3b8;
+}
+
+.theme-dark .inspector-context {
+  color: #e2e8f0;
+}
+
+.theme-dark .inspector-separator {
+  color: #475569;
+}
+
+.theme-dark .class-chip {
+  background: #1e3a5f;
+  border-color: #2563eb;
+  color: #93c5fd;
+}
+
+.theme-dark .chip-remove {
+  color: #3b82f6;
+}
+
+.theme-dark .chip-remove:hover {
+  color: #93c5fd;
+}
+
+.theme-dark .class-chip-promoted {
+  background: #451a03;
+  border-color: #b45309;
+  color: #fbbf24;
+}
+
+.theme-dark .class-chip-promoted .chip-remove {
+  color: #b45309;
+}
+
+.theme-dark .class-chip-promoted .chip-remove:hover {
+  color: #fbbf24;
+}
+
+.theme-dark .no-classes {
+  color: #475569;
+}
+
+.theme-dark .add-class-row .class-input {
+  background: #1e293b;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+
+.theme-dark .add-class-row .class-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.theme-dark .preview-section {
+  border-top-color: #334155;
+}
+
+.theme-dark .preview-container {
+  border-color: #334155;
+  background: #1e293b;
+}
+
+.theme-dark .preview-frame {
+  background: #1e293b;
+}
+
+.theme-dark .autocomplete-dropdown {
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.theme-dark .autocomplete-dropdown li:hover {
+  background: #334155;
+}
+
+.theme-dark .autocomplete-dropdown li.active {
+  background: #2563eb;
+}
+
+.theme-dark .bundle-section {
+  border-top-color: #334155;
+}
+
+.theme-dark .bundle-row {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.theme-dark .bundle-row.bundle-active {
+  background: #1e3a5f;
+  border-color: #2563eb;
+}
+
+.theme-dark .bundle-row.bundle-active .bundle-name {
+  color: #93c5fd;
+}
+
+.theme-dark .bundle-row.bundle-promoted {
+  background: #451a03;
+  border-color: #b45309;
+}
+
+.theme-dark .bundle-row.bundle-promoted .bundle-name {
+  color: #fbbf24;
+}
+
+.theme-dark .bundle-row.bundle-promoted .bundle-size {
+  color: #f59e0b;
+}
+
+.theme-dark .bundle-row.bundle-total {
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.theme-dark .bundle-name {
+  color: #cbd5e1;
+}
+
+.theme-dark .bundle-size {
+  color: #94a3b8;
+}
+
+.theme-dark .bundle-chevron {
+  color: #64748b;
+}
+
+.theme-dark .export-section {
+  border-top-color: #334155;
+}
+
+.theme-dark .export-chevron {
+  color: #64748b;
+}
+
+.theme-dark .export-btn {
+  background: #1e293b;
+  border-color: #475569;
+  color: #cbd5e1;
+}
+
+.theme-dark .export-btn:hover {
+  background: #334155;
+  border-color: #64748b;
 }

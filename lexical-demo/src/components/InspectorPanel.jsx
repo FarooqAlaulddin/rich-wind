@@ -63,10 +63,10 @@ function BundleRow({ name, bytes, cssText, className }) {
 }
 
 function buildExportHtml(html, projectId, activePage, hasPageUtilities) {
-  const baseHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
-  const themeHref = `/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
-  const promotedHref = `/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
-  const utilitiesHref = `/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
+  const baseHref = `/rich-wind/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
+  const themeHref = `/rich-wind/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
+  const promotedHref = `/rich-wind/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
+  const utilitiesHref = `/rich-wind/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
   const cssLinks = [
     `<link rel="stylesheet" href="${baseHref}">`,
     `<link rel="stylesheet" href="${themeHref}">`,
