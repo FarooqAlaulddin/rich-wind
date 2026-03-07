@@ -28,6 +28,14 @@ function wrapTables(html) {
   return html.replace(/<table(\s[^>]*)?>/g, '<div class="table-wrapper"><table$1>').replace(/<\/table>/g, '</table></div>');
 }
 
+function rewriteDocLinks(html) {
+  return html.replace(/href="\/docs\//g, 'href="/rich-wind/demo/docs/');
+}
+
+function stripLeadingH1(html) {
+  return html.replace(/^\s*<h1[^>]*>.*?<\/h1>\s*/, '');
+}
+
 async function loadSections() {
   try {
     return await loadDocsCatalog(docsRoot);
@@ -65,7 +73,7 @@ export function registerDemoRoutes(app) {
     try {
       const fullPath = path.resolve(docsRoot, page.file);
       const markdown = await readFile(fullPath, 'utf8');
-      const contentHtml = wrapTables(md.render(markdown));
+      const contentHtml = stripLeadingH1(rewriteDocLinks(wrapTables(md.render(markdown))));
       res.json({ title: page.title, contentHtml, isReview: page.isReview, isIdea: page.isIdea });
     } catch {
       res.status(404).json({ error: 'Failed to read document' });
@@ -89,7 +97,7 @@ export function registerDemoRoutes(app) {
 
     try {
       const markdown = await readFile(fullPath, 'utf8');
-      const contentHtml = wrapTables(md.render(markdown));
+      const contentHtml = stripLeadingH1(rewriteDocLinks(wrapTables(md.render(markdown))));
       res.json({ title: page.title, contentHtml, isReview: page.isReview, isIdea: page.isIdea });
     } catch {
       res.status(404).json({ error: 'Failed to read document' });
