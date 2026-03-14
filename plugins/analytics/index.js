@@ -12,25 +12,38 @@
  * The dashboard UI lives in the React Router app at /plugins/analytics.
  */
 
-// Ring buffer: fixed-capacity array that overwrites oldest entries
+// Ring buffer: fixed-capacity circular buffer (O(1) push)
 function createRingBuffer(capacity) {
-  const buf = [];
+  const buf = new Array(capacity);
+  let head = 0;   // next write position
+  let size = 0;
   let total = 0;
   return {
     push(item) {
-      if (buf.length >= capacity) buf.shift();
-      buf.push(item);
+      buf[head] = item;
+      head = (head + 1) % capacity;
+      if (size < capacity) size++;
       total++;
     },
-    toArray() { return buf.slice(); },
+    toArray() {
+      if (size < capacity) return buf.slice(0, size);
+      // Return in chronological order: oldest (head) to newest (head-1)
+      return [...buf.slice(head, capacity), ...buf.slice(0, head)];
+    },
     hydrate(items, totalPushed) {
-      buf.length = 0;
+      buf.fill(undefined);
+      head = 0;
+      size = 0;
       const source = Array.isArray(items) ? items.slice(-capacity) : [];
-      for (const item of source) buf.push(item);
-      const normalizedTotal = Number.isFinite(totalPushed) ? Math.max(totalPushed, buf.length) : buf.length;
+      for (const item of source) {
+        buf[head] = item;
+        head = (head + 1) % capacity;
+        size++;
+      }
+      const normalizedTotal = Number.isFinite(totalPushed) ? Math.max(totalPushed, size) : size;
       total = normalizedTotal;
     },
-    get length() { return buf.length; },
+    get length() { return size; },
     get totalPushed() { return total; }
   };
 }
@@ -381,8 +394,8 @@ function computeStats(arr) {
     max: sorted[sorted.length - 1],
     avg: +(sum / sorted.length).toFixed(1),
     count: sorted.length,
-    p50: sorted[Math.floor(sorted.length * 0.5)],
-    p95: sorted[Math.floor(sorted.length * 0.95)],
+    p50: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.5))],
+    p95: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))],
     p99: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))]
   };
 }
