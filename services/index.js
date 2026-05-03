@@ -132,20 +132,6 @@ function buildConfig(overrides = {}) {
             overrides.suggestFallback ?? process.env.RW_SUGGEST_FALLBACK,
             true
         ),
-        rateLimitWindowMs: parseIntWithDefault(
-            overrides.rateLimitWindowMs ?? process.env.RW_RATE_LIMIT_WINDOW_MS,
-            60000,
-            1000
-        ),
-        rateLimitMax: parseIntWithDefault(
-            overrides.rateLimitMax ?? process.env.RW_RATE_LIMIT_MAX,
-            60,
-            1
-        ),
-        rateLimitDisabled: parseBoolean(
-            overrides.rateLimitDisabled ?? process.env.RW_RATE_LIMIT_DISABLED,
-            false
-        ),
         trustProxy: parseBoolean(
             overrides.trustProxy ?? process.env.RW_TRUST_PROXY,
             false
@@ -184,47 +170,6 @@ function createCacheState() {
 
 function getClientIp(req) {
     return req.ip || req.socket?.remoteAddress || 'unknown';
-}
-
-// =============================================================================
-// Rate limiting (per-core instance)
-// =============================================================================
-function createRateLimiter(config) {
-    const rateBuckets = new Map();
-    let cleanup = null;
-
-    if (!config.rateLimitDisabled && config.rateLimitWindowMs > 0) {
-        cleanup = setInterval(() => {
-            const now = Date.now();
-            for (const [ip, entry] of rateBuckets.entries()) {
-                if (entry.resetAt <= now) {
-                    rateBuckets.delete(ip);
-                }
-            }
-        }, config.rateLimitWindowMs);
-        cleanup.unref();
-    }
-
-    const middleware = (req, res, next) => {
-        if (config.rateLimitDisabled) return next();
-        const now = Date.now();
-        const ip = getClientIp(req);
-        const entry = rateBuckets.get(ip);
-        if (!entry || entry.resetAt <= now) {
-            rateBuckets.set(ip, { count: 1, resetAt: now + config.rateLimitWindowMs });
-            return next();
-        }
-        if (entry.count >= config.rateLimitMax) {
-            const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
-            res.setHeader('Retry-After', retryAfter);
-            return res.status(429).json({ error: 'Rate limit exceeded. Slow down.' });
-        }
-        entry.count += 1;
-        return next();
-    };
-
-    const destroy = () => { if (cleanup) clearInterval(cleanup); };
-    return { middleware, destroy };
 }
 
 // =============================================================================
@@ -1257,6 +1202,7 @@ function createPluginRunner(plugins = [], options = {}) {
 
     // Pre-compute which plugins implement each hook for fast dispatch
     const ALL_HOOKS = [
+        'guard',
         'onRequestStart', 'onResponseSent', 'onCompileStart', 'onCompileResult',
         'onCacheHit', 'onCacheMiss', 'onProjectCss', 'onSuggest', 'onError',
         'transformClasses', 'transformCss', 'transformSuggestions',
@@ -1269,7 +1215,7 @@ function createPluginRunner(plugins = [], options = {}) {
     }
 
     const NEVER_DEFER_HOOKS = new Set([
-        'onError', 'transformClasses', 'transformCss', 'transformSuggestions',
+        'guard', 'onError', 'transformClasses', 'transformCss', 'transformSuggestions',
         'resolvePageCss', 'resolveProjectCss'
     ]);
 
@@ -1393,7 +1339,26 @@ function createPluginRunner(plugins = [], options = {}) {
         return null;
     };
 
-    return { runHook, runPipeline, runResolve, list };
+    const runGuard = async (context) => {
+        const subscribers = hookSubscribers.get('guard');
+        if (!subscribers || subscribers.length === 0) return null;
+        const hookContext = buildHookContext(context);
+        for (const plugin of subscribers) {
+            if (!plugin.active || plugin.failed) continue;
+            const fn = plugin.instance && typeof plugin.instance.guard === 'function' ? plugin.instance.guard : null;
+            if (!fn) continue;
+            try {
+                const result = await withTimeout(Promise.resolve(fn(hookContext)), plugin.timeoutMs);
+                if (result && result.blocked) return result;
+            } catch (error) {
+                const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
+                await runHook('onError', { error, hook: 'guard', plugin: plugin.name, timedOut, context: hookContext });
+            }
+        }
+        return null;
+    };
+
+    return { runHook, runPipeline, runResolve, runGuard, list };
 }
 
 // =============================================================================
@@ -2096,11 +2061,22 @@ export async function createCore({
     });
 
     app.use(express.json({ limit: config.maxBodyBytes }));
-    const rateLimiter = createRateLimiter(config);
-    app.use(rateLimiter.middleware);
 
     const pluginContext = buildPluginContext(state, config);
     const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs, pluginContext });
+
+    app.use(async (req, res, next) => {
+        const block = await pluginRunner.runGuard({
+            ip: getClientIp(req),
+            method: req.method,
+            path: req.path
+        });
+        if (block) {
+            if (block.retryAfter != null) res.setHeader('Retry-After', block.retryAfter);
+            return res.status(block.status ?? 429).json({ error: block.error ?? 'Blocked.' });
+        }
+        return next();
+    });
     const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
@@ -2335,7 +2311,6 @@ export async function createCore({
     const close = () => {
         if (closePromise) return closePromise;
         closePromise = (async () => {
-            rateLimiter.destroy();
             await storeWriteQueue.drain();
             for (const plugin of [...pluginRunner.list].reverse()) {
                 if (typeof plugin.instance.teardown === 'function') {
