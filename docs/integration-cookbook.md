@@ -97,7 +97,7 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 **Mitigations:**
 
 - **Sticky sessions** — route requests from the same editing session to the same replica. This keeps the cache warm for active users.
-- **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore) for the adapter interface.
+- **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](runtime-spec.html#cachestore) for the adapter interface.
 - **Single writer, many readers** — run writer replicas with `RW_NODE_ROLE=writer` and read replicas with `RW_NODE_ROLE=reader`. Route compile/purge/storage writes to writers only.
 - **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
 - **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
@@ -112,7 +112,7 @@ Rich Wind's cache is per-process. If you run three replicas behind a load balanc
 
 The `cacheStore` option accepts any object that implements the core artifact methods (page + project). It can also implement plugin-data methods so plugin `ctx.storage` state is durable across restarts. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
 
-For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](/docs/runtime-spec#cachestore).
+For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](runtime-spec.html#cachestore).
 
 The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact`, `deleteProjectArtifact`, and `deleteProjectPageArtifacts`. Here are two examples:
 
@@ -250,7 +250,7 @@ app.listen(3001);
 
 ### Error visibility
 
-The store is [fail-open](/docs/runtime-spec#failure-behavior) — if your backend is slow or down, Rich Wind continues working with in-memory cache only. To monitor store health, use the [`onError` plugin hook](/docs/plugin-system#error-handling) with `stage: "cache-store"`:
+The store is [fail-open](runtime-spec.html#failure-behavior) — if your backend is slow or down, Rich Wind continues working with in-memory cache only. To monitor store health, use the [`onError` plugin hook](plugin-system.html#error-handling) with `stage: "cache-store"`:
 
 ```js
 const { app } = await createCore({

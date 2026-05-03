@@ -4,6 +4,8 @@ Runtime Tailwind CSS compiler. Send HTML or class names, get compiled CSS back. 
 
 Designed for CMS platforms, visual editors, email builders, and any application where Tailwind classes aren't known until runtime.
 
+Pre-release scope: the npm package is the core runtime service. The only live reference app in this repo is `lexical-demo/`; the earlier playground/docs/plugin showcase app is parked on the `parked-demos` branch.
+
 ## Why It Helps
 
 - Supports dynamic content where classes are only known at runtime.
@@ -26,11 +28,21 @@ Designed for CMS platforms, visual editors, email builders, and any application 
 ## Quick Start
 
 ```bash
-npm install
-npm run start
+npm install rich-wind
 ```
 
-The API starts at `http://localhost:3001`. Compile a page:
+Create an HTTP service in your app:
+
+```js
+import { createCore } from "rich-wind";
+
+const { app, close } = await createCore();
+const server = app.listen(3001, () => {
+  console.log("Rich Wind running on http://localhost:3001");
+});
+```
+
+Compile a page:
 
 ```bash
 curl -X POST http://localhost:3001/api/compile \
@@ -40,15 +52,6 @@ curl -X POST http://localhost:3001/api/compile \
     "pageId": "hero",
     "html": "<div class=\"text-red-500 p-4\">Hello</div>"
   }'
-```
-
-Or embed it in your Node app:
-
-```js
-import { createCore } from "rich-wind";
-
-const { app, close } = await createCore();
-app.listen(3001);
 ```
 
 ## API
@@ -89,6 +92,8 @@ Key environment variables:
 
 ## Docs
 
+Docs are plain Markdown in `docs/` so they can be published from GitHub Pages with the Pages source set to `main` / `/docs`. Once enabled, the project docs will publish at `https://farooqalaulddin.github.io/rich-wind/`.
+
 - **[Overview](docs/index.md)** — mental model, use cases, and quick start
 - **[API Reference](docs/api-reference.md)** — every endpoint, parameter, and config option
 - **[Runtime Spec](docs/runtime-spec.md)** — caching, `cacheStore` adapter interface, bundle splitting, replica roles
@@ -101,19 +106,19 @@ Key environment variables:
 ```bash
 npm install
 npm run dev          # core API only (watch mode) at localhost:3001
-npm run dev:demo     # core API + demo UI together at localhost:3001
+npm run dev:lexical  # core API + demo plugins for the Lexical demo
 ```
 
-The demo and lexical-demo are separate Vite apps. To run them standalone (each needs the core API running separately):
+Run the Lexical reference app in another terminal:
 
 ```bash
-npm run dev --workspace=demo           # demo UI at localhost:5173
-npm run dev --workspace=lexical-demo   # lexical demo at localhost:5174
+npm run dev:lexical-ui   # lexical demo at localhost:5174
 ```
 
 ```bash
-npm test            # 239 tests
-npm run test:pack   # smoke test the npm package
+npm test                  # test suite
+npm run test:pack         # smoke test the npm package
+npm run build:lexical-demo
 ```
 
 ## License

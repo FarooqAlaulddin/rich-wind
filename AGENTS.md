@@ -4,25 +4,19 @@ This file is for AI agents and contributors who clone the repo. It captures proj
 
 ## What This Repo Is
 - **Core library / service** for compiling Tailwind CSS from HTML/classes at runtime.
-- **Demo** is a Preact SPA (`demo/src/`) with Monaco editor, live preview, docs, and plugin showcases. Built with Vite.
-- **Lexical Demo** (`lexical-demo/src/`) is a separate Preact app demonstrating Rich Wind with a Lexical rich text editor.
+- **Lexical Demo** (`lexical-demo/src/`) is the only live reference UI in this branch. It demonstrates Rich Wind with a Lexical rich text editor.
+- The previous playground/docs/plugin showcase app is parked on the `parked-demos` branch.
 - The core is intentionally **auth-agnostic**. Callers must supply a safe tenant-scoped `projectId`.
 
 ## Quick Map
 - `services/index.js` — Express API, in-memory cache, compile/suggest endpoints, plugin system.
 - `services/index.d.ts` — TypeScript definitions for the public API and plugin interfaces.
 - `tests/*.test.js` — Vitest tests (239 tests across 18 files).
-- `plugins/auto-promote/` — built-in auto-promote plugin.
-- `demo/` — Preact SPA demo (Vite + `@preact/preset-vite`).
-  - `demo/src/App.jsx` — root component with preact-router (5 routes: playground, docs, plugin showcases).
-  - `demo/src/components/` — EditorPane, PreviewFrame, MonacoEditor, DocsShell, DocsSidebar, etc.
-  - `demo/src/pages/` — Docs, Analytics, AutoPromote page components.
-  - `demo/demo.css` — hand-written CSS for things Tailwind can't express.
+- `plugins/auto-promote/` — built-in auto-promote plugin used by the Lexical demo and tests.
 - `lexical-demo/` — Lexical rich text editor demo (separate Vite app, deployed under `/lexical-demo/`).
-- `scripts/dev-server.js` — starts rich-wind core + serves the demo (dev and production modes).
-- `scripts/demo-routes.js` — Express handlers for documentation API (`/api/docs/*`).
-- `scripts/docs-catalog.js` — scans `/docs` directory, builds navigation catalog from markdown files.
-- `docs/` — Markdown documentation rendered inside the demo at `/docs`.
+- `lexical-demo/scripts/dev-server.js` — starts rich-wind core with demo plugins for the Lexical demo.
+- `scripts/` — root package/release utilities only (`clean-package`, pack smoke, load test).
+- `docs/` — Markdown documentation intended for GitHub Pages.
 
 ## Environment & Prereqs
 - Node.js **>= 20** (see `package.json`).
@@ -31,9 +25,9 @@ This file is for AI agents and contributors who clone the repo. It captures proj
 ## Run
 ```bash
 npm install
-npm run dev:demo
+npm run dev:lexical
 ```
-This starts the core service + demo at `http://localhost:3001` (`PORT` env overrides).
+This starts the core service with demo plugins at `http://localhost:3001` (`PORT` env overrides).
 
 For core-only (no demo UI):
 ```bash
@@ -73,15 +67,10 @@ Config can be set via `createCore({ config: { ... } })` or env vars:
 Arbitrary values (`text-[18px]`) are not enumerated.
 
 ## Demo Architecture
-The demo is a Preact SPA built with Vite:
-- **Playground** (`/`) — Monaco code editor with live preview iframe, auto-compile on keystroke.
-- **Docs** (`/docs`, `/docs/:slug`) — markdown docs fetched from `/api/docs/*` endpoints, rendered client-side.
-- **Plugin showcases** (`/plugins/analytics`, `/plugins/auto-promote`) — interactive dashboards for built-in plugins.
-- Preview iframe renders compiled HTML with CSS injected via `<style>` tags.
-- `VITE_RW_CORE_URL` env var controls the core API base URL (defaults to `http://localhost:3001`).
+The previous playground/docs/plugin showcase app is parked on the `parked-demos` branch. Keep this branch focused on the core runtime, package docs, and the Lexical reference app.
 
 ## Lexical Demo
-The lexical-demo is a separate Preact app at `lexical-demo/`:
+The lexical-demo is a separate Vite app at `lexical-demo/`:
 - Multi-page editor with Tailwind class inspector panel.
 - Built with Vite, deployed under `/lexical-demo/` base path.
 - Shares the same core API via `VITE_RW_CORE_URL`.
@@ -94,14 +83,14 @@ The lexical-demo is a separate Preact app at `lexical-demo/`:
 ## Safe Changes Checklist
 1. **Core API changes** → update README + tests + `docs/api-reference.md`.
 2. **Plugin system changes** → update `docs/plugin-system.md` + `services/index.d.ts` + tests.
-3. **Demo component changes** → verify all 5 routes still render correctly.
-4. **Preview/CSP changes** → verify Google Fonts and custom CSS still work in iframe.
-5. **Documentation changes** → verify `/api/docs/catalog` and `/api/docs/:slug` still serve correctly.
+3. **Lexical demo component changes** → verify the editor, preview iframe, inspector, and autocomplete still render correctly.
+4. **Preview/CSP changes** → verify Google Fonts and custom CSS still work in the Lexical preview iframe.
+5. **Documentation changes** → verify Markdown links and GitHub Pages suitability.
 
 ## Common Gotchas
 - Do not hardcode preview styles in the compile route; keep styles in Custom CSS.
 - `RW_TRUST_PROXY` affects rate-limit IP behavior; default false unless behind a trusted proxy.
-- The demo and lexical-demo are separate Vite apps with separate `package.json` files.
+- The full playground/docs/plugin showcase is intentionally parked on `parked-demos`; do not recreate it on `dev` unless requested.
 
 ## Git Workflow Expectations
 - For every meaningful code/documentation change, create a commit with a clear, specific message that explains intent.
