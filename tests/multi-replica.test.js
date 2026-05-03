@@ -601,7 +601,8 @@ describe('Multi-replica cacheStore behavior', () => {
       const cssAfterPurge = await fetch(
         `${replicaB.baseUrl}/api/css?projectId=purge-shared-page&pageId=hero`
       );
-      expect(cssAfterPurge.status).toBe(404);
+      expect(cssAfterPurge.status).toBe(200);
+      expect(await cssAfterPurge.text()).toBe('');
     } finally {
       await closeReplicas(replicas);
     }
@@ -666,12 +667,14 @@ describe('Multi-replica cacheStore behavior', () => {
       const pageAfterPurge = await fetch(
         `${replicaB.baseUrl}/api/css?projectId=purge-shared-project&pageId=p1`
       );
-      expect(pageAfterPurge.status).toBe(404);
+      expect(pageAfterPurge.status).toBe(200);
+      expect(await pageAfterPurge.text()).toBe('');
 
       const projectAfterPurge = await fetch(
         `${replicaB.baseUrl}/api/projects/purge-shared-project/css`
       );
-      expect(projectAfterPurge.status).toBe(404);
+      expect(projectAfterPurge.status).toBe(200);
+      expect(await projectAfterPurge.text()).toBe('');
     } finally {
       await closeReplicas(replicas);
     }
@@ -740,12 +743,14 @@ describe('Multi-replica cacheStore behavior', () => {
       const pageAfterPurge = await fetch(
         `${replicaC.baseUrl}/api/css?projectId=cold-purge-project&pageId=p1`
       );
-      expect(pageAfterPurge.status).toBe(404);
+      expect(pageAfterPurge.status).toBe(200);
+      expect(await pageAfterPurge.text()).toBe('');
 
       const projectAfterPurge = await fetch(
         `${replicaC.baseUrl}/api/projects/cold-purge-project/css`
       );
-      expect(projectAfterPurge.status).toBe(404);
+      expect(projectAfterPurge.status).toBe(200);
+      expect(await projectAfterPurge.text()).toBe('');
     } finally {
       await closeReplicas(replicas);
     }

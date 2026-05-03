@@ -28,7 +28,8 @@ describe('Cache eviction and TTL', () => {
       });
 
       const response = await fetch(`${baseUrl}/api/css?projectId=lru-proj&pageId=page1`);
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('');
     } finally {
       await close();
     }
@@ -67,7 +68,8 @@ describe('Cache eviction and TTL', () => {
       const page3 = await fetch(`${baseUrl}/api/css?projectId=lru-touch&pageId=page3`);
 
       expect(page1.status).toBe(200);
-      expect(page2.status).toBe(404);
+      expect(page2.status).toBe(200);
+      expect(await page2.text()).toBe('');
       expect(page3.status).toBe(200);
     } finally {
       await close();
@@ -90,7 +92,8 @@ describe('Cache eviction and TTL', () => {
       await sleep(200);
 
       const response = await fetch(`${baseUrl}/api/css?projectId=ttl-proj&pageId=page1`);
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('');
     } finally {
       await close();
     }
@@ -120,7 +123,8 @@ describe('Cache eviction and TTL', () => {
 
       await sleep(220);
       const expired = await fetch(`${baseUrl}/api/css?projectId=ttl-slide-read&pageId=page1`);
-      expect(expired.status).toBe(404);
+      expect(expired.status).toBe(200);
+      expect(await expired.text()).toBe('');
     } finally {
       await close();
     }
@@ -163,7 +167,8 @@ describe('Cache eviction and TTL', () => {
 
       await sleep(240);
       const expired = await fetch(`${baseUrl}/api/css?projectId=ttl-slide-compile&pageId=page1`);
-      expect(expired.status).toBe(404);
+      expect(expired.status).toBe(200);
+      expect(await expired.text()).toBe('');
     } finally {
       await close();
     }

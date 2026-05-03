@@ -244,7 +244,7 @@ export function createAutoPromotePlugin(options = {}) {
         const { projectId } = req.params;
         const css = promotedCssCache.get(projectId);
         if (!css) {
-          return res.status(404).json({ error: 'No promoted classes for this project.' });
+          return res.type('text/css').send('');
         }
         res.type('text/css').send(css);
       });
