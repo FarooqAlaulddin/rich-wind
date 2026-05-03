@@ -8,6 +8,7 @@ import { $isStyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { $isStyledHeadingNode } from '../nodes/StyledHeadingNode';
 import { $isTailwindSpanNode, $createTailwindSpanNode } from '../nodes/TailwindSpanNode';
 import AutocompletePlugin from '../plugins/AutocompletePlugin';
+import { CORE_BASE } from '../api';
 
 const BLOCK_TYPE_LABELS = {
   paragraph: 'Paragraph',
@@ -63,10 +64,10 @@ function BundleRow({ name, bytes, cssText, className }) {
 }
 
 function buildExportHtml(html, projectId, activePage, hasPageUtilities) {
-  const baseHref = `/rich-wind/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
-  const themeHref = `/rich-wind/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
-  const promotedHref = `/rich-wind/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
-  const utilitiesHref = `/rich-wind/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
+  const baseHref = `${CORE_BASE}/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
+  const themeHref = `${CORE_BASE}/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
+  const promotedHref = `${CORE_BASE}/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
+  const utilitiesHref = `${CORE_BASE}/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
   const cssLinks = [
     `<link rel="stylesheet" href="${baseHref}">`,
     `<link rel="stylesheet" href="${themeHref}">`,
