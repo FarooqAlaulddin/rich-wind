@@ -63,47 +63,37 @@ function BundleRow({ name, bytes, cssText, className }) {
   );
 }
 
-function buildExportHtml(html, projectId, activePage, hasPageUtilities) {
+function buildExportHtml(html, projectId, activePage) {
   const baseHref = `${CORE_BASE}/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
   const themeHref = `${CORE_BASE}/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
   const promotedHref = `${CORE_BASE}/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
-  const utilitiesHref = `${CORE_BASE}/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=utilities`;
-  const cssLinks = [
-    `<link rel="stylesheet" href="${baseHref}">`,
-    `<link rel="stylesheet" href="${themeHref}">`,
-    `<link rel="stylesheet" href="${promotedHref}">`,
-  ];
-  if (hasPageUtilities) {
-    cssLinks.push(`<link rel="stylesheet" href="${utilitiesHref}">`);
-  }
+  const compileUrl = `${CORE_BASE}/api/compile`;
+  // Inline script: on load, recompile current body HTML and inject utilities CSS.
+  // Lets external editors (html.onlineviewer.net etc.) add/change Tailwind classes —
+  // edit, reload, and the new classes compile and apply automatically.
+  const recompileScript = `<script>
+(function(){
+  var b=document.body.cloneNode(true);
+  [].forEach.call(b.querySelectorAll('script'),function(s){s.remove()});
+  fetch(${JSON.stringify(compileUrl)},{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({projectId:${JSON.stringify(projectId||'')},pageId:${JSON.stringify(activePage||'')},html:b.innerHTML,bundle:'utilities'})
+  }).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.css){var s=document.createElement('style');s.textContent=d.css;document.head.appendChild(s)}
+  }).catch(function(){});
+})();
+<\/script>`;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  ${cssLinks.join('\n  ')}
+  <link rel="stylesheet" href="${baseHref}">
+  <link rel="stylesheet" href="${themeHref}">
+  <link rel="stylesheet" href="${promotedHref}">
 </head>
 <body>
 ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
-</body>
-</html>`;
-}
-
-function buildInlineExportHtml(html, baseCss, themeCss, utilitiesCss) {
-  const parts = [baseCss, themeCss, utilitiesCss].filter(Boolean);
-  const inlineCss = parts.join('\n\n');
-  const styleBlock = inlineCss
-    ? `<style>\n${inlineCss}\n</style>`
-    : '';
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  ${styleBlock}
-</head>
-<body>
-${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
+${recompileScript}
 </body>
 </html>`;
 }
@@ -269,9 +259,7 @@ export default function InspectorPanel({
   const pageUtilitiesTotal = (pageOrder || []).reduce((sum, id) => sum + (pages?.[id]?.cssSize || 0), 0);
   const sharedTotal = (sharedSizes?.base || 0) + (sharedSizes?.theme || 0);
   const total = sharedTotal + pageUtilitiesTotal;
-  const hasPageUtilities = (pages?.[activePage]?.cssSize || 0) > 0;
-  const exportHtml = buildExportHtml(html, projectId, activePage, hasPageUtilities);
-  const inlineExportHtml = buildInlineExportHtml(html, baseCss, themeCss, utilitiesCss);
+  const exportHtml = buildExportHtml(html, projectId, activePage);
 
   return (
     <div className="inspector-panel">
@@ -352,55 +340,29 @@ export default function InspectorPanel({
         </button>
         {exportOpen && (
           <div className="export-content">
-            <div className="export-tabs">
+            <pre className="export-code">{exportHtml}</pre>
+            <div className="export-actions">
               <button
-                className={`export-tab${copied !== 'inline' ? ' export-tab-active' : ''}`}
-                onClick={() => setCopied(null)}
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(exportHtml);
+                  setCopied('html');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
               >
-                Linked
+                {copied === 'html' ? 'Copied!' : 'Copy HTML'}
               </button>
               <button
-                className={`export-tab${copied === 'inline' || copied === 'inline-copied' ? ' export-tab-active' : ''}`}
-                onClick={() => setCopied('inline')}
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(css || '');
+                  setCopied('css');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
               >
-                Inline CSS
+                {copied === 'css' ? 'Copied!' : 'Copy CSS'}
               </button>
             </div>
-            {(copied !== 'inline' && copied !== 'inline-copied') ? (
-              <>
-                <pre className="export-code">{exportHtml}</pre>
-                <p className="export-note">CSS is served live from Rich Wind. Paste your HTML into an editor, compile, then export again if styles are missing.</p>
-                <div className="export-actions">
-                  <button
-                    className="export-btn"
-                    onClick={() => {
-                      navigator.clipboard.writeText(exportHtml);
-                      setCopied('html');
-                      setTimeout(() => setCopied(null), 1500);
-                    }}
-                  >
-                    {copied === 'html' ? 'Copied!' : 'Copy HTML'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <pre className="export-code">{inlineExportHtml}</pre>
-                <p className="export-note">Self-contained. CSS is embedded inline \u2014 works anywhere, no server needed.</p>
-                <div className="export-actions">
-                  <button
-                    className="export-btn"
-                    onClick={() => {
-                      navigator.clipboard.writeText(inlineExportHtml);
-                      setCopied('inline-copied');
-                      setTimeout(() => setCopied('inline'), 1500);
-                    }}
-                  >
-                    {copied === 'inline-copied' ? 'Copied!' : 'Copy HTML'}
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         )}
       </div>
