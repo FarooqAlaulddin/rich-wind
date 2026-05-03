@@ -8,6 +8,8 @@ const PORT = process.env.RW_CORE_PORT || process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '../dist');
 const isProd = process.env.NODE_ENV === 'production';
+const demoBase = `/${(process.env.RW_DEMO_BASE || '/rich-wind/lexical-demo')
+  .replace(/^\/+|\/+$/g, '')}`;
 
 const plugins = await loadPlugins();
 
@@ -30,7 +32,7 @@ const { app, close } = await createCore({
 });
 
 if (isProd) {
-  app.use('/rich-wind/lexical-demo', express.static(distDir));
+  app.use(demoBase, express.static(distDir));
 }
 
 const server = app.listen(PORT, () => {
