@@ -2080,6 +2080,9 @@ export async function createCore({
             );
             res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
             res.setHeader('Access-Control-Max-Age', '86400');
+            // CORP must match CORS: same-origin (default) would block <link>/<img>
+            // subresource loads from other origins even when CORS permits fetch access.
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         }
 
         if (req.method === 'OPTIONS' && corsEnabled) {
