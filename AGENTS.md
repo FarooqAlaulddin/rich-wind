@@ -19,7 +19,8 @@ This file is for AI agents and contributors who clone the repo. It captures proj
 - `docs/` — Markdown documentation intended for GitHub Pages.
 
 ## Environment & Prereqs
-- Node.js **>= 20** (see `package.json`).
+- Node.js **>= 20** for the core package.
+- Node.js **>= 20.19.0** for repo development and the Lexical demo, because Vite 8 requires it.
 - `npm` is used in scripts.
 
 ## Run

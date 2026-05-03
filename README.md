@@ -6,6 +6,8 @@ Designed for CMS platforms, visual editors, email builders, and any application 
 
 Pre-release scope: the npm package is the core runtime service. The only live reference app in this repo is `lexical-demo/`; the earlier playground/docs/plugin showcase app is parked on the `parked-demos` branch.
 
+Repo development and the Lexical demo require Node.js 20.19.0 or newer. The core package supports Node.js 20 or newer.
+
 ## Why It Helps
 
 - Supports dynamic content where classes are only known at runtime.
