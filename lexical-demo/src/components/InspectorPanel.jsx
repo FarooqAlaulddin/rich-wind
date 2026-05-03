@@ -64,30 +64,49 @@ function BundleRow({ name, bytes, cssText, className }) {
 }
 
 function buildExportHtml(html, projectId, activePage) {
-  const core = JSON.stringify(CORE_BASE);
-  const pid  = JSON.stringify(projectId  || '');
-  const pgid = JSON.stringify(activePage || '');
-  // Head script: defines shared vars and injects <link> tags early so
-  // stylesheets start downloading before the body renders.
-  // Body script: recompiles current HTML on every load so edits take effect
-  // after a reload — works in any external editor (html.onlineviewer.net etc.)
+  const coreUrl   = JSON.stringify(CORE_BASE);
+  const projectId_ = JSON.stringify(projectId  || '');
+  const pageId_    = JSON.stringify(activePage || '');
   const headScript = `<script>
-var RW=${core},P=${pid},G=${pgid};
-[RW+'/api/css?projectId='+P+'&pageId='+G+'&bundle=base',
- RW+'/api/projects/'+P+'/css?bundle=theme',
- RW+'/plugins/auto-promote/css/'+P
-].forEach(function(h){var l=document.createElement('link');l.rel='stylesheet';l.href=h;document.head.appendChild(l)});
+  // Rich Wind — shared config
+  var coreUrl   = ${coreUrl};
+  var projectId = ${projectId_};
+  var pageId    = ${pageId_};
+
+  // Shared stylesheets: base reset, project theme, promoted classes
+  // These are the same across every page — browsers cache them automatically
+  var sharedStylesheets = [
+    coreUrl + '/api/css?projectId=' + projectId + '&bundle=base',
+    coreUrl + '/api/projects/' + projectId + '/css?bundle=theme',
+    coreUrl + '/plugins/auto-promote/css/' + projectId,
+  ];
+  sharedStylesheets.forEach(function (href) {
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  });
 <\/script>`;
   const bodyScript = `<script>
-(function(){
-  var b=document.body.cloneNode(true);
-  [].forEach.call(b.querySelectorAll('script'),function(s){s.remove()});
-  fetch(RW+'/api/compile',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({projectId:P,pageId:G,html:b.innerHTML,bundle:'utilities'})
-  }).then(function(r){return r.json()}).then(function(d){
-    if(d&&d.css){var s=document.createElement('style');s.textContent=d.css;document.head.appendChild(s)}
-  }).catch(function(){});
-})();
+  // Page utilities: compile only the classes used on this specific page
+  // Edit any Tailwind class above and reload — this recompiles automatically
+  var body = document.body.cloneNode(true);
+  body.querySelectorAll('script').forEach(function (s) { s.remove(); });
+
+  fetch(coreUrl + '/api/compile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId: projectId, pageId: pageId, html: body.innerHTML, bundle: 'utilities' }),
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data && data.css) {
+        var style = document.createElement('style');
+        style.textContent = data.css;
+        document.head.appendChild(style);
+      }
+    })
+    .catch(function () {});
 <\/script>`;
   return `<!doctype html>
 <html>
