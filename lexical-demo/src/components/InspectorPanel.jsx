@@ -64,19 +64,26 @@ function BundleRow({ name, bytes, cssText, className }) {
 }
 
 function buildExportHtml(html, projectId, activePage) {
-  const baseHref = `${CORE_BASE}/api/css?projectId=${encodeURIComponent(projectId || '')}&pageId=${encodeURIComponent(activePage || '')}&bundle=base`;
-  const themeHref = `${CORE_BASE}/api/projects/${encodeURIComponent(projectId || '')}/css?bundle=theme`;
-  const promotedHref = `${CORE_BASE}/plugins/auto-promote/css/${encodeURIComponent(projectId || '')}`;
-  const compileUrl = `${CORE_BASE}/api/compile`;
-  // Inline script: on load, recompile current body HTML and inject utilities CSS.
-  // Lets external editors (html.onlineviewer.net etc.) add/change Tailwind classes —
-  // edit, reload, and the new classes compile and apply automatically.
-  const recompileScript = `<script>
+  const core = JSON.stringify(CORE_BASE);
+  const pid  = JSON.stringify(projectId  || '');
+  const pgid = JSON.stringify(activePage || '');
+  // Head script: defines shared vars and injects <link> tags early so
+  // stylesheets start downloading before the body renders.
+  // Body script: recompiles current HTML on every load so edits take effect
+  // after a reload — works in any external editor (html.onlineviewer.net etc.)
+  const headScript = `<script>
+var RW=${core},P=${pid},G=${pgid};
+[RW+'/api/css?projectId='+P+'&pageId='+G+'&bundle=base',
+ RW+'/api/projects/'+P+'/css?bundle=theme',
+ RW+'/plugins/auto-promote/css/'+P
+].forEach(function(h){var l=document.createElement('link');l.rel='stylesheet';l.href=h;document.head.appendChild(l)});
+<\/script>`;
+  const bodyScript = `<script>
 (function(){
   var b=document.body.cloneNode(true);
   [].forEach.call(b.querySelectorAll('script'),function(s){s.remove()});
-  fetch(${JSON.stringify(compileUrl)},{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({projectId:${JSON.stringify(projectId||'')},pageId:${JSON.stringify(activePage||'')},html:b.innerHTML,bundle:'utilities'})
+  fetch(RW+'/api/compile',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({projectId:P,pageId:G,html:b.innerHTML,bundle:'utilities'})
   }).then(function(r){return r.json()}).then(function(d){
     if(d&&d.css){var s=document.createElement('style');s.textContent=d.css;document.head.appendChild(s)}
   }).catch(function(){});
@@ -87,13 +94,11 @@ function buildExportHtml(html, projectId, activePage) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="${baseHref}">
-  <link rel="stylesheet" href="${themeHref}">
-  <link rel="stylesheet" href="${promotedHref}">
+  ${headScript}
 </head>
 <body>
 ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
-${recompileScript}
+${bodyScript}
 </body>
 </html>`;
 }
