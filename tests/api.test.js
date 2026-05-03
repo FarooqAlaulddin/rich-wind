@@ -419,11 +419,10 @@ describe('GET /api/css', () => {
     expect(css.length).toBeGreaterThan(0);
   });
 
-  it('returns 404 on cache miss', async () => {
+  it('returns empty CSS on cache miss', async () => {
     const response = await fetch(`${baseUrl}/api/css?projectId=missing-proj&pageId=missing-page`);
-    expect(response.status).toBe(404);
-    const body = await response.json();
-    expect(body.error).toBeTruthy();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('');
   });
 
   it('returns 400 when projectId is missing', async () => {
@@ -518,11 +517,10 @@ describe('GET /api/projects/:projectId/css', () => {
     expect(css.length).toBeGreaterThan(0);
   });
 
-  it('returns 404 for unknown project', async () => {
+  it('returns empty CSS for unknown project', async () => {
     const response = await fetch(`${baseUrl}/api/projects/unknown-project-xyz/css`);
-    expect(response.status).toBe(404);
-    const body = await response.json();
-    expect(body.error).toBeTruthy();
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('');
   });
 
   it('returns 400 for invalid projectId', async () => {

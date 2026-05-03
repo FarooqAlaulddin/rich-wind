@@ -185,14 +185,13 @@ describe('Auto-Promote Plugin', () => {
       await stopServer({ server, close });
     });
 
-    it('CSS route returns 404 when no promoted classes', async () => {
+    it('CSS route returns empty CSS when no promoted classes', async () => {
       const plugin = createAutoPromotePlugin({ threshold: 5 });
       const { port, server, close } = await startServer({ plugins: [plugin] });
 
       const cssRes = await fetch(`http://localhost:${port}/plugins/auto-promote/css/nonexistent`);
-      expect(cssRes.status).toBe(404);
-      const body = await cssRes.json();
-      expect(body.error).toContain('No promoted classes');
+      expect(cssRes.status).toBe(200);
+      expect(await cssRes.text()).toBe('');
 
       await stopServer({ server, close });
     });

@@ -1628,7 +1628,7 @@ app.get('/api/css', async (req, res) => {
             return res.type('text/css').send(resolved.css);
         }
 
-        return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
+        return res.type('text/css').send('');
     } catch (err) {
         const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
         await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: reqInfo });
@@ -1700,7 +1700,7 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             if (resolved) {
                 return res.type('text/css').send(resolved.css);
             }
-            return res.status(404).json({ error: 'Project not found in cache.' });
+            return res.type('text/css').send('');
         }
 
         if (
