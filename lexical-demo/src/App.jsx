@@ -3,6 +3,7 @@ import Editor from './components/Editor';
 import InspectorPanel from './components/InspectorPanel';
 import { useMultiPageCompile } from './hooks/useMultiPageCompile';
 import { useThemeMode } from './hooks/useThemeMode';
+import thinklyLogo from './assets/thinkly-logo.png';
 
 const PAGE_STYLE_ID = 'rw-editor-css';
 
@@ -58,7 +59,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Lexical + Rich Wind</h1>
+        <img src={thinklyLogo} alt="Thinkly.dev" className="header-logo" />
         <div className="header-actions">
           <button className="theme-btn" onClick={toggleTheme} title="Toggle dark mode">{isDark ? 'Light' : 'Dark'}</button>
           <button className="reset-btn" onClick={resetDemo} title="Reset demo to defaults">Reset</button>
