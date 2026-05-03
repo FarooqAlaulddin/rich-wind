@@ -58,12 +58,23 @@ const appendVaryHeader = (existingValue, nextToken) => {
         .split(',')
         .map((part) => part.trim())
         .filter(Boolean);
-    if (!existing.includes(nextToken)) existing.push(nextToken);
+    const lowerToken = nextToken.toLowerCase();
+    if (!existing.some((t) => t.toLowerCase() === lowerToken)) existing.push(nextToken);
     return existing.join(', ');
 };
 
 const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
 const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
+
+// Pre-compiled regex constants
+const VALID_ID_RE = /^[a-zA-Z0-9._-]+$/;
+const CSS_HEADER_RE = /^\/\*![\s\S]*?\*\/\n@layer[^;]*;\n/;
+const THEME_BLOCK_RE = /:root, :host\s*\{[\s\S]*?\}\n?/g;
+const LAYER_DECL_RE = /@layer[^;]*;/;
+const ESCAPE_BACKSLASH_RE = /\\/g;
+const ESCAPE_QUOTE_RE = /"/g;
+// Reject characters that could break out of @source inline("...") directives
+const UNSAFE_CLASS_CHAR_RE = /[);\n\r\0]/;
 
 function normalizeNodeRole(value) {
     if (typeof value !== 'string') return 'hybrid';
@@ -212,7 +223,8 @@ function createRateLimiter(config) {
         return next();
     };
 
-    return { middleware };
+    const destroy = () => { if (cleanup) clearInterval(cleanup); };
+    return { middleware, destroy };
 }
 
 // =============================================================================
@@ -320,7 +332,7 @@ function normalizeClassList(input) {
 function isValidId(value, config) {
     if (!value || typeof value !== 'string') return false;
     if (value.length > config.maxIdLength) return false;
-    return /^[a-zA-Z0-9._-]+$/.test(value);
+    return VALID_ID_RE.test(value);
 }
 
 function hashClasses(classes) {
@@ -329,6 +341,16 @@ function hashClasses(classes) {
 
 function isExpired(entry) {
     return entry?.expiresAt && entry.expiresAt <= Date.now();
+}
+
+// Singleflight: coalesce concurrent compile calls for identical class sets
+const compileInflight = new Map();
+function coalesceCompile(key, fn) {
+    const existing = compileInflight.get(key);
+    if (existing) return existing;
+    const promise = fn().finally(() => compileInflight.delete(key));
+    compileInflight.set(key, promise);
+    return promise;
 }
 
 function normalizeTimestamp(value, fallback) {
@@ -479,7 +501,6 @@ function hydratePageFromArtifact(state, config, projectId, pageId, bundle, sanit
 
     const pageKey = makePageKey(projectId, pageId);
     state.pageLru.set(pageKey, { projectId, pageId });
-    touchPageKey(state, pageKey);
     evictIfNeeded(state, config);
 
     return true;
@@ -767,22 +788,24 @@ function stampCss(css) {
 
 // Generate CSS for a set of classes
 async function generateCssForClasses(classes) {
-    let inputCss = '@layer theme, base, components, utilities;\n';
-    inputCss += '@import "tailwindcss/preflight";\n';
-    inputCss += '@import "tailwindcss/utilities";\n';
-    inputCss += '@import "tailwindcss/theme.css";\n';
-    
-    // Add @source directives for each class
-    classes.forEach(className => {
-        const escaped = className.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        inputCss += `@source inline("${escaped}");\n`;
-    });
-    
+    const parts = [
+        '@layer theme, base, components, utilities;',
+        '@import "tailwindcss/preflight";',
+        '@import "tailwindcss/utilities";',
+        '@import "tailwindcss/theme.css";'
+    ];
+    for (const className of classes) {
+        if (UNSAFE_CLASS_CHAR_RE.test(className)) continue;
+        const escaped = className.replace(ESCAPE_BACKSLASH_RE, '\\\\').replace(ESCAPE_QUOTE_RE, '\\"');
+        parts.push(`@source inline("${escaped}");`);
+    }
+    const inputCss = parts.join('\n') + '\n';
+
     const compiled = await compile(inputCss, {
         base: __dirname,
         onDependency: () => {}
     });
-    
+
     return stampCss(compiled.build(classes));
 }
 
@@ -790,14 +813,14 @@ async function generateCssForClasses(classes) {
 // Bundle splitting (theme vs utilities)
 // =============================================================================
 function splitThemeUtilitiesCss(css = '') {
-    const headerMatch = css.match(/^\/\*![\s\S]*?\*\/\n@layer[^;]*;\n/);
+    const headerMatch = css.match(CSS_HEADER_RE);
     const header = headerMatch ? headerMatch[0] : '';
     const body = headerMatch ? css.slice(header.length) : css;
-    const themeBlocks = body.match(/:root, :host\s*\{[\s\S]*?\}\n?/g) || [];
+    const themeBlocks = body.match(THEME_BLOCK_RE) || [];
     const themeBody = themeBlocks.join('\n').trim();
-    const utilitiesBody = body.replace(/:root, :host\s*\{[\s\S]*?\}\n?/g, '').trim();
-    const themeHeader = header ? header.replace(/@layer[^;]*;/, '@layer theme;') : '';
-    const utilitiesHeader = header ? header.replace(/@layer[^;]*;/, '@layer utilities;') : '';
+    const utilitiesBody = body.replace(THEME_BLOCK_RE, '').trim();
+    const themeHeader = header ? header.replace(LAYER_DECL_RE, '@layer theme;') : '';
+    const utilitiesHeader = header ? header.replace(LAYER_DECL_RE, '@layer utilities;') : '';
 
     return {
         themeCss: `${themeHeader}${themeBody ? `\n${themeBody}` : ''}`.trim(),
@@ -806,14 +829,17 @@ function splitThemeUtilitiesCss(css = '') {
 }
 
 async function generateThemeUtilitiesForClasses(classes) {
-    let inputCss = '@layer theme, utilities;\n';
-    inputCss += '@import "tailwindcss/utilities";\n';
-    inputCss += '@import "tailwindcss/theme.css";\n';
-
-    classes.forEach(className => {
-        const escaped = className.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        inputCss += `@source inline("${escaped}");\n`;
-    });
+    const parts = [
+        '@layer theme, utilities;',
+        '@import "tailwindcss/utilities";',
+        '@import "tailwindcss/theme.css";'
+    ];
+    for (const className of classes) {
+        if (UNSAFE_CLASS_CHAR_RE.test(className)) continue;
+        const escaped = className.replace(ESCAPE_BACKSLASH_RE, '\\\\').replace(ESCAPE_QUOTE_RE, '\\"');
+        parts.push(`@source inline("${escaped}");`);
+    }
+    const inputCss = parts.join('\n') + '\n';
 
     const compiled = await compile(inputCss, {
         base: __dirname,
@@ -848,17 +874,17 @@ function normalizeBundle(value) {
 }
 
 async function resolveClassesFromInput({ html, classes }) {
-    let fromHtml = [];
-    if (html) {
-        fromHtml = await extractClasses(html);
-    }
-
+    // extractClasses already validates via candidatesToCss, so only
+    // validate the raw class input to avoid a redundant second pass.
+    const fromHtml = html ? await extractClasses(html) : [];
     const fromInput = normalizeClassList(classes);
-    const combined = new Set([...fromHtml, ...fromInput]);
-    const classList = Array.from(combined);
 
-    const valid = await filterValidClasses(classList);
-    return valid.sort();
+    if (fromInput.length === 0) {
+        return Array.from(new Set(fromHtml)).sort();
+    }
+    const validInput = await filterValidClasses(fromInput);
+    const combined = new Set([...fromHtml, ...validInput]);
+    return Array.from(combined).sort();
 }
 
 async function compileAndCachePage({
@@ -959,11 +985,12 @@ async function compileAndCachePage({
     }
 
     let css = '';
+    const compileKey = `${classHash}:${normalizedBundle === 'utilities' || normalizedBundle === 'theme' ? 'split' : 'full'}`;
     if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
-        const split = await generateThemeUtilitiesForClasses(resolvedClasses);
+        const split = await coalesceCompile(compileKey, () => generateThemeUtilitiesForClasses(resolvedClasses));
         css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
     } else {
-        css = await generateCssForClasses(resolvedClasses);
+        css = await coalesceCompile(compileKey, () => generateCssForClasses(resolvedClasses));
     }
 
     // transformCss pipeline
@@ -1016,7 +1043,6 @@ async function compileAndCachePage({
 
     const pageKey = makePageKey(projectId, pageId);
     state.pageLru.set(pageKey, { projectId, pageId });
-    touchPageKey(state, pageKey);
     evictIfNeeded(state, config);
 
     // Fire observer hooks
@@ -1229,6 +1255,19 @@ function createPluginRunner(plugins = [], options = {}) {
         seenRouteNames.set(plugin.routeName, plugin.name);
     }
 
+    // Pre-compute which plugins implement each hook for fast dispatch
+    const ALL_HOOKS = [
+        'onRequestStart', 'onResponseSent', 'onCompileStart', 'onCompileResult',
+        'onCacheHit', 'onCacheMiss', 'onProjectCss', 'onSuggest', 'onError',
+        'transformClasses', 'transformCss', 'transformSuggestions',
+        'resolvePageCss', 'resolveProjectCss'
+    ];
+    const hookSubscribers = new Map();
+    for (const hook of ALL_HOOKS) {
+        const subscribers = list.filter(p => typeof p.instance?.[hook] === 'function');
+        hookSubscribers.set(hook, subscribers);
+    }
+
     const NEVER_DEFER_HOOKS = new Set([
         'onError', 'transformClasses', 'transformCss', 'transformSuggestions',
         'resolvePageCss', 'resolveProjectCss'
@@ -1273,8 +1312,10 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runHook = async (hook, context) => {
+        const subscribers = hookSubscribers.get(hook);
+        if (!subscribers || subscribers.length === 0) return;
         const hookContext = buildHookContext(context);
-        for (const plugin of list) {
+        for (const plugin of subscribers) {
             if (shouldDefer(plugin, hook)) {
                 const p = plugin;
                 const parentStore = hookStore.getStore();
@@ -1295,9 +1336,11 @@ function createPluginRunner(plugins = [], options = {}) {
     };
 
     const runPipeline = async (hook, context, initialValue) => {
+        const subscribers = hookSubscribers.get(hook);
+        if (!subscribers || subscribers.length === 0) return initialValue;
         const hookContext = buildHookContext(context);
         let value = initialValue;
-        for (const plugin of list) {
+        for (const plugin of subscribers) {
             if (!plugin.active || plugin.failed) continue;
             const fn = plugin.instance && typeof plugin.instance[hook] === 'function' ? plugin.instance[hook] : null;
             if (!fn) continue;
@@ -1460,7 +1503,7 @@ app.post('/api/compile', async (req, res) => {
         });
     } catch (err) {
         await pluginRunner.runHook('onError', { error: err, stage: 'compile', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
@@ -1587,8 +1630,9 @@ app.get('/api/css', async (req, res) => {
 
         return res.status(404).json({ error: 'Cache miss. POST /api/compile with html/classes first.' });
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: hookContext.request });
-        res.status(500).json({ error: err.message });
+        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
+        await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: reqInfo });
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
@@ -1690,8 +1734,9 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
         });
         return res.type('text/css').send(result?.css ?? '');
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: hookContext.request });
-        res.status(500).json({ error: err.message });
+        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
+        await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: reqInfo });
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
@@ -1745,7 +1790,7 @@ app.post('/api/suggest', async (req, res) => {
         // Phase 3: Post-validation
         if (!Array.isArray(suggestions)) suggestions = allSuggestions;
         suggestions = suggestions.filter(s => typeof s === 'string');
-        suggestions = [...new Map(suggestions.map(s => [s, true])).keys()];
+        suggestions = [...new Set(suggestions)];
         const effectiveLimit = Math.min(limit, config.suggestLimit);
         suggestions = suggestions.slice(0, effectiveLimit);
 
@@ -1754,7 +1799,7 @@ app.post('/api/suggest', async (req, res) => {
         return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
     } catch (err) {
         await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Internal server error.' });
     }
 });
 
@@ -2287,6 +2332,7 @@ export async function createCore({
     const close = () => {
         if (closePromise) return closePromise;
         closePromise = (async () => {
+            rateLimiter.destroy();
             await storeWriteQueue.drain();
             for (const plugin of [...pluginRunner.list].reverse()) {
                 if (typeof plugin.instance.teardown === 'function') {

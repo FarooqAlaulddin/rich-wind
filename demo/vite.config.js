@@ -37,6 +37,14 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true,
     proxy: {
+      '/rich-wind/api': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
+      },
+      '/rich-wind/plugins': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
+      },
       '/api': coreOrigin,
       '/plugins': coreOrigin,
     },
