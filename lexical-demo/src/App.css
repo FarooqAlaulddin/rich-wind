@@ -26,9 +26,9 @@ body {
   flex-shrink: 0;
 }
 
-.header-logo {
-  height: 28px;
-  width: auto;
+.app-header h1 {
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .header-actions {
