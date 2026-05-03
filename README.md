@@ -2,12 +2,6 @@
 
 Runtime Tailwind CSS compiler. Send HTML or class names, get compiled CSS back. No build step, no CLI — just an HTTP API that compiles on demand.
 
-Designed for CMS platforms, visual editors, email builders, and any application where Tailwind classes aren't known until runtime.
-
-Pre-release scope: the npm package is the core runtime service. The only live reference app in this repo is `lexical-demo/`; the earlier playground/docs/plugin showcase app is parked on the `parked-demos` branch.
-
-Repo development and the Lexical demo require Node.js 20.19.0 or newer. The core package supports Node.js 20 or newer.
-
 ## Why It Helps
 
 - Supports dynamic content where classes are only known at runtime.
