@@ -70,6 +70,9 @@ jobs:
       - name: Run package smoke test
         run: npm run test:pack
 
+      - name: Build lexical demo production bundle
+        run: npm run build:lexical-demo
+
       - name: Configure git author
         run: |
           git config user.name "github-actions[bot]"

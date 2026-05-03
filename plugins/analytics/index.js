@@ -9,7 +9,7 @@
  * Exposes one route:
  *   GET /data  — full JSON metrics dump (tracked + live state)
  *
- * The dashboard UI lives in the React Router app at /plugins/analytics.
+ * The old dashboard UI is parked on the `parked-demos` branch.
  */
 
 // Ring buffer: fixed-capacity circular buffer (O(1) push)

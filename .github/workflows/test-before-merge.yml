@@ -45,8 +45,5 @@ jobs:
       - name: Run package smoke test
         run: npm run test:pack
 
-      - name: Build demo production bundle
-        run: npm run build --workspace=demo
-
       - name: Build lexical demo production bundle
-        run: npm run build --workspace=lexical-demo
+        run: npm run build:lexical-demo

@@ -4,6 +4,8 @@ Rich Wind is a runtime Tailwind CSS compiler. You send it HTML or a list of Tail
 
 It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders. Anywhere you don't know the final set of Tailwind classes until runtime.
 
+First pre-release scope: Rich Wind publishes the core runtime service. The Lexical demo remains in the repo as the live reference app; the older playground/docs/plugin showcase app is parked on the `parked-demos` branch.
+
 ## Why It Helps
 
 - Handles dynamic pages where class names are not known during CI/build.
@@ -36,11 +38,21 @@ You can also ask for a **project-level stylesheet** — the union of every class
 ## Quick Start
 
 ```bash
-npm install
-npm run dev
+npm install rich-wind
 ```
 
-The API starts at `http://localhost:3001`. Compile a page:
+Create an HTTP service in your app:
+
+```js
+import { createCore } from "rich-wind";
+
+const { app, close } = await createCore();
+const server = app.listen(3001, () => {
+  console.log("Rich Wind running on http://localhost:3001");
+});
+```
+
+Compile a page:
 
 ```bash
 curl -X POST http://localhost:3001/api/compile \
@@ -53,15 +65,6 @@ curl -X POST http://localhost:3001/api/compile \
 ```
 
 The response includes the compiled CSS, the list of classes found, and a content hash you can use for cache invalidation on your end.
-
-To embed it in your own Node app:
-
-```js
-import { createCore } from "rich-wind";
-
-const { app } = await createCore();
-app.listen(3001);
-```
 
 `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function. You can mount it, add middleware, or pass configuration to control cache sizes, rate limits, and timeouts.
 
@@ -80,9 +83,9 @@ Splitting makes sense when many pages share the same design tokens but have diff
 
 ## What's in the Docs
 
-- **[API Reference](/docs/api-reference)** — every endpoint, every parameter, every config option
-- **[OpenAPI Contract](/docs/openapi.json)** — machine-readable API schema for tooling and client generation
-- **[Runtime Spec](/docs/runtime-spec)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
-- **[Plugin System](/docs/plugin-system)** — lifecycle hooks, setup context, plugin storage, and custom behavior
-- **[Integration Cookbook](/docs/integration-cookbook)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
-- **[FAQ](/docs/faq)** — common implementation and architecture questions
+- **[API Reference](api-reference.html)** — every endpoint, every parameter, every config option
+- **[OpenAPI Contract](openapi.json)** — machine-readable API schema for tooling and client generation
+- **[Runtime Spec](runtime-spec.html)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
+- **[Plugin System](plugin-system.html)** — lifecycle hooks, setup context, plugin storage, and custom behavior
+- **[Integration Cookbook](integration-cookbook.html)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
+- **[FAQ](faq.html)** — common implementation and architecture questions

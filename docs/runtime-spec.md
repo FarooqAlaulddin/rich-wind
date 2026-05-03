@@ -193,7 +193,7 @@ If implemented, it should remove all persisted page artifacts for the project ac
 
 ### Plugin data methods (optional)
 
-These methods back the plugin storage API described in [Plugin System](/docs/plugin-system#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
+These methods back the plugin storage API described in [Plugin System](plugin-system.html#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
 
 #### readPluginData
 
@@ -260,7 +260,7 @@ Rich Wind sanitizes list output before returning it to plugins: non-string keys 
 
 ### Failure behavior
 
-The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](/docs/plugin-system#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
+The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](plugin-system.html#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
 
 For plugin storage specifically:
 - `ctx.storage.get(key)` falls back to `null`

@@ -16,7 +16,6 @@
     "services/"
   ],
   "workspaces": [
-    "demo",
     "lexical-demo"
   ],
   "engines": {
@@ -25,8 +24,9 @@
   "scripts": {
     "start": "node ./services/index.js",
     "dev": "node --watch ./services/index.js",
-    "dev:demo": "node --watch ./scripts/dev-server.js",
-    "dev:ui": "npm run dev --workspace=demo",
+    "dev:lexical": "node --watch ./lexical-demo/scripts/dev-server.js",
+    "dev:lexical-ui": "npm run dev --workspace=lexical-demo",
+    "build:lexical-demo": "npm run build --workspace=lexical-demo",
     "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
