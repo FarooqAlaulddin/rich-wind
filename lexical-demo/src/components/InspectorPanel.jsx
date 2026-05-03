@@ -89,25 +89,6 @@ ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
 </html>`;
 }
 
-function buildInlineExportHtml(html, baseCss, themeCss, utilitiesCss) {
-  const parts = [baseCss, themeCss, utilitiesCss].filter(Boolean);
-  const inlineCss = parts.join('\n\n');
-  const styleBlock = inlineCss
-    ? `<style>\n${inlineCss}\n</style>`
-    : '';
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  ${styleBlock}
-</head>
-<body>
-${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
-</body>
-</html>`;
-}
-
 export default function InspectorPanel({
   editor,
   html,
@@ -271,7 +252,6 @@ export default function InspectorPanel({
   const total = sharedTotal + pageUtilitiesTotal;
   const hasPageUtilities = (pages?.[activePage]?.cssSize || 0) > 0;
   const exportHtml = buildExportHtml(html, projectId, activePage, hasPageUtilities);
-  const inlineExportHtml = buildInlineExportHtml(html, baseCss, themeCss, utilitiesCss);
 
   return (
     <div className="inspector-panel">
@@ -352,55 +332,29 @@ export default function InspectorPanel({
         </button>
         {exportOpen && (
           <div className="export-content">
-            <div className="export-tabs">
+            <pre className="export-code">{exportHtml}</pre>
+            <div className="export-actions">
               <button
-                className={`export-tab${copied !== 'inline' ? ' export-tab-active' : ''}`}
-                onClick={() => setCopied(null)}
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(exportHtml);
+                  setCopied('html');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
               >
-                Linked
+                {copied === 'html' ? 'Copied!' : 'Copy HTML'}
               </button>
               <button
-                className={`export-tab${copied === 'inline' || copied === 'inline-copied' ? ' export-tab-active' : ''}`}
-                onClick={() => setCopied('inline')}
+                className="export-btn"
+                onClick={() => {
+                  navigator.clipboard.writeText(css || '');
+                  setCopied('css');
+                  setTimeout(() => setCopied(null), 1500);
+                }}
               >
-                Inline CSS
+                {copied === 'css' ? 'Copied!' : 'Copy CSS'}
               </button>
             </div>
-            {(copied !== 'inline' && copied !== 'inline-copied') ? (
-              <>
-                <pre className="export-code">{exportHtml}</pre>
-                <p className="export-note">CSS is served live from Rich Wind. Paste your HTML into an editor, compile, then export again if styles are missing.</p>
-                <div className="export-actions">
-                  <button
-                    className="export-btn"
-                    onClick={() => {
-                      navigator.clipboard.writeText(exportHtml);
-                      setCopied('html');
-                      setTimeout(() => setCopied(null), 1500);
-                    }}
-                  >
-                    {copied === 'html' ? 'Copied!' : 'Copy HTML'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <pre className="export-code">{inlineExportHtml}</pre>
-                <p className="export-note">Self-contained. CSS is embedded inline \u2014 works anywhere, no server needed.</p>
-                <div className="export-actions">
-                  <button
-                    className="export-btn"
-                    onClick={() => {
-                      navigator.clipboard.writeText(inlineExportHtml);
-                      setCopied('inline-copied');
-                      setTimeout(() => setCopied('inline'), 1500);
-                    }}
-                  >
-                    {copied === 'inline-copied' ? 'Copied!' : 'Copy HTML'}
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         )}
       </div>
