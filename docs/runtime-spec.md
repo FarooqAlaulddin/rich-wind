@@ -341,6 +341,8 @@ Every response includes these headers:
 | `X-Frame-Options` | `DENY` | Prevents embedding in iframes |
 | `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
 
+CSS responses and `GET /richwind-loader.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources from exported/static HTML. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
+
 ## What the Core Doesn't Do
 
 Rich Wind is intentionally limited in scope. It doesn't include:

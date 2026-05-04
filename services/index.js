@@ -818,6 +818,119 @@ function normalizeBundle(value) {
     return 'full';
 }
 
+const RICH_WIND_LOADER_JS = `(function () {
+  'use strict';
+
+  var script = document.currentScript;
+  if (!script) {
+    var scripts = document.getElementsByTagName('script');
+    script = scripts[scripts.length - 1] || null;
+  }
+
+  function getAttr(name, fallback) {
+    if (!script) return fallback;
+    var value = script.getAttribute(name);
+    return value === null || value === '' ? fallback : value;
+  }
+
+  function trimTrailingSlash(value) {
+    return String(value || '').replace(/\\/+$/, '');
+  }
+
+  function inferCoreUrl() {
+    var globalConfig = window.RichWind || {};
+    var explicit = getAttr('data-core-url', globalConfig.coreUrl || '');
+    if (explicit) return trimTrailingSlash(explicit);
+    if (!script || !script.src) return '';
+
+    try {
+      var url = new URL(script.src, window.location.href);
+      url.pathname = url.pathname.replace(/\\/[^/]*$/, '');
+      url.search = '';
+      url.hash = '';
+      return trimTrailingSlash(url.href);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function encode(value) {
+    return encodeURIComponent(String(value || ''));
+  }
+
+  function addStylesheet(href) {
+    if (!href || !document.head) return;
+    var links = document.getElementsByTagName('link');
+    for (var i = 0; i < links.length; i += 1) {
+      if (links[i].rel === 'stylesheet' && links[i].href === href) return;
+    }
+
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.setAttribute('data-rich-wind', 'true');
+    document.head.appendChild(link);
+  }
+
+  function removeScripts(root) {
+    var scripts = root.querySelectorAll('script');
+    for (var i = 0; i < scripts.length; i += 1) {
+      if (scripts[i].parentNode) scripts[i].parentNode.removeChild(scripts[i]);
+    }
+  }
+
+  var globalConfig = window.RichWind || {};
+  var coreUrl = inferCoreUrl();
+  var projectId = getAttr('data-project-id', globalConfig.projectId || '');
+  var pageId = getAttr('data-page-id', globalConfig.pageId || 'default');
+  var bundle = getAttr('data-bundle', 'utilities');
+  var shouldCompile = getAttr('data-compile', 'true') !== 'false';
+
+  if (!coreUrl || !projectId) return;
+
+  var encodedProjectId = encode(projectId);
+  addStylesheet(coreUrl + '/api/css?projectId=' + encodedProjectId + '&bundle=base');
+  addStylesheet(coreUrl + '/api/projects/' + encodedProjectId + '/css?bundle=theme');
+  addStylesheet(coreUrl + '/plugins/auto-promote/css/' + encodedProjectId);
+
+  function compilePage() {
+    if (!shouldCompile || !document.body || !window.fetch) return;
+
+    var body = document.body.cloneNode(true);
+    removeScripts(body);
+
+    window.fetch(coreUrl + '/api/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: projectId,
+        pageId: pageId || 'default',
+        html: body.innerHTML,
+        bundle: bundle
+      })
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error('Rich Wind compile failed');
+        return response.json();
+      })
+      .then(function (data) {
+        if (!data || !data.css || !document.head) return;
+        var style = document.createElement('style');
+        style.setAttribute('data-rich-wind', 'utilities');
+        style.textContent = data.css;
+        document.head.appendChild(style);
+      })
+      .catch(function () {});
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', compilePage);
+  } else {
+    compilePage();
+  }
+}());
+`;
+
 async function resolveClassesFromInput({ html, classes }) {
     // extractClasses already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
@@ -1391,6 +1504,17 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
         : (async () => {});
 // API Routes
 
+// Browser loader for plain HTML exports and static HTML viewers.
+app.get('/richwind-loader.js', (req, res) => {
+    withRequestHooks(req, res, {
+        action: 'loader',
+        request: { ip: getClientIp(req), method: req.method, path: req.path }
+    });
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.type('application/javascript').send(RICH_WIND_LOADER_JS);
+});
+
 // Compile CSS for a project/page (in-memory cache)
 app.post('/api/compile', async (req, res) => {
     try {
@@ -1478,6 +1602,7 @@ app.get('/api/css', async (req, res) => {
         const projectId = req.query.projectId ?? req.query.project_id;
         const pageId = req.query.pageId ?? req.query.page_id ?? 'default';
         const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const hookContext = {
             projectId,
             pageId,
@@ -1606,6 +1731,7 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
     try {
         const { projectId } = req.params;
         const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const hookContext = {
             projectId,
             bundle,

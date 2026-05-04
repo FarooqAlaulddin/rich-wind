@@ -179,6 +179,7 @@ describe('Auto-Promote Plugin', () => {
 
       const cssRes = await fetch(`http://localhost:${port}/plugins/auto-promote/css/proj`);
       expect(cssRes.status).toBe(200);
+      expect(cssRes.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
       const css = await cssRes.text();
       expect(css.length).toBeGreaterThan(0);
 

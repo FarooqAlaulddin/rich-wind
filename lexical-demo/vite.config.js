@@ -25,6 +25,10 @@ export default defineConfig({
       path: demoBase,
     },
     proxy: {
+      '/core/richwind-loader.js': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/core/, ''),
+      },
       '/core/api': {
         target: coreOrigin,
         rewrite: (path) => path.replace(/^\/core/, ''),
@@ -32,6 +36,10 @@ export default defineConfig({
       '/core/plugins': {
         target: coreOrigin,
         rewrite: (path) => path.replace(/^\/core/, ''),
+      },
+      '/rich-wind/richwind-loader.js': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
       },
       '/rich-wind/api': {
         target: coreOrigin,
