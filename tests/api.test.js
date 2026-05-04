@@ -734,6 +734,22 @@ describe('GET /richwind-loader.js', () => {
   });
 });
 
+describe('GET /richwind-reload.js', () => {
+  it('returns the reload helper as cacheable JavaScript', async () => {
+    const response = await fetch(`${baseUrl}/richwind-reload.js`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('application/javascript');
+    expect(response.headers.get('cache-control')).toContain('max-age=3600');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+
+    const js = await response.text();
+    expect(js).toContain('rich-wind-reload-button');
+    expect(js).toContain('rwReload');
+    expect(js).toContain('window.location.replace');
+    expect(() => new Function(js)).not.toThrow();
+  });
+});
+
 describe('GET /health', () => {
   it('returns 200 with { status: "ok" }', async () => {
     const response = await fetch(`${baseUrl}/health`);

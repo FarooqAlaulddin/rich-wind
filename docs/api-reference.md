@@ -176,6 +176,27 @@ For cross-origin HTML viewers, enable CORS with `RW_CORS_ORIGIN=*` or a comma-se
 
 ---
 
+## GET /richwind-reload.js
+
+Returns an optional browser helper for exported/static HTML previews. Include it after the Rich Wind loader:
+
+```html
+<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
+```
+
+The script injects a fixed bottom-right reload button and the button's styles directly into the document. Clicking it reloads the page with a cache-busting `rwReload` query parameter, which is useful when editing exported HTML and previewing changes in a static viewer.
+
+Supported attributes:
+
+| Attribute | Required | Notes |
+| --- | --- | --- |
+| `data-label` | no | Button text. Defaults to `"Reload"`. |
+| `data-title` | no | Button title and accessible label. Defaults to `"Reload this page"`. |
+| `data-cache-bust` | no | Set to `"false"` to use `window.location.reload()` without changing the URL. |
+| `data-enabled` | no | Set to `"false"` to disable mounting the button. |
+
+---
+
 ## GET /health
 
 Returns `{ "status": "ok" }`. No rate limiting.

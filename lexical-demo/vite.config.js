@@ -29,6 +29,10 @@ export default defineConfig({
         target: coreOrigin,
         rewrite: (path) => path.replace(/^\/core/, ''),
       },
+      '/core/richwind-reload.js': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/core/, ''),
+      },
       '/core/api': {
         target: coreOrigin,
         rewrite: (path) => path.replace(/^\/core/, ''),
@@ -38,6 +42,10 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/core/, ''),
       },
       '/rich-wind/richwind-loader.js': {
+        target: coreOrigin,
+        rewrite: (path) => path.replace(/^\/rich-wind/, ''),
+      },
+      '/rich-wind/richwind-reload.js': {
         target: coreOrigin,
         rewrite: (path) => path.replace(/^\/rich-wind/, ''),
       },

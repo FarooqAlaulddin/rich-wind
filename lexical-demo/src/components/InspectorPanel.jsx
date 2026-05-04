@@ -78,12 +78,18 @@ function getExportCoreBase() {
 }
 
 function buildExportHtml(html, projectId, activePage) {
-  const loaderSrc = `${getExportCoreBase()}/richwind-loader.js`;
+  const coreBase = getExportCoreBase();
+  const loaderSrc = `${coreBase}/richwind-loader.js`;
+  const reloadSrc = `${coreBase}/richwind-reload.js`;
   const loaderScript = `<script
     defer
     src="${escapeAttr(loaderSrc)}"
     data-project-id="${escapeAttr(projectId || '')}"
     data-page-id="${escapeAttr(activePage || '')}"
+  ></script>`;
+  const reloadScript = `<script
+    defer
+    src="${escapeAttr(reloadSrc)}"
   ></script>`;
   return `<!doctype html>
 <html>
@@ -91,6 +97,7 @@ function buildExportHtml(html, projectId, activePage) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   ${loaderScript}
+  ${reloadScript}
 </head>
 <body>
 ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}

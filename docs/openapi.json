@@ -295,6 +295,24 @@
         }
       }
     },
+    "/richwind-reload.js": {
+      "get": {
+        "summary": "Get reload helper",
+        "description": "Returns the optional JavaScript helper that injects a fixed reload button into exported/static HTML previews.",
+        "responses": {
+          "200": {
+            "description": "Reload helper JavaScript",
+            "content": {
+              "application/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health check",
