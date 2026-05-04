@@ -42,16 +42,16 @@ function createSampleContent() {
         {
           type: 'styled-heading',
           tag: 'h1',
-          tailwindClasses: 'text-3xl font-bold text-blue-600',
+          tailwindClasses: 'text-3xl font-bold text-blue-600 [.theme-dark_&]:text-blue-400',
           children: [{ type: 'text', text: 'Welcome to Rich Wind', format: 0, detail: 0, mode: 'normal', style: '' }],
           direction: 'ltr', format: '', indent: 0, version: 1,
         },
         {
           type: 'styled-paragraph',
-          tailwindClasses: 'bg-gray-100 p-4 rounded-lg',
+          tailwindClasses: 'bg-gray-100 text-slate-800 p-4 rounded-lg [.theme-dark_&]:bg-slate-800 [.theme-dark_&]:text-slate-100',
           children: [
             { type: 'text', text: 'This is a ', format: 0, detail: 0, mode: 'normal', style: '' },
-            { type: 'tailwind-span', text: 'live-styled', tailwindClasses: 'text-emerald-600 font-semibold', format: 0, detail: 0, mode: 'normal', style: '' },
+            { type: 'tailwind-span', text: 'live-styled', tailwindClasses: 'text-emerald-600 font-semibold [.theme-dark_&]:text-emerald-300', format: 0, detail: 0, mode: 'normal', style: '' },
             { type: 'text', text: ' rich text editor. Edit text here, apply Tailwind classes, and see the preview update in real time.', format: 0, detail: 0, mode: 'normal', style: '' },
           ],
           direction: 'ltr', format: '', indent: 0, version: 1,

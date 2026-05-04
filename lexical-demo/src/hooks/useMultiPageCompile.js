@@ -38,33 +38,61 @@ function para(classes, children) {
   return { type: 'styled-paragraph', tailwindClasses: classes, children, direction: 'ltr', format: '', indent: 0, version: 1 };
 }
 
+const SAMPLE_CLASSES = {
+  homeHeading: 'text-4xl font-bold text-blue-600 [.theme-dark_&]:text-blue-400',
+  homeCard: 'bg-gray-100 text-slate-800 p-6 rounded-xl [.theme-dark_&]:bg-slate-800 [.theme-dark_&]:text-slate-100',
+  homeAccent: 'text-emerald-600 font-semibold [.theme-dark_&]:text-emerald-300',
+  aboutHeading: 'text-3xl font-semibold text-emerald-700 [.theme-dark_&]:text-emerald-300',
+  aboutLead: 'border-l-4 border-emerald-500 pl-4 [.theme-dark_&]:text-slate-100',
+  aboutAccent: 'text-emerald-600 font-medium [.theme-dark_&]:text-emerald-300',
+  aboutCard: 'bg-emerald-50 text-emerald-950 p-4 rounded-lg [.theme-dark_&]:bg-emerald-950 [.theme-dark_&]:text-emerald-100',
+  contactHeading: 'text-3xl font-bold text-purple-600 [.theme-dark_&]:text-purple-300',
+  contactCard: 'bg-purple-50 text-purple-950 p-6 rounded-lg [.theme-dark_&]:bg-purple-950 [.theme-dark_&]:text-purple-100',
+  contactAccent: 'text-purple-700 font-semibold [.theme-dark_&]:text-purple-300',
+  contactNote: 'text-lg text-purple-900 [.theme-dark_&]:text-purple-100',
+};
+
+const CLASS_MIGRATIONS = new Map([
+  ['text-4xl font-bold text-blue-600', SAMPLE_CLASSES.homeHeading],
+  ['bg-gray-100 p-6 rounded-xl', SAMPLE_CLASSES.homeCard],
+  ['text-emerald-600 font-semibold', SAMPLE_CLASSES.homeAccent],
+  ['text-3xl font-semibold text-emerald-700', SAMPLE_CLASSES.aboutHeading],
+  ['border-l-4 border-emerald-500 pl-4', SAMPLE_CLASSES.aboutLead],
+  ['text-emerald-600 font-medium', SAMPLE_CLASSES.aboutAccent],
+  ['bg-emerald-50 p-4 rounded-lg', SAMPLE_CLASSES.aboutCard],
+  ['text-3xl font-bold text-purple-600', SAMPLE_CLASSES.contactHeading],
+  ['bg-purple-50 p-6 rounded-lg', SAMPLE_CLASSES.contactCard],
+  ['text-purple-700 font-semibold', SAMPLE_CLASSES.contactAccent],
+  ['text-lg text-purple-900', SAMPLE_CLASSES.contactNote],
+]);
+
 const DEFAULT_CONTENT = {
   home: makeEditorState([
-    heading('h1', 'text-4xl font-bold text-blue-600', [textNode('Welcome to Rich Wind')]),
-    para('bg-gray-100 p-6 rounded-xl', [
+    heading('h1', SAMPLE_CLASSES.homeHeading, [textNode('Welcome to Rich Wind')]),
+    para(SAMPLE_CLASSES.homeCard, [
       textNode('This is a '),
-      spanNode('live-styled', 'text-emerald-600 font-semibold'),
+      spanNode('live-styled', SAMPLE_CLASSES.homeAccent),
       textNode(' rich text editor. Edit text here, apply Tailwind classes, and see styles render directly in the editor.'),
     ]),
     para('', [textNode('Try selecting text and adding inline classes, or click a block to style it with the inspector panel.')]),
   ]),
   about: makeEditorState([
-    heading('h2', 'text-3xl font-semibold text-emerald-700', [textNode('About This Project')]),
-    para('border-l-4 border-emerald-500 pl-4', [
+    heading('h2', SAMPLE_CLASSES.aboutHeading, [textNode('About This Project')]),
+    para(SAMPLE_CLASSES.aboutLead, [
       textNode('Rich Wind compiles Tailwind CSS on demand. Shared base/theme load once, while each page keeps only '),
-      spanNode('its own utilities', 'text-emerald-600 font-medium'),
+      spanNode('its own utilities', SAMPLE_CLASSES.aboutAccent),
       textNode('.'),
     ]),
-    para('bg-emerald-50 p-4 rounded-lg', [textNode('When classes cross the threshold, auto-promote moves them into a shared bundle.')]),
+    para(SAMPLE_CLASSES.aboutCard, [textNode('When classes cross the threshold, auto-promote moves them into a shared bundle.')]),
   ]),
   contact: makeEditorState([
-    heading('h2', 'text-3xl font-bold text-purple-600', [textNode('Get in Touch')]),
-    para('bg-purple-50 p-6 rounded-lg', [
+    heading('h2', SAMPLE_CLASSES.contactHeading, [textNode('Get in Touch')]),
+    para(SAMPLE_CLASSES.contactCard, [
       textNode('This demo uses layered CSS: '),
-      spanNode('base + theme + promoted + page utilities', 'text-purple-700 font-semibold'),
+      spanNode('base + theme + promoted + page utilities', SAMPLE_CLASSES.contactAccent),
       textNode('.'),
     ]),
-    para('text-lg text-purple-900', [textNode('Open BUNDLES to inspect shared vs per-page output.')]),
+    para(SAMPLE_CLASSES.contactNote, [textNode('Open BUNDLES to inspect shared vs per-page output.')]),
   ]),
 };
 
@@ -86,8 +114,35 @@ function loadState() {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || !parsed.pages) return null;
+    migrateStoredSampleClasses(parsed);
     return parsed;
   } catch { return null; }
+}
+
+function migrateStoredSampleClasses(state) {
+  const migrateNode = (node) => {
+    if (!node || typeof node !== 'object') return false;
+    let changed = false;
+    if (typeof node.tailwindClasses === 'string' && CLASS_MIGRATIONS.has(node.tailwindClasses)) {
+      node.tailwindClasses = CLASS_MIGRATIONS.get(node.tailwindClasses);
+      changed = true;
+    }
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) {
+        if (migrateNode(child)) changed = true;
+      }
+    }
+    return changed;
+  };
+
+  let changed = false;
+  for (const page of Object.values(state.pages || {})) {
+    if (migrateNode(page?.editorStateJSON?.root)) changed = true;
+  }
+
+  if (changed) {
+    saveState(state.pages, state.activePage, state.pageOrder);
+  }
 }
 
 function saveState(pages, activePage, pageOrder) {
