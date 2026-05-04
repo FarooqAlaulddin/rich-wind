@@ -63,61 +63,37 @@ function BundleRow({ name, bytes, cssText, className }) {
   );
 }
 
+function escapeAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function getExportCoreBase() {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(CORE_BASE)) return CORE_BASE;
+  if (typeof window === 'undefined') return CORE_BASE;
+  return new URL(CORE_BASE || '/', window.location.origin).href.replace(/\/+$/, '');
+}
+
 function buildExportHtml(html, projectId, activePage) {
-  const coreUrl   = JSON.stringify(CORE_BASE);
-  const projectId_ = JSON.stringify(projectId  || '');
-  const pageId_    = JSON.stringify(activePage || '');
-  const headScript = `<script>
-  // Rich Wind — shared config
-  var coreUrl   = ${coreUrl};
-  var projectId = ${projectId_};
-  var pageId    = ${pageId_};
-
-  // Shared stylesheets: base reset, project theme, promoted classes
-  // These are the same across every page — browsers cache them automatically
-  var sharedStylesheets = [
-    coreUrl + '/api/css?projectId=' + projectId + '&bundle=base',
-    coreUrl + '/api/projects/' + projectId + '/css?bundle=theme',
-    coreUrl + '/plugins/auto-promote/css/' + projectId,
-  ];
-  sharedStylesheets.forEach(function (href) {
-    var link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    document.head.appendChild(link);
-  });
-<\/script>`;
-  const bodyScript = `<script>
-  // Page utilities: compile only the classes used on this specific page
-  // Edit any Tailwind class above and reload — this recompiles automatically
-  var body = document.body.cloneNode(true);
-  body.querySelectorAll('script').forEach(function (s) { s.remove(); });
-
-  fetch(coreUrl + '/api/compile', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId: projectId, pageId: pageId, html: body.innerHTML, bundle: 'utilities' }),
-  })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (data && data.css) {
-        var style = document.createElement('style');
-        style.textContent = data.css;
-        document.head.appendChild(style);
-      }
-    })
-    .catch(function () {});
-<\/script>`;
+  const loaderSrc = `${getExportCoreBase()}/richwind-loader.js`;
+  const loaderScript = `<script
+    defer
+    src="${escapeAttr(loaderSrc)}"
+    data-project-id="${escapeAttr(projectId || '')}"
+    data-page-id="${escapeAttr(activePage || '')}"
+  ></script>`;
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  ${headScript}
+  ${loaderScript}
 </head>
 <body>
 ${(html || '').trim().split('\n').map(l => '  ' + l).join('\n')}
-${bodyScript}
 </body>
 </html>`;
 }

@@ -1,6 +1,6 @@
 # API Reference
 
-Rich Wind exposes four endpoints and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
+Rich Wind exposes compile/cache API endpoints, a browser loader, and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
 
 Machine-readable contract: [`openapi.json`](openapi.json)
 
@@ -91,7 +91,7 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 | `pageId` | no | Defaults to `"default"`. Also accepts `page_id` |
 | `bundle` | no | Same normalization as compile |
 
-This endpoint only reads from cache — it doesn't compile anything. If the page hasn't been compiled yet (or its cache has expired), you'll get a `404` with a message to call `/api/compile` first.
+This endpoint only reads from cache — it doesn't compile anything. If the page hasn't been compiled yet (or its cache has expired), it returns `200` with an empty stylesheet.
 
 ```bash
 curl "http://localhost:3001/api/css?projectId=my-app&pageId=hero"
@@ -109,7 +109,7 @@ This compiles the **union** of every class from every currently-cached page in t
 | --- | --- | --- |
 | `bundle` | no | Query param, same normalization as compile |
 
-The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's invalidated automatically when pages are added, removed, or their classes change.
+The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's invalidated automatically when pages are added, removed, or their classes change. If no classes are cached for the project, it returns `200` with an empty stylesheet.
 
 ```bash
 curl "http://localhost:3001/api/projects/my-app/css"
@@ -144,6 +144,35 @@ Arbitrary value classes like `text-[18px]` are not included in the static list �
   "suggestions": ["bg-blue-500", "bg-red-500", "bg-white"]
 }
 ```
+
+---
+
+## GET /richwind-loader.js
+
+Returns the browser loader used by exported/static HTML. Include it with a standard `<script src>` tag:
+
+```html
+<script
+  defer
+  src="https://rich-wind.thinkly.dev/core/richwind-loader.js"
+  data-project-id="my-app"
+  data-page-id="home"
+></script>
+```
+
+The loader infers `coreUrl` from its own `src` URL, adds shared stylesheet links for `base`, project `theme`, and auto-promoted CSS, then compiles the classes present in `document.body` as the page's `utilities` bundle.
+
+Supported attributes:
+
+| Attribute | Required | Notes |
+| --- | --- | --- |
+| `data-project-id` | yes | Cache namespace. Must follow the same ID rules as `projectId`. |
+| `data-page-id` | no | Page cache key. Defaults to `"default"`. |
+| `data-core-url` | no | Overrides the inferred core URL. |
+| `data-bundle` | no | Compile bundle for body utilities. Defaults to `"utilities"`. |
+| `data-compile` | no | Set to `"false"` to only attach shared stylesheet links. |
+
+For cross-origin HTML viewers, enable CORS with `RW_CORS_ORIGIN=*` or a comma-separated origin allowlist. The loader uses browser `fetch()` for `POST /api/compile`, so the browser enforces CORS even though the script itself can be loaded as a normal subresource.
 
 ---
 

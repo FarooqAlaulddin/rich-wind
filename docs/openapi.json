@@ -158,16 +158,6 @@
               }
             }
           },
-          "404": {
-            "description": "Cache miss",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "500": {
             "description": "Unexpected server error",
             "content": {
@@ -209,16 +199,6 @@
           },
           "400": {
             "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Project cache miss",
             "content": {
               "application/json": {
                 "schema": {
@@ -290,6 +270,24 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/richwind-loader.js": {
+      "get": {
+        "summary": "Get browser loader",
+        "description": "Returns the JavaScript loader for plain HTML exports. The loader attaches shared Rich Wind stylesheets and compiles body utilities in browser contexts.",
+        "responses": {
+          "200": {
+            "description": "Browser loader JavaScript",
+            "content": {
+              "application/javascript": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }

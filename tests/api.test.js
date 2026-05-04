@@ -415,6 +415,7 @@ describe('GET /api/css', () => {
     const response = await fetch(`${baseUrl}/api/css?projectId=css-get-test&pageId=page1`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/css');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     const css = await response.text();
     expect(css.length).toBeGreaterThan(0);
   });
@@ -513,6 +514,7 @@ describe('GET /api/projects/:projectId/css', () => {
     const response = await fetch(`${baseUrl}/api/projects/${projectId}/css`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/css');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
     const css = await response.text();
     expect(css.length).toBeGreaterThan(0);
   });
@@ -713,6 +715,22 @@ describe('POST /api/suggest', () => {
     body.suggestions.forEach((item) => {
       expect(item.startsWith('hover:bg-')).toBe(true);
     });
+  });
+});
+
+describe('GET /richwind-loader.js', () => {
+  it('returns the browser loader as cacheable JavaScript', async () => {
+    const response = await fetch(`${baseUrl}/richwind-loader.js`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('application/javascript');
+    expect(response.headers.get('cache-control')).toContain('max-age=3600');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+
+    const js = await response.text();
+    expect(js).toContain('data-project-id');
+    expect(js).toContain('/api/compile');
+    expect(js).toContain('/api/projects/');
+    expect(() => new Function(js)).not.toThrow();
   });
 });
 

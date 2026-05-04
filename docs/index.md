@@ -68,6 +68,19 @@ The response includes the compiled CSS, the list of classes found, and a content
 
 `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function. You can mount it, add middleware, or pass configuration to control cache sizes, rate limits, and timeouts.
 
+For static HTML viewers, you can skip custom JavaScript and include the browser loader:
+
+```html
+<script
+  defer
+  src="https://rich-wind.thinkly.dev/core/richwind-loader.js"
+  data-project-id="my-app"
+  data-page-id="home"
+></script>
+```
+
+The loader attaches the shared stylesheets and compiles the utility classes in the current document body. When the HTML is served from another origin or opened from a local viewer, configure the core with `RW_CORS_ORIGIN=*` or an explicit allowlist.
+
 ## Bundles
 
 By default, Rich Wind compiles everything into one stylesheet (`full` bundle). But you can split the output into layers:

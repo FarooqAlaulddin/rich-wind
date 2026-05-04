@@ -243,6 +243,7 @@ export function createAutoPromotePlugin(options = {}) {
       context.addRoute('get', '/css/:projectId', (req, res) => {
         const { projectId } = req.params;
         const css = promotedCssCache.get(projectId);
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         if (!css) {
           return res.type('text/css').send('');
         }
