@@ -59,6 +59,7 @@ curl -X POST http://localhost:3001/api/compile \
 | `GET /api/projects/:projectId/css` | Fetch aggregated CSS across all pages in a project |
 | `POST /api/suggest` | Class name autocomplete |
 | `GET /richwind-loader.js` | Browser loader for plain HTML exports |
+| `GET /richwind-reload.js` | Optional reload button for editable HTML previews |
 | `GET /health` | Health check |
 
 CSS is cached per `projectId` + `pageId` with sliding TTL and LRU eviction.
@@ -77,6 +78,14 @@ For plain HTML, static previews, CMS renderers, or an HTML viewer with no build 
 ```
 
 The loader links the shared `base`, project `theme`, and auto-promoted stylesheets, then compiles the utility classes found in `document.body` and injects them into the page. For cross-origin pages, run the core with `RW_CORS_ORIGIN=*` or an explicit origin allowlist so browser `fetch()` can call `POST /api/compile`.
+
+For fast edit-preview loops, exported HTML can also include the reload helper:
+
+```html
+<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
+```
+
+It injects a fixed bottom-right reload button with its own inline styles. Clicking it reloads with a cache-busting `rwReload` query parameter.
 
 ## Features
 

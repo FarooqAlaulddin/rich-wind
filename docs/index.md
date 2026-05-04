@@ -81,6 +81,14 @@ For static HTML viewers, you can skip custom JavaScript and include the browser 
 
 The loader attaches the shared stylesheets and compiles the utility classes in the current document body. When the HTML is served from another origin or opened from a local viewer, configure the core with `RW_CORS_ORIGIN=*` or an explicit allowlist.
 
+Exported preview pages can also include:
+
+```html
+<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
+```
+
+That helper adds a fixed bottom-right reload button so editing an exported HTML file and refreshing the rendered result is one click.
+
 ## Bundles
 
 By default, Rich Wind compiles everything into one stylesheet (`full` bundle). But you can split the output into layers:

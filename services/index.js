@@ -931,6 +931,107 @@ const RICH_WIND_LOADER_JS = `(function () {
 }());
 `;
 
+const RICH_WIND_RELOAD_JS = `(function () {
+  'use strict';
+
+  var script = document.currentScript;
+  if (!script) {
+    var scripts = document.getElementsByTagName('script');
+    script = scripts[scripts.length - 1] || null;
+  }
+
+  function getAttr(name, fallback) {
+    if (!script) return fallback;
+    var value = script.getAttribute(name);
+    return value === null || value === '' ? fallback : value;
+  }
+
+  function addStyles() {
+    if (!document.head || document.getElementById('rich-wind-reload-style')) return;
+
+    var style = document.createElement('style');
+    style.id = 'rich-wind-reload-style';
+    style.textContent = [
+      '.rich-wind-reload-button {',
+      '  position: fixed;',
+      '  right: max(16px, env(safe-area-inset-right));',
+      '  bottom: max(16px, env(safe-area-inset-bottom));',
+      '  z-index: 2147483647;',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  gap: 8px;',
+      '  min-height: 40px;',
+      '  padding: 9px 13px;',
+      '  border: 1px solid rgba(255, 255, 255, 0.22);',
+      '  border-radius: 999px;',
+      '  background: rgba(17, 24, 39, 0.94);',
+      '  color: #fff;',
+      '  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.28);',
+      '  font: 600 13px/1.1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;',
+      '  letter-spacing: 0;',
+      '  cursor: pointer;',
+      '  -webkit-font-smoothing: antialiased;',
+      '}',
+      '.rich-wind-reload-button:hover { background: rgba(31, 41, 55, 0.98); }',
+      '.rich-wind-reload-button:focus-visible { outline: 3px solid rgba(59, 130, 246, 0.65); outline-offset: 3px; }',
+      '.rich-wind-reload-icon { font-size: 16px; line-height: 1; }',
+      '@media (max-width: 520px) {',
+      '  .rich-wind-reload-button { right: 12px; bottom: 12px; min-height: 38px; padding: 8px 11px; }',
+      '}'
+    ].join('\\n');
+    document.head.appendChild(style);
+  }
+
+  function forceReload() {
+    var cacheBust = getAttr('data-cache-bust', 'true') !== 'false';
+    if (!cacheBust) {
+      window.location.reload();
+      return;
+    }
+
+    try {
+      var url = new URL(window.location.href);
+      url.searchParams.set('rwReload', Date.now().toString(36));
+      window.location.replace(url.href);
+    } catch (error) {
+      window.location.reload();
+    }
+  }
+
+  function mountButton() {
+    if (!document.body || document.getElementById('rich-wind-reload-button')) return;
+
+    addStyles();
+
+    var label = getAttr('data-label', 'Reload');
+    var button = document.createElement('button');
+    button.id = 'rich-wind-reload-button';
+    button.className = 'rich-wind-reload-button';
+    button.type = 'button';
+    button.title = getAttr('data-title', 'Reload this page');
+    button.setAttribute('aria-label', button.title);
+    var icon = document.createElement('span');
+    icon.className = 'rich-wind-reload-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = '&#8635;';
+    var text = document.createElement('span');
+    text.textContent = label;
+    button.appendChild(icon);
+    button.appendChild(text);
+    button.addEventListener('click', forceReload);
+    document.body.appendChild(button);
+  }
+
+  if (getAttr('data-enabled', 'true') === 'false') return;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mountButton);
+  } else {
+    mountButton();
+  }
+}());
+`;
+
 async function resolveClassesFromInput({ html, classes }) {
     // extractClasses already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
@@ -1513,6 +1614,17 @@ app.get('/richwind-loader.js', (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=3600');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.type('application/javascript').send(RICH_WIND_LOADER_JS);
+});
+
+// Optional reload control for exported/static HTML while editing.
+app.get('/richwind-reload.js', (req, res) => {
+    withRequestHooks(req, res, {
+        action: 'reload',
+        request: { ip: getClientIp(req), method: req.method, path: req.path }
+    });
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.type('application/javascript').send(RICH_WIND_RELOAD_JS);
 });
 
 // Compile CSS for a project/page (in-memory cache)
