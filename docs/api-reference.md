@@ -93,6 +93,8 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 
 This endpoint only reads from cache — it doesn't compile anything. If the page hasn't been compiled yet (or its cache has expired), it returns `200` with an empty stylesheet.
 
+Responses include an `ETag` (derived from the page's class hash) and `Cache-Control: no-cache`. Send `If-None-Match` with the ETag to receive a `304 Not Modified` when the CSS hasn't changed.
+
 ```bash
 curl "http://localhost:3001/api/css?projectId=my-app&pageId=hero"
 ```
@@ -111,9 +113,44 @@ This compiles the **union** of every class from every currently-cached page in t
 
 The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's invalidated automatically when pages are added, removed, or their classes change. If no classes are cached for the project, it returns `200` with an empty stylesheet.
 
+Responses include an `ETag` and `Cache-Control: no-cache`. Send `If-None-Match` to receive `304 Not Modified` when the CSS hasn't changed.
+
 ```bash
 curl "http://localhost:3001/api/projects/my-app/css"
 curl "http://localhost:3001/api/projects/my-app/css?bundle=utilities"
+```
+
+---
+
+## POST /api/invalidate
+
+Immediately purge a page or an entire project from the in-memory cache and the persistent cache store. Use this when content changes and you can't wait for TTL expiry.
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `projectId` | string | yes | Project to purge |
+| `pageId` | string | no | When omitted, purges the entire project |
+
+```json
+// Purge a single page
+{ "projectId": "my-app", "pageId": "home" }
+
+// Purge an entire project
+{ "projectId": "my-app" }
+```
+
+**Response**
+
+```json
+{ "invalidated": true, "projectId": "my-app", "pageId": "home" }
+```
+
+After invalidation, the next `GET /api/css` for that page returns an empty stylesheet until it is recompiled via `POST /api/compile`. Not allowed on reader nodes — returns `409` with `code: "READ_ONLY_REPLICA"`.
+
+```bash
+curl -X POST http://localhost:3001/api/invalidate \
+  -H "Content-Type: application/json" \
+  -d '{"projectId":"my-app","pageId":"home"}'
 ```
 
 ---

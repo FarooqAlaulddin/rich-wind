@@ -139,7 +139,17 @@
         ],
         "responses": {
           "200": {
-            "description": "CSS was found",
+            "description": "CSS found (or empty if page not cached)",
+            "headers": {
+              "ETag": {
+                "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
+                "schema": { "type": "string" }
+              },
+              "Cache-Control": {
+                "description": "no-cache — revalidate before use",
+                "schema": { "type": "string" }
+              }
+            },
             "content": {
               "text/css": {
                 "schema": {
@@ -147,6 +157,9 @@
                 }
               }
             }
+          },
+          "304": {
+            "description": "Not Modified — CSS unchanged since If-None-Match"
           },
           "400": {
             "description": "Validation error",
@@ -188,7 +201,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Project CSS found",
+            "description": "Project CSS found (or empty if no pages cached)",
+            "headers": {
+              "ETag": {
+                "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
+                "schema": { "type": "string" }
+              },
+              "Cache-Control": {
+                "description": "no-cache — revalidate before use",
+                "schema": { "type": "string" }
+              }
+            },
             "content": {
               "text/css": {
                 "schema": {
@@ -196,6 +219,9 @@
                 }
               }
             }
+          },
+          "304": {
+            "description": "Not Modified — CSS unchanged since If-None-Match"
           },
           "400": {
             "description": "Validation error",
@@ -214,6 +240,58 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/invalidate": {
+      "post": {
+        "summary": "Invalidate cached CSS",
+        "description": "Immediately purges a page or entire project from the in-memory cache and persistent cache store. Not allowed on reader nodes.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvalidateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invalidation successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "409": {
+            "description": "Read-only replica — route writes to a writer node",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
               }
             }
           }
@@ -649,6 +727,36 @@
           "status": {
             "type": "string",
             "const": "ok"
+          }
+        }
+      },
+      "InvalidateRequest": {
+        "type": "object",
+        "required": ["projectId"],
+        "properties": {
+          "projectId": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "pageId": {
+            "$ref": "#/components/schemas/PageId",
+            "description": "When omitted, the entire project is purged"
+          }
+        }
+      },
+      "InvalidateResponse": {
+        "type": "object",
+        "required": ["invalidated", "projectId"],
+        "properties": {
+          "invalidated": {
+            "type": "boolean",
+            "const": true
+          },
+          "projectId": {
+            "$ref": "#/components/schemas/ProjectId"
+          },
+          "pageId": {
+            "$ref": "#/components/schemas/PageId",
+            "description": "Present only when a single page was invalidated"
           }
         }
       },
