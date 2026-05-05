@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createRateLimitPlugin } from '../plugins/rate-limit/index.js';
-import { createTestServer } from './helpers/createTestServer.js';
+import { createRateLimitPlugin } from './index.js';
+import { createTestServer } from '../../tests/helpers/createTestServer.js';
 
 describe('Rate limit plugin', () => {
   it('returns 429 and Retry-After when limit exceeded', async () => {
