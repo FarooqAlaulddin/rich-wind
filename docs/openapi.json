@@ -279,8 +279,8 @@
     },
     "/richwind-loader.js": {
       "get": {
-        "summary": "Get browser loader",
-        "description": "Returns the JavaScript loader for plain HTML exports. The loader attaches shared Rich Wind stylesheets and compiles body utilities in browser contexts.",
+        "summary": "Get optional browser loader",
+        "description": "Returns an optional JavaScript helper for plain HTML preview surfaces. The loader attaches shared Rich Wind stylesheets and compiles body utilities in browser contexts.",
         "responses": {
           "200": {
             "description": "Browser loader JavaScript",
@@ -297,8 +297,8 @@
     },
     "/richwind-reload.js": {
       "get": {
-        "summary": "Get reload helper",
-        "description": "Returns the optional JavaScript helper that injects a fixed reload button into exported/static HTML previews.",
+        "summary": "Get optional reload helper",
+        "description": "Returns the optional JavaScript helper that injects a fixed reload button into local or static HTML preview surfaces.",
         "responses": {
           "200": {
             "description": "Reload helper JavaScript",

@@ -341,7 +341,7 @@ Every response includes these headers:
 | `X-Frame-Options` | `DENY` | Prevents embedding in iframes |
 | `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
 
-CSS responses, `GET /richwind-loader.js`, and `GET /richwind-reload.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources from exported/static HTML. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
+CSS responses, `GET /richwind-loader.js`, and `GET /richwind-reload.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources by optional HTML preview surfaces. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
 
 ## What the Core Doesn't Do
 

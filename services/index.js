@@ -1605,7 +1605,7 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
         : (async () => {});
 // API Routes
 
-// Browser loader for plain HTML exports and static HTML viewers.
+// Optional browser helper for plain HTML preview surfaces.
 app.get('/richwind-loader.js', (req, res) => {
     withRequestHooks(req, res, {
         action: 'loader',
@@ -1616,7 +1616,7 @@ app.get('/richwind-loader.js', (req, res) => {
     res.type('application/javascript').send(RICH_WIND_LOADER_JS);
 });
 
-// Optional reload control for exported/static HTML while editing.
+// Optional reload control for preview surfaces.
 app.get('/richwind-reload.js', (req, res) => {
     withRequestHooks(req, res, {
         action: 'reload',

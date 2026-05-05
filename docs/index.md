@@ -4,7 +4,7 @@ Rich Wind is runtime Tailwind CSS infrastructure for dynamic and AI-generated UI
 
 It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders, rich text editors, tenant-authored pages, and agent-generated previews. Anywhere you don't know the final set of Tailwind classes until runtime.
 
-First pre-release scope: Rich Wind publishes the core runtime service. The Lexical demo remains in the repo as the live reference app; the older playground/docs/plugin showcase app is parked on the `parked-demos` branch.
+Rich Wind core is intentionally auth-agnostic. Host applications own authentication, tenant isolation, source content, publishing, and long-term artifact storage.
 
 ## Why It Helps
 
@@ -82,27 +82,6 @@ curl -X POST http://localhost:3001/api/compile \
 The response includes the compiled CSS, the list of classes found, and a content hash you can use for cache invalidation on your end.
 
 `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function. You can mount it, add middleware, or pass configuration to control cache sizes, rate limits, and timeouts.
-
-For static HTML viewers, you can skip custom JavaScript and include the browser loader:
-
-```html
-<script
-  defer
-  src="https://rich-wind.thinkly.dev/core/richwind-loader.js"
-  data-project-id="my-app"
-  data-page-id="home"
-></script>
-```
-
-The loader attaches the shared stylesheets and compiles the utility classes in the current document body. When the HTML is served from another origin or opened from a local viewer, configure the core with `RW_CORS_ORIGIN=*` or an explicit allowlist.
-
-Exported preview pages can also include:
-
-```html
-<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
-```
-
-That helper adds a fixed bottom-right reload button so editing an exported HTML file and refreshing the rendered result is one click.
 
 ## Bundles
 
