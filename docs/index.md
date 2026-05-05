@@ -1,15 +1,16 @@
 # Rich Wind
 
-Rich Wind is a runtime Tailwind CSS compiler. You send it HTML or a list of Tailwind classes, and it sends back the compiled CSS. There's no build step, no file watching, no CLI — just an HTTP API that compiles on demand.
+Rich Wind is runtime Tailwind CSS infrastructure for dynamic and AI-generated UI. You send it HTML or a list of Tailwind classes, and it sends back the compiled CSS. There's no per-page build step, no file watching, no CLI in every host app - just an HTTP API that compiles on demand.
 
-It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders. Anywhere you don't know the final set of Tailwind classes until runtime.
+It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders, rich text editors, tenant-authored pages, and agent-generated previews. Anywhere you don't know the final set of Tailwind classes until runtime.
 
-First pre-release scope: Rich Wind publishes the core runtime service. The Lexical demo remains in the repo as the live reference app; the older playground/docs/plugin showcase app is parked on the `parked-demos` branch.
+Rich Wind core is intentionally auth-agnostic. Host applications own authentication, tenant isolation, source content, publishing, and long-term artifact storage.
 
 ## Why It Helps
 
 - Handles dynamic pages where class names are not known during CI/build.
-- Centralizes CSS generation so every product does not need its own Tailwind build pipeline.
+- Lets editors and AI agents preview Tailwind-styled HTML without rebuilding the host app.
+- Centralizes CSS generation so every product does not need its own Tailwind build pipeline for dynamic surfaces.
 - Improves response time on repeated requests using per-page/per-project cache.
 - Scales to multi-replica deployments with a shared `cacheStore`.
 
@@ -17,13 +18,27 @@ First pre-release scope: Rich Wind publishes the core runtime service. The Lexic
 
 - You are building a CMS, site/page editor, email/template builder, or preview environment.
 - You generate HTML/classes at runtime and need correct CSS immediately.
+- You let AI agents create or revise HTML/classes after deployment.
 - You want one core service for runtime CSS across multiple teams or apps.
 
 ## When Not to Use It
 
 - Your app is mostly static and build-time Tailwind gives you simpler operations.
+- Your AI-generated UI lands in source control and can use the normal Tailwind build.
 - You need zero runtime compilation cost and can precompile everything.
 - You require request-time custom Tailwind config uploads (not a Rich Wind goal).
+
+## AI-Era Positioning
+
+AI tools make it faster to create UI, but they do not remove the need to compile, cache, scope, and govern the resulting CSS. Tailwind's standard production path is still static CSS generated from classes that exist in source files. Rich Wind is useful when the class list is produced later by an editor, tenant, plugin, CMS workflow, or coding agent.
+
+The short version:
+
+- Use normal Tailwind for committed application code.
+- Use Rich Wind for runtime-authored pages and previews.
+- Use plugins and wrapper services for tenant isolation, policy, analytics, and publishing.
+
+See [AI Runtime Styling](ai-runtime-styling.html) for the research notes, tested hypotheses, and product implications behind this positioning.
 
 ## Mental Model
 
@@ -68,27 +83,6 @@ The response includes the compiled CSS, the list of classes found, and a content
 
 `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function. You can mount it, add middleware, or pass configuration to control cache sizes, rate limits, and timeouts.
 
-For static HTML viewers, you can skip custom JavaScript and include the browser loader:
-
-```html
-<script
-  defer
-  src="https://rich-wind.thinkly.dev/core/richwind-loader.js"
-  data-project-id="my-app"
-  data-page-id="home"
-></script>
-```
-
-The loader attaches the shared stylesheets and compiles the utility classes in the current document body. When the HTML is served from another origin or opened from a local viewer, configure the core with `RW_CORS_ORIGIN=*` or an explicit allowlist.
-
-Exported preview pages can also include:
-
-```html
-<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
-```
-
-That helper adds a fixed bottom-right reload button so editing an exported HTML file and refreshing the rendered result is one click.
-
 ## Bundles
 
 By default, Rich Wind compiles everything into one stylesheet (`full` bundle). But you can split the output into layers:
@@ -105,6 +99,7 @@ Splitting makes sense when many pages share the same design tokens but have diff
 ## What's in the Docs
 
 - **[API Reference](api-reference.html)** — every endpoint, every parameter, every config option
+- **[AI Runtime Styling](ai-runtime-styling.html)** — 2026 positioning for dynamic and AI-generated UI
 - **[OpenAPI Contract](openapi.json)** — machine-readable API schema for tooling and client generation
 - **[Runtime Spec](runtime-spec.html)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
 - **[Plugin System](plugin-system.html)** — lifecycle hooks, setup context, plugin storage, and custom behavior

@@ -379,7 +379,7 @@ const metrics = {
 
 ## Example: Auto-Promote (Reference Plugin)
 
-The repository includes an auto-promote plugin used by tests and the Lexical demo. It tracks which CSS classes appear across pages. When a class is used on enough pages (default: 5), it's "promoted" to a shared stylesheet — reducing per-page CSS duplication. This reference plugin exercises nearly every plugin capability: `setup` seeding, `transformClasses` pipeline, deferred `onCompileResult`, custom routes, and `ctx.compile()`.
+The repository includes an auto-promote reference plugin used by tests and example wiring. It tracks which CSS classes appear across pages. When a class is used on enough pages (default: 5), it's "promoted" to a shared stylesheet — reducing per-page CSS duplication. This reference plugin exercises nearly every plugin capability: `setup` seeding, `transformClasses` pipeline, deferred `onCompileResult`, custom routes, and `ctx.compile()`.
 
 For the first pre-release, built-in plugin exports are not part of the public package contract. Treat this as reference code to copy or adapt until plugin exports are stabilized.
 

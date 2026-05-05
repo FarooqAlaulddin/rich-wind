@@ -9,7 +9,7 @@ A guide to bundling options for CMS systems that use Rich Wind as a runtime comp
 | Small / medium sites | Single project CSS |
 | Large sites | Group bundles or Base + Delta |
 | Ultra-fast per-route | Per-page CSS |
-| Dynamic editors | Runtime compile + cache |
+| Dynamic editors or AI previews | Runtime compile + cache |
 | Stable published content | Prebuild on publish |
 
 ---
@@ -113,6 +113,8 @@ Compile on demand and rely on in-memory cache for speed.
 **Pros:** Simple, great for live editors.
 **Cons:** Depends on runtime service uptime; cache resets on restart.
 
+This is also the fastest loop for AI-generated previews: the agent or editor can revise HTML/classes, the host can compile the new class set immediately, and publishing can still store static CSS later.
+
 ---
 
 ## What Rich Wind Provides
@@ -130,4 +132,3 @@ The following belong in the CMS or a wrapper service:
 - Long-term artifact storage (S3, CDN)
 - Multi-tenant isolation or auth
 - Cross-node cache sync
-

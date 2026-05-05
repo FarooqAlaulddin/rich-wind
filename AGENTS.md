@@ -104,3 +104,12 @@ The lexical-demo is a separate Vite app at `lexical-demo/`:
 
 ## Deployment
 Set `RW_TRUST_PROXY=1` and `VITE_RW_CORE_URL` for production environments behind a reverse proxy.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [rich-wind] recent context, 2026-05-04 5:36pm PDT
+
+No previous sessions found.
+</claude-mem-context>

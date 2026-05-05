@@ -1,6 +1,6 @@
 # API Reference
 
-Rich Wind exposes compile/cache API endpoints, a browser loader, and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
+Rich Wind exposes JSON compile/cache/suggestion endpoints, optional browser helper scripts, and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
 
 Machine-readable contract: [`openapi.json`](openapi.json)
 
@@ -147,20 +147,22 @@ Arbitrary value classes like `text-[18px]` are not included in the static list â
 
 ---
 
-## GET /richwind-loader.js
+## Optional Helper: GET /richwind-loader.js
 
-Returns the browser loader used by exported/static HTML. Include it with a standard `<script src>` tag:
+Returns a browser helper for plain HTML preview surfaces where calling the JSON API directly from host code is inconvenient. Most application integrations should call `POST /api/compile` directly instead.
+
+Include it with a standard `<script src>` tag:
 
 ```html
 <script
   defer
-  src="https://rich-wind.thinkly.dev/core/richwind-loader.js"
+  src="https://your-rich-wind.example.com/richwind-loader.js"
   data-project-id="my-app"
   data-page-id="home"
 ></script>
 ```
 
-The loader infers `coreUrl` from its own `src` URL, adds shared stylesheet links for `base`, project `theme`, and auto-promoted CSS, then compiles the classes present in `document.body` as the page's `utilities` bundle.
+The loader infers `coreUrl` from its own `src` URL, adds shared stylesheet links for `base` and project `theme`, then compiles the classes present in `document.body` as the page's `utilities` bundle. If the auto-promote plugin is mounted at its default route, the loader also attempts to link that promoted stylesheet.
 
 Supported attributes:
 
@@ -172,19 +174,21 @@ Supported attributes:
 | `data-bundle` | no | Compile bundle for body utilities. Defaults to `"utilities"`. |
 | `data-compile` | no | Set to `"false"` to only attach shared stylesheet links. |
 
-For cross-origin HTML viewers, enable CORS with `RW_CORS_ORIGIN=*` or a comma-separated origin allowlist. The loader uses browser `fetch()` for `POST /api/compile`, so the browser enforces CORS even though the script itself can be loaded as a normal subresource.
+For cross-origin preview surfaces, enable CORS with `RW_CORS_ORIGIN=*` or a comma-separated origin allowlist. The loader uses browser `fetch()` for `POST /api/compile`, so the browser enforces CORS even though the script itself can be loaded as a normal subresource.
 
 ---
 
-## GET /richwind-reload.js
+## Optional Helper: GET /richwind-reload.js
 
-Returns an optional browser helper for exported/static HTML previews. Include it after the Rich Wind loader:
+Returns an optional browser helper for local or static preview surfaces that need an in-page reload control. This is not part of the core compile/cache workflow.
+
+Include it after the Rich Wind loader:
 
 ```html
-<script defer src="https://rich-wind.thinkly.dev/core/richwind-reload.js"></script>
+<script defer src="https://your-rich-wind.example.com/richwind-reload.js"></script>
 ```
 
-The script injects a fixed bottom-right reload button and the button's styles directly into the document. Clicking it reloads the page with a cache-busting `rwReload` query parameter, which is useful when editing exported HTML and previewing changes in a static viewer.
+The script injects a fixed bottom-right reload button and the button's styles directly into the document. Clicking it reloads the page with a cache-busting `rwReload` query parameter.
 
 Supported attributes:
 

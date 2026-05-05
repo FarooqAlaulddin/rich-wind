@@ -76,6 +76,36 @@ If you're building a live editor with Tailwind autocomplete, the flow looks like
 
 The response from `/api/compile` includes a `hash` and `cached` flag. Use `hash` to detect whether the preview actually needs updating — if the hash hasn't changed, the CSS is identical and you can skip a preview refresh.
 
+## AI-Generated UI / Agent Preview Pipeline
+
+If an AI agent, CMS assistant, or visual builder generates HTML after your app has already shipped, treat Rich Wind as the compile-and-policy boundary between the generator and the rendered preview.
+
+Recommended flow:
+
+1. The agent or editor generates HTML/classes.
+2. Your host application authenticates the user and maps them to a safe tenant-scoped `projectId`.
+3. The host calls `POST /api/compile` with the generated HTML and a stable `pageId`.
+4. The preview loads the returned CSS directly, or fetches the cached stylesheet from `GET /api/css`.
+5. On publish, the host stores the compiled page CSS or project CSS in its own CDN/object storage.
+
+This keeps the AI tool out of your Tailwind build pipeline. The agent can iterate quickly, while the host application still controls identity, page ownership, persistence, and publish approval.
+
+For governance, add plugins or wrapper checks:
+
+- `transformClasses` can remove disallowed utilities before CSS generation.
+- `onCompileResult` can record class usage and CSS size per tenant/page.
+- `transformCss` can add final CSS policies or metadata.
+- `purgePage()` and `purgeProject()` can support explicit unpublish/delete flows.
+
+For future agent integrations, expose a small wrapper around Rich Wind rather than exposing raw tenant IDs:
+
+| Agent-facing action | Rich Wind call |
+| --- | --- |
+| Validate generated classes | `POST /api/compile` and inspect returned `classes` |
+| Suggest utility classes | `POST /api/suggest` |
+| Render preview CSS | `POST /api/compile` or `GET /api/css` |
+| Publish cached stylesheet | `GET /api/projects/:projectId/css` or stored compile output |
+
 ## CMS / Publish Pipeline
 
 For content management systems and static site generators where you compile at publish time:
