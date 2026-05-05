@@ -11,6 +11,8 @@
  * onCompileResult observer, custom routes, and plugin context mutations.
  */
 
+import crypto from 'node:crypto';
+
 const SYNTHETIC_PAGE = '__auto_promote__';
 const STORAGE_KEY = 'state_v1';
 const PERSIST_DEBOUNCE_MS = 250;
@@ -119,6 +121,28 @@ export function createAutoPromotePlugin(options = {}) {
 
     // Update inverse index
     pageToClasses.set(pageId, newSet);
+  }
+
+  function reconcileProject(projectId) {
+    const pageToClasses = pageClassMap.get(projectId);
+    if (!pageToClasses) return;
+    const corePageIds = new Set(ctx.getPageIds(projectId) || []);
+    const classToPages = classPageMap.get(projectId);
+    for (const [pid, classes] of pageToClasses) {
+      if (pid === SYNTHETIC_PAGE) continue;
+      if (!corePageIds.has(pid)) {
+        if (classToPages) {
+          for (const cls of classes) {
+            const pages = classToPages.get(cls);
+            if (pages) {
+              pages.delete(pid);
+              if (pages.size === 0) classToPages.delete(cls);
+            }
+          }
+        }
+        pageToClasses.delete(pid);
+      }
+    }
   }
 
   function recalcPromoted(projectId) {
@@ -244,8 +268,14 @@ export function createAutoPromotePlugin(options = {}) {
         const { projectId } = req.params;
         const css = promotedCssCache.get(projectId);
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
         if (!css) {
           return res.type('text/css').send('');
+        }
+        const etag = `"${crypto.createHash('sha1').update(css).digest('hex').slice(0, 16)}"`;
+        res.setHeader('ETag', etag);
+        if (req.headers['if-none-match'] === etag) {
+          return res.status(304).end();
         }
         res.type('text/css').send(css);
       });
@@ -306,6 +336,8 @@ export function createAutoPromotePlugin(options = {}) {
       if (pageId === SYNTHETIC_PAGE) return;
       if (!ctx) return;
 
+      reconcileProject(projectId);
+
       const oldPromoted = promoted.get(projectId);
       const newPromoted = recalcPromoted(projectId);
       let shouldPersist = false;
@@ -328,7 +360,7 @@ export function createAutoPromotePlugin(options = {}) {
           promotedCssCache.set(projectId, result.css);
           shouldPersist = true;
         }
-      } else if (newPromoted.size === 0) {
+      } else if (changed && newPromoted.size === 0) {
         promotedCssCache.delete(projectId);
         shouldPersist = true;
       } else if (changed) {
