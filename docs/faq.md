@@ -5,6 +5,23 @@ Scope labels:
 - `[Core]` applies to Rich Wind core behavior.
 - `[Plugin: Auto-Promote]` applies only when the auto-promote plugin is enabled.
 
+## [Core] Does AI make Rich Wind unnecessary?
+
+No, but it narrows the best positioning. If an AI tool generates source-controlled React, Vue, HTML, or template files that go through your normal deploy, use the normal Tailwind build. Rich Wind is useful when AI-generated or user-generated HTML appears after deploy and needs correct CSS immediately.
+
+The main value is not writing classes. The value is compiling, caching, scoping, and governing runtime classes for CMS pages, visual builders, rich text editors, tenant-authored pages, and agent previews.
+
+## [Core] Should coding agents call Rich Wind directly?
+
+Usually through a host wrapper, not directly. The wrapper should authenticate the user, choose a safe tenant-scoped `projectId`, assign a stable `pageId`, and then call Rich Wind.
+
+Good agent-facing actions are:
+
+- Suggest classes with `POST /api/suggest`.
+- Compile generated HTML with `POST /api/compile`.
+- Preview cached CSS with `GET /api/css`.
+- Publish stored CSS from the compile response or `GET /api/projects/:projectId/css`.
+
 ## [Core] Do I need to store `base.css` and `theme.css` files in my host application?
 
 No. In the standard Rich Wind setup, your host application does not need to generate or manage static `base.css`/`theme.css` files on disk.

@@ -1,11 +1,14 @@
 # Rich Wind
 
-Runtime Tailwind CSS compiler. Send HTML or class names, get compiled CSS back. No build step, no CLI — just an HTTP API that compiles on demand.
+Runtime Tailwind CSS infrastructure for dynamic and AI-generated UI. Send HTML or class names, get compiled CSS back. No per-page build step, no file watcher, no CLI in every host app - just an HTTP API that compiles on demand.
+
+Rich Wind is not an AI UI generator or a replacement for Tailwind's normal static build pipeline. It is the production boundary for surfaces where the final class list is created after deploy: CMS pages, visual builders, template editors, rich text content, tenant-authored pages, and agent-generated previews.
 
 ## Why It Helps
 
-- Supports dynamic content where classes are only known at runtime.
-- Removes the need to run a Tailwind build pipeline in each host app.
+- Supports dynamic and AI-generated content where classes are only known at runtime.
+- Lets editors and agents preview Tailwind-styled HTML without rebuilding the host app.
+- Removes the need to run a Tailwind build pipeline in each product that creates dynamic pages.
 - Gives you cache control per `projectId` and `pageId` for fast repeat requests.
 - Works in single-node or multi-replica deployments with a shared `cacheStore`.
 
@@ -13,11 +16,13 @@ Runtime Tailwind CSS compiler. Send HTML or class names, get compiled CSS back. 
 
 - You run a CMS, visual builder, template/email editor, or preview system.
 - You need CSS generation for user-created or tenant-created pages.
+- You let AI agents create or revise HTML/classes after your app has already shipped.
 - You want a central CSS runtime service used by multiple products.
 
 ## When Not to Use It
 
 - Your UI is static and build-time Tailwind already fits your workflow.
+- Your AI-generated code is committed to the app repo and can go through the normal Tailwind build.
 - You do not want runtime compute/network overhead for CSS generation.
 - You need direct support for arbitrary user-uploaded Tailwind configs at request time.
 
@@ -116,6 +121,7 @@ Key environment variables:
 Docs are plain Markdown in `docs/` so they can be published from GitHub Pages with the Pages source set to `main` / `/docs`. Once enabled, the project docs will publish at `https://farooqalaulddin.github.io/rich-wind/`.
 
 - **[Overview](docs/index.md)** — mental model, use cases, and quick start
+- **[AI Runtime Styling](docs/ai-runtime-styling.md)** — research-backed 2026 positioning for AI-generated UI
 - **[API Reference](docs/api-reference.md)** — every endpoint, parameter, and config option
 - **[Runtime Spec](docs/runtime-spec.md)** — caching, `cacheStore` adapter interface, bundle splitting, replica roles
 - **[Plugin System](docs/plugin-system.md)** — hooks, setup context, storage, custom routes, and examples
