@@ -38,7 +38,7 @@ STOP and get explicit owner approval before:
   requires: no open PRs at the time.
 - Flipping the repo public, enabling Pages, changing branch protection (Phase 5.4-5.5).
 - Running `release-npm.yml`, promoting dist-tags, or any npm publish (Phase 6.1, 6.4).
-- Deleting a branch (`parked-demos` — Phase 0.3 is an OWNER DECISION and still open).
+- Deleting a branch or tag.
 - Any deviation from the plan's frozen contract decisions (the "Settled by evidence"
   section of README.md). New evidence may reopen a decision; present it first.
 - Moving a responsibility assigned to wrappers in the Positioning or Out of V1

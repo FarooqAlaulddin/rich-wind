@@ -70,7 +70,9 @@ system; custom compiler theme input is post-V1.
    Full history purge is deferred to Phase 5 so one `git filter-repo` run covers
    everything right before going public.
 2. Delete stray untracked `installed-versions.txt`.
-3. OWNER DECISION: `parked-demos` branch — delete at Phase 5, or scrub and keep.
+3. DECIDED 2026-09-26: the `parked-demos` branch (no commits of its own; an ancestor of
+   `main`) is replaced by the annotated tag `archive/parked-demos` on the same commit. A
+   tag survives the Phase 5.2 history rewrite; the demo stays restorable from it.
 4. Baseline: `npm test` green (DONE: 277/277), `npm run test:pack`, `npm audit`
    snapshot, CI green on dev.
 5. Divergence inventory: DONE (Appendix A), items scheduled into Phases 1/2/4.
@@ -195,10 +197,10 @@ boundary.
 
 ## Phase 5 — Go-public gate
 
-1. gitleaks scan: full history, all branches (including `parked-demos`).
+1. gitleaks scan: full history, all branches and tags (including `archive/parked-demos`).
 2. `git filter-repo` purge of `.claude/CLAUDE.md` + any gitleaks findings;
    force-push; fresh clone. (VM deploys use rsync, unaffected; no forks exist.)
-3. Execute the `parked-demos` decision.
+3. Execute the `parked-demos` decision (tag created in Phase 0; see `PROGRESS.md`).
 4. `SECURITY.md`, `CONTRIBUTING.md`, issue templates, branch protection on main,
    Dependabot.
 5. Flip public; enable Pages (main `/docs`); set repo description/topics/homepage.
