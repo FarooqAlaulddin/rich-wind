@@ -8,9 +8,8 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 
 - [x] 0.1 Untrack `.claude/CLAUDE.md`; add `.claude/` to `.gitignore` — DONE 2026-09-26
   (history purge remains Phase 5.2)
-- [ ] 0.2 Delete stray `installed-versions.txt` — verified redundant 2026-09-26 (164 of
-  165 entries match the two lockfiles; the other is the demo workspace itself).
-  Untracked, so nothing to commit; owner deletes it locally.
+- [x] 0.2 Delete stray `installed-versions.txt` — DONE 2026-09-26 (verified redundant: 164
+  of 165 entries matched the two lockfiles; the other was the demo workspace itself)
 - [x] 0.3 OWNER DECISION: `parked-demos` — DONE 2026-09-26: replace the branch with the
   annotated tag `archive/parked-demos` (same commit 4012000; the branch had no commits of
   its own and is an ancestor of `main`; a tag survives the Phase 5.2 rewrite)
@@ -67,8 +66,8 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 
 - [ ] 5.1 gitleaks full history, all branches (#66)
 - [ ] 5.2 git filter-repo purge + force-push + fresh clone (#67)
-- [ ] 5.3 Execute parked-demos decision — IN PROGRESS: tag `archive/parked-demos` pushed
-  2026-09-26; the owner deletes the `parked-demos` branch (remote and local)
+- [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
+  pushed; `parked-demos` branch deleted (remote and local)
 - [ ] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot (#68)
   - Note 2026-09-26: branch protection and rulesets return HTTP 403 while the repo is
     private on GitHub Free, so protection can only be applied after 5.5 (or on a paid
