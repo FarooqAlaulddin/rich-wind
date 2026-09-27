@@ -3,6 +3,8 @@
 Status values: DONE, IN PROGRESS, BLOCKED (with reason), or unchecked.
 Update this file in the same commit that completes or starts an item.
 Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
+Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5-3.7,
+5.0, 6.0.
 
 ## Phase 0 — Cleanup and baseline
 
@@ -45,6 +47,8 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 - [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed (#55)
 - [ ] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests (#56)
 - [ ] 2.6 Threat model section in runtime-spec; security-headers audit (#57)
+- [ ] 2.7 Client identity behind proxies: trustProxy hop count/subnets, IPv6 /64
+  keys (lands with or before 2.1) (#74)
 
 ## Phase 3 — Packaging
 
@@ -52,6 +56,9 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 - [ ] 3.2 Remove Dockerfile (#59)
 - [ ] 3.3 pack-smoke imports exported plugin subpaths from tarball (#60)
 - [ ] 3.4 index.d.ts aligned with post-Phase-1/2 reality (#61)
+- [ ] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile (#75)
+- [ ] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job (#76)
+- [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge (#77)
 
 ## Phase 4 — Docs repositioning
 
@@ -64,6 +71,8 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 
 ## Phase 5 — Go-public gate
 
+- [ ] 5.0 OWNER DECISIONS: D1 PR-refs route, D2 author email and trailers, D3
+  public demo hostname rule (#78)
 - [ ] 5.1 gitleaks full history, all branches (#66)
 - [ ] 5.2 git filter-repo purge + force-push + fresh clone (#67)
 - [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
@@ -78,6 +87,8 @@ Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 
 ## Phase 6 — Release and go-live
 
+- [ ] 6.0 Restore deploy target: host-key check, tunnel, deploy/ templates,
+  rollback, VM config (#79)
 - [ ] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next (#70)
 - [ ] 6.2 Deploy rc to VM (owner picks the moment) (#71)
 - [ ] 6.3 Soak + test:load (#72)

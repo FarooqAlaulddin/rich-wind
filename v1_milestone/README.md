@@ -5,6 +5,10 @@ cross-examined against the codebase; all findings folded in; final round approve
 every phase). Evidence-backed decisions below are settled — do not re-litigate them
 without new evidence.
 
+Revised 2026-09-27 after a gap review against the repository, GitHub, npm and the
+live deployment: new items 2.7, 3.5-3.7, 5.0 and 6.0; added detail to 1.4, 1.7, 2.1,
+2.6, 4.3, 5.2, 5.4, 5.5 and 6.1-6.3. Findings and how each was checked: Appendix B.
+
 **If you are executing this plan, read [`EXECUTION.md`](EXECUTION.md) first** — it
 carries the working conventions, decision-authority boundaries, owner-only steps,
 and hard sequencing constraints. Track progress in [`PROGRESS.md`](PROGRESS.md).
@@ -32,7 +36,8 @@ system; custom compiler theme input is post-V1.
   late phase.
 - Deployment stays simple: Cloudflare Tunnel to the VM (nginx + node, rsync release
   script, systemd). Go-live happens near the end, when the milestone reaches a good
-  spot.
+  spot. The release script and config templates move into the repo with placeholders
+  only (6.0); addresses, users and keys stay in the owner's local notes.
 - No Docker distribution work in V1.
 
 ## Settled by evidence
@@ -102,6 +107,15 @@ system; custom compiler theme input is post-V1.
    `api-reference.md` + `openapi.json` together.
 4. Reader/cache-miss semantics: adopt 404 + `NOT_FOUND` on CSS GET misses; verify
    `richwind-loader.js` / lexical demo handle it (pre-verified safe); align docs.
+   Scope: the two core CSS GETs (`GET /api/css`, `GET /api/projects/:projectId/css`);
+   the auto-promote plugin's CSS route is plugin-owned and keeps its behavior. This
+   knowingly reverses commit 9e157d8 (2026-05-03), which moved misses to 200 empty
+   `text/css` because browsers ORB-block a JSON body loaded by a cross-origin
+   `<link>`. The page result is the same either way (no stylesheet applied, no
+   retry); the difference is a console message. The loader adds the project theme
+   stylesheet before its first compile, so a first visit to a new project hits that
+   404 (today: 200 empty). The 404 body is the 1.2 JSON envelope like every other
+   non-2xx; api-reference notes the console message. Cite 9e157d8 in the PR.
 5. Plugin contract truth-up (types + docs match code):
    - Add `guard` to `PluginHookName`/`RichWindPlugin` types and `plugin-system.md`.
    - Fix `onRequestStart`/`onResponseSent` docs: they fire for built-in route
@@ -119,7 +133,13 @@ system; custom compiler theme input is post-V1.
    status codes and endpoint side effects remain stable, existing error codes keep
    their meaning, and response objects may gain optional fields. New error codes are
    reserved for the next major version; new failure cases in 1.x map to the frozen
-   enum.
+   enum. The policy also states that generated CSS and the contents of `rejected`
+   track the installed Tailwind CSS 4.x release (a Tailwind minor can add utilities,
+   turning a rejected class into a valid one), and that Rich Wind depends on
+   Tailwind's `__unstable__loadDesignSystem` and `candidatesToCss`, so a Tailwind
+   release that breaks them is answered by a Rich Wind release that narrows the
+   dependency range. Set `docs/openapi.json` `info.version` to `1.0.0` (today
+   `0.0.1`); it is the API contract version and carries no package prerelease tag.
 
 ## Phase 2 — Core hardening
 
@@ -132,7 +152,8 @@ boundary.
    production numbers; a single 60/min would throttle one active demo editor at ~4
    requests per keystroke). Shared `rateLimitWindowMs`; config
    `rateLimitCompileMax`/`rateLimitApiMax` (+ `RW_` envs); `rateLimitDisabled`.
-   Default ON (embedded and standalone; embedders can disable). Skip `OPTIONS` and
+   Default ON (embedded and standalone; embedders can disable). Buckets are keyed on
+   the client identity from 2.7, which lands with or before this item. Skip `OPTIONS` and
    `/health`. 429 + `Retry-After` + `RATE_LIMITED` envelope. Update `runtime-spec.md`
    defaults. Rate-limit state must delete expired buckets and enforce an internal,
    non-configurable V1 cap of 10,000 tracked IP buckets so unique-IP traffic cannot
@@ -161,7 +182,22 @@ boundary.
    plugin-route access control, multi-replica coordinated limiting). Clarify that
    public CSS GETs are an intentional delivery surface and the optional API key is
    not tenant isolation. Security headers: audit-only (nosniff, Referrer-Policy,
-   X-Frame-Options, CORP already present).
+   X-Frame-Options, CORP already present). Also state two known limits: a client
+   that controls many addresses (an IPv6 /48 holds 65,536 /64 prefixes) can fill the
+   10,000-bucket cap and lock out unseen clients for one window; and per-IP limiting
+   is only as good as the `trustProxy` setting (2.7). Deployments behind a CDN or
+   proxy rely on it as the outer limiter.
+7. Client identity behind proxies (lands with or before 2.1). Today `RW_TRUST_PROXY`
+   is boolean-only (`parseBoolean`), and `true` makes Express take the leftmost
+   `X-Forwarded-For` entry, which the client controls: once the limiter is on,
+   rotating that header bypasses it and fills the bucket cap (verified 2026-09-27,
+   Appendix B). `trustProxy` / `RW_TRUST_PROXY` also accepts a hop count or a
+   comma-separated list of trusted addresses/subnets (Express `trust proxy`
+   semantics; typed in 3.4). `runtime-spec.md` documents `true` as unsafe on the open
+   internet and explains how to derive the hop count for a Cloudflare Tunnel + nginx
+   chain (confirmed on the VM in 6.0). IPv6 clients are keyed by their /64 prefix.
+   Tests: under a hop count, a spoofed leftmost `X-Forwarded-For` does not change the
+   key; the bucket cap holds under many unique keys.
 
 ## Phase 3 — Packaging (npm only)
 
@@ -174,6 +210,37 @@ boundary.
    instantiate each factory, verify unexported paths fail.
 4. Align `services/index.d.ts` with post-Phase-1/2 reality (rateLimit* real, `guard`
    hook typed, `ctx.compile` shape, removed aliases).
+5. Dependency hygiene: `npm audit fix` without `--force` (the Phase 0 snapshot,
+   `evidence/npm-audit-2026-09-26.txt`, shows all 8 advisories fixable that way;
+   production: `qs` and `body-parser` via express, which the VM installs from the
+   lockfile). Delete the stale `lexical-demo/package-lock.json` before Dependabot
+   (5.4) starts opening PRs against it: the workspace install uses only the root
+   lockfile, and the nested one has drifted (vite 8.0.10 against the root's 7.3.2).
+   Full tests, pack smoke and demo build after. Gate for 6.1: `npm audit --omit=dev`
+   clean.
+6. Supported Node versions: Node 20 reached end-of-life on 2026-04-30, yet
+   `engines.node` is `>=20` and CI tests only Node 20. Raise `engines.node` to
+   `>=22`; `test-before-merge.yml` runs a matrix of Node 22 and 24, plus one job that
+   installs without the lockfile so tests run against what a fresh
+   `npm install rich-wind` resolves (the lockfile tests Tailwind 4.1.18; a fresh
+   install gets 4.3.3); `release-npm.yml` moves off Node 20.
+7. Release pipeline readiness (prerequisite for 6.1):
+   - Version input: from `0.0.1-alpha.0` the workflow's options produce `0.0.1-rc.0`
+     (prerelease) or `1.0.0` (major); `1.0.0-rc.1` is unreachable. Add an explicit
+     `version` input (`npm version <version>`), keeping the guard that prerelease
+     versions never publish to `latest`.
+   - npm credentials: the `NPM_TOKEN` secret the workflow reads does not exist (the
+     repo's only secrets are two unused Render deploy hooks). Owner step: create the
+     npm credential. Per npm's documentation (confirm on npmjs.com when executing),
+     trusted publishing needs npm CLI 11.5.1 or later (Node 20 and 22 bundle npm 10)
+     and is configured on an existing package, so the first publish may need a
+     short-lived granular token; `--provenance` requires a public repository, which
+     5.5 provides.
+   - Back-merge: the workflow pushes its version commit and tag straight to `main`,
+     so every release ends with `main` merged back into `dev`, or the next dev->main
+     PR conflicts on `package.json`. Branch protection (5.4) must allow that push, or
+     the workflow switches to opening a PR.
+   - Confirm the npm name `rich-wind` is still unclaimed (it was on 2026-09-27).
 
 ## Phase 4 — Docs repositioning (while private)
 
@@ -191,27 +258,81 @@ boundary.
    `maxCssChars` applies to `transformCss`/resolve output too; auto-promote returns
    `[]` not `undefined` + fix test path in docs; plugin-system export examples match
    the new exports map; api-reference gains query `bundle` on CSS routes;
-   suggest/invalidate alias rows dropped.
+   suggest/invalidate alias rows dropped. Also drop the empty `<claude-mem-context>`
+   block at the end of `AGENTS.md` (tool residue that would go public).
 4. api-reference: error enum, `rejected` field, auth, rate limits. Verify
    `docs/_config.yml` renders for Pages (flip in Phase 5).
 
 ## Phase 5 — Go-public gate
 
+0. OWNER DECISIONS, needed before 5.1:
+   - D1, pull-request refs: GitHub keeps a read-only `refs/pull/<n>/head` for every
+     pull request (44 today), and a force-push cannot change them. From PR #32 on,
+     they reach commits containing the deployment notes that 0.1 untracked, so after
+     a filter-repo force-push those commits stay fetchable once the repo is public.
+     Choose: (a) force-push, then ask GitHub Support to remove the PR refs and cached
+     views (GitHub's documented procedure; Support decides whether to act on data
+     that is not a rotatable credential); or (b) rename this repo, create a new
+     `rich-wind` repository, push the purged history there, transfer the issues,
+     recreate milestone V1 and the repo settings/secrets (issue numbers change; PR
+     history stays in the renamed private repo). Recommendation: (b), because it
+     does not depend on Support and 5.2 can verify it directly.
+   - D2, author metadata: 119 commits carry the owner's personal email address as
+     author, and 78 commit messages carry `Co-Authored-By` trailers naming AI tools.
+     gitleaks flags neither. 5.2 is the only planned history rewrite, so any change
+     to either (a mailmap to the GitHub noreply address, trailer removal) must be in
+     that run. Owner's call.
+   - D3, public demo hostname: `EXECUTION.md` bans hostnames in tracked files, but
+     the tracked `lexical-demo/.env.production` holds the public demo hostname (also
+     the planned repo homepage, 5.5). Choose: allow public demo URLs explicitly in
+     the rule (recommended), or move the value out of tracked files.
 1. gitleaks scan: full history, all branches and tags (including `archive/parked-demos`).
-2. `git filter-repo` purge of `.claude/CLAUDE.md` + any gitleaks findings;
-   force-push; fresh clone. (VM deploys use rsync, unaffected; no forks exist.)
+2. `git filter-repo` purge of `.claude/CLAUDE.md` + any gitleaks findings, plus
+   whatever D2 decides; force-push (or push to the new repository, per D1); fresh
+   clone. (VM deploys use rsync, unaffected; no forks exist.) Verify before 5.5: no
+   commit reachable from a fresh clone, or from any `refs/pull/*` ref of the
+   repository that will go public, contains a `.claude/` path. The rewrite changes
+   every commit hash, including the one `archive/parked-demos` points to; update the
+   hashes quoted in `PROGRESS.md` and in issues.
 3. Execute the `parked-demos` decision (tag created in Phase 0; see `PROGRESS.md`).
 4. `SECURITY.md`, `CONTRIBUTING.md`, issue templates, branch protection on main,
-   Dependabot.
-5. Flip public; enable Pages (main `/docs`); set repo description/topics/homepage.
+   Dependabot. Branch protection returns HTTP 403 while the repo is private on
+   GitHub Free, so it is applied right after 5.5; it must leave the release
+   workflow's push to `main` possible (3.7).
+5. Flip public (only after the 5.2 verification passes); enable Pages (main
+   `/docs`); set repo description/topics/homepage.
 
 ## Phase 6 — Release and go-live
 
+0. Restore the deploy target (owner-only steps marked; may start any time, must be
+   DONE before 6.2). On 2026-09-27 the public health URL returned HTTP 530 (Cloudflare
+   tunnel down) and SSH to the VM failed with a changed host key.
+   - Owner: find out why the host key changed (rebuilt instance, or an address now
+     serving a different machine) before accepting any new key; restore the tunnel;
+     confirm `/health` publicly.
+   - Add `deploy/` to the repo: the release script, a systemd unit template, an nginx
+     template with the rate-limit zones, and an env example. Placeholders only: no
+     addresses, users, key names or hostnames (EXECUTION.md). Today these exist only
+     in the owner's untracked notes and on the VM.
+   - The release script keeps the previous release: switch the symlink, restart,
+     poll `/health`; on failure switch back and restart; prune old releases only
+     after a healthy start. Today it deletes every previous release before
+     restarting, so a bad release has nothing to roll back to.
+   - Settle the VM configuration for V1 features: `RW_TRUST_PROXY` as the hop count
+     from 2.7 (today `1`, which means trust everything); verify that nginx's
+     `limit_req` zones key on the real client address, not the tunnel's local
+     address; `RW_API_KEY` stays unset because the public browser demo cannot hold a
+     key (the open compile endpoint is intentional for the demo); in-core limiter on
+     with the nginx numbers; concurrency cap at its default.
 1. Merge dev -> main (the release workflow only runs from main); `release-npm.yml`
-   -> `1.0.0-rc.1` on dist-tag `next`.
-2. Deploy the rc to the VM via the existing rsync release script (owner picks the
-   moment).
-3. Soak behind demo traffic; `npm run test:load`.
+   -> `1.0.0-rc.1` on dist-tag `next` via the explicit version input (3.7); gate:
+   `npm audit --omit=dev` clean (3.5); then merge `main` back into `dev`.
+2. Deploy the rc to the VM with the `deploy/` release script from 6.0 (owner picks
+   the moment).
+3. Soak behind demo traffic; `npm run test:load`. Pass criteria: the soak spans at
+   least one full `RuntimeMaxSec` restart cycle; no 5xx other than intentional 503
+   `SERVER_BUSY`; heap stays under the 512 MB cap; normal typing in one demo editor
+   never draws a 429; `test:load` passes.
 4. Promote `1.0.0` to `latest`; CHANGELOG; GitHub Release telling the AI-guided-UI
    story.
 
@@ -251,3 +372,39 @@ Scheduled locations in parentheses.
     (Phase 4.3).
 12. `GET /api/css` documented cache-read-only, actually materializes a missing
     bundle from cached classes (Phase 4.3 — document as behavior).
+
+## Appendix B — Gap review 2026-09-27
+
+Checked against the code, git history, GitHub, npm and the live deployment, with an
+independent codex review whose claims were re-verified before use. Scheduled
+locations in parentheses.
+
+1. `refs/pull/*` keep purged commits reachable: 44 PR refs, and from PR #32 on they
+   reach the deployment notes that 0.1 untracked (5.0 D1, 5.2).
+2. The release workflow cannot reach `1.0.0-rc.1` from `0.0.1-alpha.0` (checked with
+   `npm version`: prerelease gives `0.0.1-rc.0`, major gives `1.0.0`); no
+   `NPM_TOKEN` secret exists; the version commit lands on `main` only (3.7, 6.1).
+3. With `trust proxy` = true, Express takes the client-supplied leftmost
+   `X-Forwarded-For` entry. Checked with a local Express app and a
+   `spoofed, real, proxy` chain: two requests with different spoofed values got two
+   different `req.ip` values; a hop count of 2 returned the real address (2.7).
+4. Deploy target down (HTTP 530, changed SSH host key); the release script deletes
+   the previous release before restarting; deploy config lives only in untracked
+   notes and on the VM (6.0).
+5. The owner's personal email address is the author of 119 commits; 78 commit
+   messages carry AI `Co-Authored-By` trailers (5.0 D2).
+6. The 8 npm advisories from the Phase 0 snapshot had no phase; the nested
+   `lexical-demo/package-lock.json` is stale (3.5).
+7. Node 20 reached end-of-life on 2026-04-30 while `engines` says `>=20` and CI
+   tests only Node 20 (3.6).
+8. The range `^4.1.18` resolves Tailwind 4.3.3 on a fresh install. The full suite
+   passes 277/277 on 4.3.3 and `__unstable__loadDesignSystem` is still exported, but
+   CI only tests the lockfile (3.6, 1.7).
+9. 1.4 reverses 9e157d8 (ORB); the loader's theme stylesheet misses on a first visit
+   to a new project, checked against a local core (1.4).
+10. The tracked `lexical-demo/.env.production` holds the public demo hostname,
+    against the EXECUTION.md rule (5.0 D3).
+11. `docs/openapi.json` `info.version` is `0.0.1` (1.7).
+12. `AGENTS.md` ends with an empty `<claude-mem-context>` block (4.3).
+13. The rewrite changes every hash quoted in `PROGRESS.md` and in issues (5.2).
+14. The 6.3 soak had no pass criteria (6.3).
