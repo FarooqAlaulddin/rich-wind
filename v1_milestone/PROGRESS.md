@@ -1,10 +1,12 @@
 # V1 Milestone — Progress Tracker
 
-Status values: DONE, IN PROGRESS, BLOCKED (with reason), or unchecked.
+Status values: DONE, IN PROGRESS, BLOCKED (with reason), DROPPED (with reason), or
+unchecked.
 Update this file in the same commit that completes or starts an item.
 Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5-3.7,
-5.0, 6.0.
+5.0, 6.0. Revised again 2026-09-27 (owner): library-first positioning; no in-core rate
+limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped).
 
 ## Phase 0 — Cleanup and baseline
 
@@ -40,15 +42,18 @@ Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5
 
 ## Phase 2 — Core hardening
 
-- [ ] 2.1 Bounded in-core rate limiter (two buckets 120/600 per min; delete
-  plugins/rate-limit) (#52)
-- [ ] 2.2 Optional RW_API_KEY service access on the three POST endpoints (#53)
-- [ ] 2.3 Middleware placement (post-CORS, pre-body-parse, before runGuard) (#54)
+- [ ] 2.1 Embedding contract: drop the rate-limit promise and plugins/rate-limit;
+  mount-under-prefix tests; host-side recipe (#52)
+- [x] 2.2 Optional RW_API_KEY on the POST endpoints — DROPPED 2026-09-27 (owner:
+  access control belongs to the host app or the proxy in front) (#53)
+- [x] 2.3 Middleware placement for the limiter and key — DROPPED 2026-09-27 (neither
+  is built) (#54)
 - [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed (#55)
 - [ ] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests (#56)
-- [ ] 2.6 Threat model section in runtime-spec; security-headers audit (#57)
-- [ ] 2.7 Client identity behind proxies: trustProxy hop count/subnets, IPv6 /64
-  keys (lands with or before 2.1) (#74)
+- [ ] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
+  security-headers audit (#57)
+- [ ] 2.7 Client identity behind proxies: trustProxy hop count/subnets; embedded core
+  inherits the host's setting (#74)
 
 ## Phase 3 — Packaging
 
@@ -62,12 +67,13 @@ Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5
 
 ## Phase 4 — Docs repositioning
 
-- [ ] 4.1 README + docs/index.md lead with AI-guided UI and preserve the
-  core/wrapper boundary (#62)
+- [ ] 4.1 README + docs/index.md: library first, AI-driven UI as the vision;
+  package description (#62)
 - [ ] 4.2 Agent quickstart (explicit classes + rejected feedback loop) +
   docs-examples test (#63)
 - [ ] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) (#64)
-- [ ] 4.4 api-reference: error enum, rejected, auth, rate limits; Pages render check (#65)
+- [ ] 4.4 api-reference: error enum, rejected, core vs host enforcement; Pages render
+  check (#65)
 
 ## Phase 5 — Go-public gate
 

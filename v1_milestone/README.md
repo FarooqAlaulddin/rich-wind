@@ -9,6 +9,11 @@ Revised 2026-09-27 after a gap review against the repository, GitHub, npm and th
 live deployment: new items 2.7, 3.5-3.7, 5.0 and 6.0; added detail to 1.4, 1.7, 2.1,
 2.6, 4.3, 5.2, 5.4, 5.5 and 6.1-6.3. Findings and how each was checked: Appendix B.
 
+Revised again 2026-09-27 by the owner: the positioning is library first, with AI-driven
+UI as the vision behind it. Rate limiting and access keys stay out of the library (the
+host app or the proxy in front decides who may call it and how often): 2.1 rewritten,
+2.2 and 2.3 dropped, 2.6 and 2.7 reduced.
+
 **If you are executing this plan, read [`EXECUTION.md`](EXECUTION.md) first** — it
 carries the working conventions, decision-authority boundaries, owner-only steps,
 and hard sequencing constraints. Track progress in [`PROGRESS.md`](PROGRESS.md).
@@ -17,27 +22,40 @@ The measurements behind the settled decisions are reproducible via
 
 ## Positioning
 
-Primary use case: **AI-guided UI**. Apps render LLM-generated HTML/class lists at
-runtime; Rich Wind is the machine-readable styling backend returning
-`{ css, classes, rejected, hash, cached }`. The app owns rendering and workflow;
-Rich Wind owns deterministic validation, compilation, and CSS delivery. The
-`rejected` field gives any caller enough compiler feedback to build a correction
-loop. CMS/editors/multi-tenant remain secondary documented use cases.
+Rich Wind has two visions, one inside the other.
 
-Rich Wind core is **agent-ready, not AI-aware**. Agent wrappers and host apps own
-HTML-specific diagnostics, prompts, design-system context, policy, drafts,
-publishing, tenant identity, and agent protocols such as MCP. Those concerns must
-not enter the V1 core contract. V1 compiles against Tailwind's default design
-system; custom compiler theme input is post-V1.
+**1. The library (what V1 ships).** Rich Wind is an open-source (MIT) npm library that
+apps include to compile Tailwind CSS at runtime, for markup that did not exist when the
+app was built. It is a project in its own right: CMS pages, editors, previews,
+multi-tenant pages and AI output all use it the same way. An app includes it in one of
+two ways: mount the Express app that `createCore()` returns, under any path prefix and
+behind the host's own middleware, or run the bundled server (`npm start`) as a separate
+service behind a proxy. The library owns deterministic validation, compilation,
+caching, suggestions, CSS delivery, and protection of its own resources (input caps,
+cache caps, compile concurrency). The host app, or the proxy in front of the standalone
+server, owns the network edge: who may call it, how often, and tenant identity.
+
+**2. AI-driven UI (why it exists).** Apps increasingly render LLM-generated HTML and
+class lists at runtime. Rich Wind is the styling layer for that: compile returns
+`{ css, classes, rejected, hash, cached }`, and `rejected` gives a model enough
+compiler feedback to correct itself and recompile. V1 makes the library
+**agent-ready, not AI-aware**: agent wrappers and host apps own HTML-specific
+diagnostics, prompts, design-system context, policy, drafts, publishing, and agent
+protocols such as MCP. Those are separate projects built on the library and must not
+enter the V1 core contract.
+
+V1 compiles against Tailwind's default design system; custom compiler theme input is
+post-V1.
 
 ## Constraints
 
 - Repo stays **private** until most of V1 is done. Public flip + GitHub Pages is a
   late phase.
-- Deployment stays simple: Cloudflare Tunnel to the VM (nginx + node, rsync release
-  script, systemd). Go-live happens near the end, when the milestone reaches a good
-  spot. The release script and config templates move into the repo with placeholders
-  only (6.0); addresses, users and keys stay in the owner's local notes.
+- The project's own deployment (the public demo) stays simple: Cloudflare Tunnel to
+  the VM (nginx + node, rsync release script, systemd). Go-live happens near the end,
+  when the milestone reaches a good spot. The release script and config templates move
+  into the repo with placeholders only (6.0); addresses, users and keys stay in the
+  owner's local notes.
 - No Docker distribution work in V1.
 
 ## Settled by evidence
@@ -67,6 +85,11 @@ system; custom compiler theme input is post-V1.
   `index.d.ts` and `runtime-spec.md` but was never implemented in core; the `guard`
   hook is implemented but absent from the public plugin contract; `ctx.compile()`
   returns a different shape than documented.
+- **Embedding works today, and host middleware runs first.** Checked 2026-09-27:
+  `core.app` mounted under `/rw` in a host Express app served compile, the CSS GET and
+  the loader (the loader derives its base URL from its own `src`), and host middleware
+  answered 429 before core ran. One gap: an embedded core ignores the host's
+  `trust proxy` setting (2.7).
 
 ## Phase 0 — Cleanup and baseline
 
@@ -94,7 +117,8 @@ system; custom compiler theme input is post-V1.
    `RATE_LIMITED`, `SERVER_BUSY`, `UNAUTHORIZED`, `FORBIDDEN`, `REQUEST_BLOCKED`,
    `NOT_FOUND`, `INTERNAL`). Plugin guard responses map 401 to `UNAUTHORIZED`, 403
    to `FORBIDDEN`, 429 to `RATE_LIMITED`, and every other blocking status to
-   `REQUEST_BLOCKED`. Includes the final Express error handler. `openapi.json`:
+   `REQUEST_BLOCKED` (core has no limiter or key check of its own, so these four come
+   only from guards). Includes the final Express error handler. `openapi.json`:
    `code` becomes required on the error schema; guarded-route errors are documented
    on every affected route (today only compile lists 429).
 3. Alias removal — one dedicated breaking-change PR. Canonical names only:
@@ -127,11 +151,14 @@ system; custom compiler theme input is post-V1.
 6. Contract validation for real: add `ajv` as devDependency; extend
    `tests/contracts.test.js` to validate live route responses against
    `openapi.json`.
-7. Contract freeze is the LAST PR of Phases 1+2 combined (after the rate limiter and
-   service access key add their error codes); then the 1.x compatibility policy goes
-   in the docs. Within 1.x, existing fields do not change type or meaning, successful
-   status codes and endpoint side effects remain stable, existing error codes keep
-   their meaning, and response objects may gain optional fields. New error codes are
+7. Contract freeze is the LAST PR of Phases 1+2 combined (after the embedding contract
+   (2.1), the concurrency shed (2.4) and the `trustProxy` change (2.7)); then the 1.x
+   compatibility policy goes in the docs. Within 1.x, existing fields do not change
+   type or meaning, successful status codes and endpoint side effects remain stable,
+   existing error codes keep their meaning, and response objects may gain optional
+   fields. The embedding contract is part of 1.x: `createCore()` returns
+   `{ app, close }` (the object may gain members), `app` works mounted under any path
+   prefix behind host middleware, and the standalone server stays. New error codes are
    reserved for the next major version; new failure cases in 1.x map to the frozen
    enum. The policy also states that generated CSS and the contents of `rejected`
    track the installed Tailwind CSS 4.x release (a Tailwind minor can add utilities,
@@ -143,61 +170,62 @@ system; custom compiler theme input is post-V1.
 
 ## Phase 2 — Core hardening
 
-Principle: a bare deployment with no nginx in front must remain resource-bounded on
-the open internet. This does not make the auth-agnostic core a tenant-isolation
-boundary.
+Principle: embedded or standalone, core bounds its own resources (input caps, cache
+caps, compile concurrency, compile-input filtering) so no request can exhaust the
+process. Who may call it and how often is decided by the host app, or by the proxy in
+front of the standalone server; core provides the embedding contract and a documented
+recipe, not the policy (owner decision 2026-09-27). This does not make the
+auth-agnostic core a tenant-isolation boundary.
 
-1. Implement the already-documented in-core fixed-window per-IP rate limiter, as two
-   buckets: compile 120/min, all other API + plugin routes 600/min (field-tested
-   production numbers; a single 60/min would throttle one active demo editor at ~4
-   requests per keystroke). Shared `rateLimitWindowMs`; config
-   `rateLimitCompileMax`/`rateLimitApiMax` (+ `RW_` envs); `rateLimitDisabled`.
-   Default ON (embedded and standalone; embedders can disable). Buckets are keyed on
-   the client identity from 2.7, which lands with or before this item. Skip `OPTIONS` and
-   `/health`. 429 + `Retry-After` + `RATE_LIMITED` envelope. Update `runtime-spec.md`
-   defaults. Rate-limit state must delete expired buckets and enforce an internal,
-   non-configurable V1 cap of 10,000 tracked IP buckets so unique-IP traffic cannot
-   grow memory without bound. At the cap, reject an unseen IP rather than allocating
-   another bucket. DELETE `plugins/rate-limit` (never published; now an unpublished
-   duplicate).
-2. Optional service access key, `RW_API_KEY` (config `apiKey`): when set, Bearer
-   required on exactly
-   `POST /api/compile`, `POST /api/invalidate`, `POST /api/suggest` (suggest exposes
-   the project class cache + plugin hooks). CSS GETs, loader scripts, `/health`,
-   plugin routes, `OPTIONS` stay open. Timing-safe compare. 401 `UNAUTHORIZED`.
-   Document that this is deployment-level access control, not tenant auth, and that
-   plugin routes must enforce their own access policy when they expose sensitive
-   data or mutations.
-3. Middleware placement: limiter and auth mount AFTER the CORS/preflight handler and
-   BEFORE `express.json` (cheap rejection, preflight unbroken);
-   `pluginRunner.runGuard` stays after core auth/limiter as an extension layer, not
-   the implementation.
+1. Embedding contract, replacing the in-core rate limiter. The docs promise a per-IP
+   rate limiter core never had (Appendix A item 1). Remove the promise instead of
+   building it: delete `rateLimit*` from `index.d.ts`, `runtime-spec.md` and
+   `api-reference.md`, drop "rate limits" from the options sentence in
+   `docs/index.md`, and delete `plugins/rate-limit` (never published). Add a `runtime-spec.md` section on including Rich Wind in an app:
+   mount `core.app` under a path prefix behind host middleware (an Express example
+   with a rate limiter and an auth check), or run the standalone server behind a
+   proxy (the nginx template from 6.0, with the field-tested zones of 120/min for
+   compile and 600/min for the rest; the demo makes about 4 requests per keystroke).
+   State that plugin routes must enforce their own access policy when they expose
+   sensitive data or mutations. Tests: `core.app` mounted under a prefix serves
+   compile, the CSS GETs and the loader; host middleware answers before core runs.
+2. DROPPED 2026-09-27 (owner decision): the optional `RW_API_KEY` on the three POST
+   endpoints. Access control belongs to the host app or the proxy in front (2.1
+   documents how); the public browser demo could not hold a key anyway.
+3. DROPPED 2026-09-27 (owner decision): middleware placement for the in-core limiter
+   and API key, since neither is built. `pluginRunner.runGuard` keeps its place.
 4. Compile insurance: `RW_MAX_CONCURRENT_COMPILES` (default 8), with no wait queue;
    shed immediately with 503 `SERVER_BUSY` + `Retry-After` when all slots are in use.
 5. `UNSAFE_CLASS_CHAR_RE` gains `{` and `}`. Regression tests: brace-expansion bomb
    via classes and via html; prose-noise html asserting `rejected: []`.
-6. Threat model section in `runtime-spec.md`: defended (compile abuse: caps +
+6. Threat model section in `runtime-spec.md`: defended by core (compile abuse: caps +
    concurrency cap + benchmark rationale; cache exhaustion: LRU caps; `@source
-   inline` breakout: validate-before-inline + char filter), delegated (tenant auth,
-   plugin-route access control, multi-replica coordinated limiting). Clarify that
-   public CSS GETs are an intentional delivery surface and the optional API key is
-   not tenant isolation. Security headers: audit-only (nosniff, Referrer-Policy,
-   X-Frame-Options, CORP already present). Also state two known limits: a client
-   that controls many addresses (an IPv6 /48 holds 65,536 /64 prefixes) can fill the
-   10,000-bucket cap and lock out unseen clients for one window; and per-IP limiting
-   is only as good as the `trustProxy` setting (2.7). Deployments behind a CDN or
-   proxy rely on it as the outer limiter.
-7. Client identity behind proxies (lands with or before 2.1). Today `RW_TRUST_PROXY`
-   is boolean-only (`parseBoolean`), and `true` makes Express take the leftmost
-   `X-Forwarded-For` entry, which the client controls: once the limiter is on,
-   rotating that header bypasses it and fills the bucket cap (verified 2026-09-27,
-   Appendix B). `trustProxy` / `RW_TRUST_PROXY` also accepts a hop count or a
-   comma-separated list of trusted addresses/subnets (Express `trust proxy`
-   semantics; typed in 3.4). `runtime-spec.md` documents `true` as unsafe on the open
-   internet and explains how to derive the hop count for a Cloudflare Tunnel + nginx
-   chain (confirmed on the VM in 6.0). IPv6 clients are keyed by their /64 prefix.
-   Tests: under a hop count, a spoofed leftmost `X-Forwarded-For` does not change the
-   key; the bucket cap holds under many unique keys.
+   inline` breakout: validate-before-inline + char filter), delegated to the host app
+   or proxy (who may call and how often, tenant auth, plugin-route access control).
+   Clarify that public CSS GETs are an intentional delivery surface, and that without
+   host controls anyone who can reach core can compile into and invalidate any
+   project's cache. Security headers: audit-only (nosniff, Referrer-Policy,
+   X-Frame-Options, CORP already present). State the known limit plainly: a
+   standalone server exposed with nothing in front stays up (its resources are
+   bounded) but is not fair; one client can hold every compile slot while the rest
+   get 503 `SERVER_BUSY`.
+7. Client identity behind proxies. Core passes the client IP only to plugin hooks
+   (`request.ip`), so it matters to plugins such as a guard-based limiter, not to core
+   itself. Two fixes:
+   - `RW_TRUST_PROXY` is boolean-only (`parseBoolean`), and `true` makes Express take
+     the leftmost `X-Forwarded-For` entry, which the client controls (verified
+     2026-09-27, Appendix B). `trustProxy` / `RW_TRUST_PROXY` also accepts a hop count
+     or a comma-separated list of trusted addresses/subnets (Express `trust proxy`
+     semantics; typed in 3.4). `runtime-spec.md` documents `true` as unsafe on the
+     open internet and explains how to derive the hop count for a Cloudflare Tunnel +
+     nginx chain (confirmed on the VM in 6.0).
+   - Core always calls `app.set('trust proxy', ...)`, so a core mounted in a host app
+     ignores the host's setting (verified 2026-09-27, Appendix B). When `trustProxy`
+     is not configured, core leaves the setting alone so a mounted core inherits the
+     host's; standalone behavior is unchanged (Express defaults to not trusting).
+   Tests: under a hop count, a spoofed leftmost `X-Forwarded-For` does not change
+   `request.ip`; mounted in a host with `trust proxy` set, plugin hooks see the
+   host-resolved client address.
 
 ## Phase 3 — Packaging (npm only)
 
@@ -208,8 +236,9 @@ boundary.
    post-V1; a services-only Dockerfile would ship broken plugin support).
 3. `pack-smoke`: install the packed tarball, import both exported plugin subpaths,
    instantiate each factory, verify unexported paths fail.
-4. Align `services/index.d.ts` with post-Phase-1/2 reality (rateLimit* real, `guard`
-   hook typed, `ctx.compile` shape, removed aliases).
+4. Align `services/index.d.ts` with post-Phase-1/2 reality (`rateLimit*` removed,
+   `trustProxy` accepts a boolean, hop count or address list, `guard` hook typed,
+   `ctx.compile` shape, removed aliases).
 5. Dependency hygiene: `npm audit fix` without `--force` (the Phase 0 snapshot,
    `evidence/npm-audit-2026-09-26.txt`, shows all 8 advisories fixable that way;
    production: `qs` and `body-parser` via express, which the VM installs from the
@@ -244,9 +273,14 @@ boundary.
 
 ## Phase 4 — Docs repositioning (while private)
 
-1. README + `docs/index.md` lead with AI-guided UI while preserving the core/wrapper
-   boundary; `ai-runtime-styling.md` promoted to the core story; CMS/editors as
-   "also fits". State plainly that V1 uses Tailwind's default design system.
+1. README + `docs/index.md` follow the two visions: first what the library is and how
+   to include it in an app (mounted, or standalone behind a proxy; link the 2.1
+   embedding section), then AI-driven UI as the vision and flagship use case
+   (`ai-runtime-styling.md` promoted to that story), with CMS, editors and previews as
+   other uses. Preserve the core/wrapper boundary. State plainly that V1 uses
+   Tailwind's default design system. `package.json` `description` and `keywords`
+   describe a library (today: "A stateless Tailwind CSS runtime service", keywords
+   `api` and `service`).
 2. New agent quickstart: model emits HTML plus an explicit class list ->
    `POST /api/compile` -> feed explicit-input `rejected` values back to the model ->
    recompile -> serve `GET /api/css`. Explain that wrappers may parse HTML into the
@@ -260,7 +294,8 @@ boundary.
    the new exports map; api-reference gains query `bundle` on CSS routes;
    suggest/invalidate alias rows dropped. Also drop the empty `<claude-mem-context>`
    block at the end of `AGENTS.md` (tool residue that would go public).
-4. api-reference: error enum, `rejected` field, auth, rate limits. Verify
+4. api-reference: error enum, `rejected` field, and what core enforces versus what
+   the host enforces (no in-core rate limits or keys). Verify
    `docs/_config.yml` renders for Pages (flip in Phase 5).
 
 ## Phase 5 — Go-public gate
@@ -300,7 +335,7 @@ boundary.
    GitHub Free, so it is applied right after 5.5; it must leave the release
    workflow's push to `main` possible (3.7).
 5. Flip public (only after the 5.2 verification passes); enable Pages (main
-   `/docs`); set repo description/topics/homepage.
+   `/docs`); set repo description/topics/homepage (library wording, matching 4.1).
 
 ## Phase 6 — Release and go-live
 
@@ -319,11 +354,10 @@ boundary.
      after a healthy start. Today it deletes every previous release before
      restarting, so a bad release has nothing to roll back to.
    - Settle the VM configuration for V1 features: `RW_TRUST_PROXY` as the hop count
-     from 2.7 (today `1`, which means trust everything); verify that nginx's
-     `limit_req` zones key on the real client address, not the tunnel's local
-     address; `RW_API_KEY` stays unset because the public browser demo cannot hold a
-     key (the open compile endpoint is intentional for the demo); in-core limiter on
-     with the nginx numbers; concurrency cap at its default.
+     from 2.7 (today `1`, which means trust everything); nginx stays the demo's only
+     rate limiter, so verify that its `limit_req` zones key on the real client
+     address, not the tunnel's local address (the open compile endpoint is
+     intentional for the demo); concurrency cap at its default.
 1. Merge dev -> main (the release workflow only runs from main); `release-npm.yml`
    -> `1.0.0-rc.1` on dist-tag `next` via the explicit version input (3.7); gate:
    `npm audit --omit=dev` clean (3.5); then merge `main` back into `dev`.
@@ -333,18 +367,24 @@ boundary.
    least one full `RuntimeMaxSec` restart cycle; no 5xx other than intentional 503
    `SERVER_BUSY`; heap stays under the 512 MB cap; normal typing in one demo editor
    never draws a 429; `test:load` passes.
-4. Promote `1.0.0` to `latest`; CHANGELOG; GitHub Release telling the AI-guided-UI
-   story.
+4. Promote `1.0.0` to `latest`; CHANGELOG; GitHub Release presenting the library and
+   the AI-driven UI vision.
 
 ## Out of V1
 
 - Custom compiler theme input (`@theme`), whether process-scoped or per-request (a
   v1.x headliner).
-- MCP server wrapper (cheap to build later against the frozen contract).
+- MCP server wrapper (a separate AI-driven UI project, cheap to build later against
+  the frozen contract).
 - Agent orchestration, prompts, style-context manifests, correction suggestions,
   draft/revision/publish workflows, agent policy, and agent telemetry.
 - Redis/S3 cacheStore adapters (interface + fs reference + cookbook recipe suffice).
 - Multi-tenant auth (host wrapper's job).
+- In-core rate limiting and access keys (owner decision 2026-09-27: the host app or
+  the proxy in front decides who may call and how often; 2.1 documents the recipe).
+- A framework-agnostic in-process API (`core.compile()` and similar) for hosts that
+  are not Express apps; until then they run the standalone server as a service. It is
+  additive under the 1.x policy, so it can ship in a 1.x minor.
 - Splitting `services/index.js` into modules (post-V1 refactor).
 - Docker/GHCR distribution.
 
@@ -353,13 +393,15 @@ boundary.
 Scheduled locations in parentheses.
 
 1. `rateLimit*` config in `index.d.ts` + `runtime-spec.md` + `api-reference.md` +
-   openapi 429s: not implemented in core (Phase 2.1 implements; Phase 1.2 openapi).
+   openapi 429s: not implemented in core (Phase 2.1 removes the promise; Phase 1.2
+   openapi).
 2. `guard` hook implemented but absent from public types/docs (Phase 1.5).
 3. `onRequestStart`/`onResponseSent` docs overpromise scope and `source` (Phase 1.5).
 4. `ctx.compile()` documented shape differs from actual internal return (Phase 1.5).
 5. Reader miss documented 404, actual 200 empty text/css (Phase 1.4).
 6. `plugins/rate-limit` docs show a subpath import the exports map blocks;
-   plugin-system says built-in plugin exports are not public (Phase 3.1 + Phase 4.3).
+   plugin-system says built-in plugin exports are not public (Phase 2.1 deletes the
+   plugin; Phase 3.1 + Phase 4.3).
 7. invalidate snake_case implemented but undocumented; suggest `project_id` in
    openapi but not api-reference (resolved by removal, Phase 1.3).
 8. `mode` alias implemented on compile + CSS GETs, inconsistently documented
@@ -408,3 +450,7 @@ locations in parentheses.
 12. `AGENTS.md` ends with an empty `<claude-mem-context>` block (4.3).
 13. The rewrite changes every hash quoted in `PROGRESS.md` and in issues (5.2).
 14. The 6.3 soak had no pass criteria (6.3).
+15. Core always calls `app.set('trust proxy', ...)`, so a core mounted in a host app
+    ignores the host's setting. Checked with a host Express app at `trust proxy` = 1:
+    core's plugin hooks saw the socket address while a plain sub-app saw the
+    forwarded client (2.7).
