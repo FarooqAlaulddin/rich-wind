@@ -8,3 +8,6 @@
 /build/
 package.json.bak
 *.tgz
+
+# Local agent notes and settings (never tracked)
+.claude/
