@@ -1605,6 +1605,18 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
         : (async () => {});
 // API Routes
 
+function sendCss(req, res, css, etag) {
+    if (etag) {
+        const quoted = `"${etag}"`;
+        res.setHeader('ETag', quoted);
+        res.setHeader('Cache-Control', 'no-cache');
+        if (req.headers['if-none-match'] === quoted) {
+            return res.status(304).end();
+        }
+    }
+    return res.type('text/css').send(css);
+}
+
 // Optional browser helper for plain HTML preview surfaces.
 app.get('/richwind-loader.js', (req, res) => {
     withRequestHooks(req, res, {
@@ -1766,7 +1778,7 @@ app.get('/api/css', async (req, res) => {
                     source: 'page-store',
                     request: hookContext.request
                 });
-                return res.type('text/css').send(storeArtifact.css);
+                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
             }
             await pluginRunner.runHook('onCacheMiss', {
                 projectId,
@@ -1785,7 +1797,8 @@ app.get('/api/css', async (req, res) => {
                     source: 'page',
                     request: hookContext.request
                 });
-                return res.type('text/css').send(cached.css);
+                const pageHash = state.projects.get(projectId)?.pages.get(pageId)?.hash;
+                return sendCss(req, res, cached.css, pageHash);
             }
 
             const storeArtifact = await readPageArtifactFromStore(
@@ -1811,7 +1824,7 @@ app.get('/api/css', async (req, res) => {
                     source: 'page-store',
                     request: hookContext.request
                 });
-                return res.type('text/css').send(storeArtifact.css);
+                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
             }
             await pluginRunner.runHook('onCacheMiss', {
                 projectId,
@@ -1935,10 +1948,81 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             source: 'http',
             request: hookContext.request
         });
-        return res.type('text/css').send(result?.css ?? '');
+        return sendCss(req, res, result?.css ?? '', result?.hash ?? null);
     } catch (err) {
         const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
         await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: reqInfo });
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Invalidate (purge) a page or an entire project from the in-memory cache and cache store
+app.post('/api/invalidate', async (req, res) => {
+    try {
+        const body = req.body || {};
+        const projectId = body.projectId ?? body.project_id ?? null;
+        const pageId = body.pageId ?? body.page_id ?? null;
+
+        withRequestHooks(req, res, {
+            action: 'invalidate',
+            projectId,
+            pageId,
+            request: { ip: getClientIp(req), method: req.method, path: req.path }
+        });
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'projectId is required.' });
+        }
+        if (!isValidId(projectId, config)) {
+            return res.status(400).json({
+                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
+        }
+        if (pageId !== null && !isValidId(pageId, config)) {
+            return res.status(400).json({
+                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
+            });
+        }
+        if (!isWriteAllowed()) {
+            return res.status(409).json({
+                error: 'This replica is read-only. Route invalidation writes to a writer replica.',
+                code: READ_ONLY_ERROR_CODE
+            });
+        }
+
+        const bundles = ['full', 'utilities', 'theme'];
+
+        if (pageId !== null) {
+            evictPageByKey(state, makePageKey(projectId, pageId));
+            if (cacheStoreRunner?.enabled) {
+                await Promise.all(
+                    bundles.map(b => cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle: b }))
+                );
+            }
+            return res.json({ invalidated: true, projectId, pageId });
+        }
+
+        // Purge entire project from memory
+        const project = state.projects.get(projectId);
+        if (project) {
+            for (const pid of Array.from(project.pages.keys())) {
+                evictPageByKey(state, makePageKey(projectId, pid));
+            }
+            state.projects.delete(projectId);
+        }
+        // Purge from store
+        if (cacheStoreRunner?.enabled) {
+            if (cacheStoreRunner.hasMethod?.('deleteProjectPageArtifacts')) {
+                await cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
+            }
+            await Promise.all(
+                bundles.map(b => cacheStoreRunner.deleteProjectArtifact({ projectId, bundle: b }))
+            );
+        }
+        return res.json({ invalidated: true, projectId });
+    } catch (err) {
+        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
+        await pluginRunner.runHook('onError', { error: err, stage: 'invalidate', source: 'http', request: reqInfo });
         res.status(500).json({ error: 'Internal server error.' });
     }
 });

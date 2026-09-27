@@ -11,7 +11,7 @@ This file is for AI agents and contributors who clone the repo. It captures proj
 ## Quick Map
 - `services/index.js` — Express API, in-memory cache, compile/suggest endpoints, plugin system.
 - `services/index.d.ts` — TypeScript definitions for the public API and plugin interfaces.
-- `tests/*.test.js` — Vitest tests (239 tests across 18 files).
+- `tests/*.test.js` — Vitest tests (277 tests across 19 files).
 - `plugins/auto-promote/` — built-in auto-promote plugin used by the Lexical demo and tests.
 - `lexical-demo/` — Lexical rich text editor demo (separate Vite app, deployed under `/lexical-demo/`).
 - `lexical-demo/scripts/dev-server.js` — starts rich-wind core with demo plugins for the Lexical demo.
