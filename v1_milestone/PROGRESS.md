@@ -1,12 +1,14 @@
 # V1 Milestone — Progress Tracker
 
-Status values: DONE, IN PROGRESS, BLOCKED (with reason), DROPPED (with reason), or
-unchecked.
+Status values: DONE, IN PROGRESS, BLOCKED (with reason), DROPPED (with reason), MOVED
+(to the item that absorbed it), or unchecked.
 Update this file in the same commit that completes or starts an item.
 Plan: `README.md`. Conventions and stop-for-owner rules: `EXECUTION.md`.
 Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5-3.7,
 5.0, 6.0. Revised again 2026-09-27 (owner): library-first positioning; no in-core rate
-limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped).
+limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped). Revised a third time
+2026-09-27 (owner): core drops Express before the freeze; new 1.8 native transport
+absorbs 2.7 (`README.md` Appendix C).
 
 ## Phase 0 — Cleanup and baseline
 
@@ -31,14 +33,19 @@ limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped).
 ## Phase 1 — Machine-readable API contract
 
 - [ ] 1.1 `rejected` field on compile (explicit classes input only) (#45)
-- [ ] 1.2 Central error helper + closed code enum + plugin guard mappings +
+- [ ] 1.2 Central error helper + closed code enum (INVALID_BODY and
+  UNSUPPORTED_MEDIA_TYPE added; no HTML error pages) + plugin guard mappings +
   openapi error schema (#46)
 - [ ] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) (#47)
 - [ ] 1.4 CSS GET miss -> 404 NOT_FOUND (#48)
-- [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs, ctx.compile shape) (#49)
-- [ ] 1.6 ajv contract validation in tests/contracts.test.js (#50)
+- [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs, ctx.compile
+  shape, addRoute contract with 1.8) (#49)
+- [ ] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
+  included (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy (#51)
+- [ ] 1.8 Native transport: drop Express; functions, core.handler, core.fetch,
+  neutral plugin routes, client identity via proxy-addr (absorbs 2.7) (#81)
 
 ## Phase 2 — Core hardening
 
@@ -52,8 +59,8 @@ limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped).
 - [ ] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests (#56)
 - [ ] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
   security-headers audit (#57)
-- [ ] 2.7 Client identity behind proxies: trustProxy hop count/subnets; embedded core
-  inherits the host's setting (#74)
+- [x] 2.7 Client identity behind proxies — MOVED 2026-09-27 into 1.8 (native
+  transport) (#74)
 
 ## Phase 3 — Packaging
 

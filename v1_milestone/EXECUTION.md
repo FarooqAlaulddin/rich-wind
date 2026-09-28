@@ -19,7 +19,8 @@ plan without guessing conventions or overstepping authority.
   its own resources. Do not add MCP, prompts, agent context, policy, draft/publish
   workflows, or other wrapper responsibilities, and do not add rate limiting, access
   keys or tenant auth: the host app or the proxy in front decides who may call core
-  and how often.
+  and how often. Core depends on no web framework (1.8); do not add one as a runtime
+  dependency.
 - **Update `PROGRESS.md` in the same commit** that completes (or starts) an item.
   Use DONE with a date, IN PROGRESS, or BLOCKED with the reason.
 - **No AI attribution in commits or PRs.** No `Co-Authored-By` trailers naming an AI,
@@ -73,9 +74,10 @@ Some steps cannot run from a fresh clone or a cloud environment:
 ## Hard sequencing constraints
 
 - Phase 0.1 (untrack `.claude/CLAUDE.md`) lands before any other milestone commits.
-- Within Phases 1+2: alias removal (1.3), the embedding contract (2.1), the
-  concurrency shed (2.4) and the `trustProxy` change (2.7) land before the contract
-  freeze (1.7). The freeze PR is the LAST PR of Phases 1+2.
+- Within Phases 1+2: alias removal (1.3) and the error envelope (1.2) land before the
+  native transport (1.8); the `addRoute` part of 1.5 lands with 1.8. Alias removal,
+  the native transport, the embedding contract (2.1) and the concurrency shed (2.4)
+  land before the contract freeze (1.7). The freeze PR is the LAST PR of Phases 1+2.
 - Phases 1-4 are otherwise parallelizable; Phase 5 strictly precedes Phase 6, except
   6.0 (restore the deploy target), which may start any time.
 - The Phase 5.0 owner decisions come before 5.1; D1 decides whether 5.2 force-pushes
@@ -99,3 +101,4 @@ silently proceeding.
 
 Appendix B of `README.md` records the 2026-09-27 gap review and how each finding was
 checked; `evidence/npm-audit-2026-09-26.txt` is the audit snapshot behind Phase 3.5.
+Appendix C records the 2026-09-27 transport review behind item 1.8.
