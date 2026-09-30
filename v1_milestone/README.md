@@ -18,6 +18,12 @@ Revised a third time 2026-09-27 by the owner, after an independent second opinio
 drops Express before the contract freeze. New item 1.8 (native transport) absorbs 2.7;
 1.2, 1.5-1.7, 2.1, 2.4, 2.6, 3.4, 3.5 and 6.0 adjusted. Findings: Appendix C.
 
+Tightened 2026-09-30 by the owner, after a readiness review: the 1.8 details that 1.7
+freezes (what the functions return, `RichWindError`, one compile function for hosts
+and plugins, `basePath` for `core.fetch`, the guard on HTTP requests only), 1.8 split
+into two PRs, the slot rule for plugin compiles in 2.4, and the order around 1.8 (1.6
+before it; 2.1, 2.4, 4.1, 4.2 and 4.4 after it).
+
 **If you are executing this plan, read [`EXECUTION.md`](EXECUTION.md) first** — it
 carries the working conventions, decision-authority boundaries, owner-only steps,
 and hard sequencing constraints. Track progress in [`PROGRESS.md`](PROGRESS.md).
@@ -171,15 +177,20 @@ post-V1.
      handlers only (not preflight, rejected request bodies, 404s, plugin custom
      routes); `source` is present only where actually provided. Document reality; no
      behavior change (1.8 keeps the hooks firing at the same points).
-   - Fix `ctx.compile()` documented return shape to the actual internal shape (no
-     `success`/`projectId`/`pageId` wrapper).
+   - `ctx.compile()`: the docs show the compile route's response (with `success`,
+     `projectId` and `pageId`), while the code returns an internal shape and reports
+     failures as a returned `{ error, status }`. The first 1.8 PR makes `ctx.compile`
+     return what `core.compile` returns and throw its `RichWindError`, so the
+     documented shape becomes the real one; document the error too. This part lands
+     with the first 1.8 PR.
    - `addRoute`: document the handler contract from 1.8 (a neutral request in,
      `{ status, headers, body }` out); `plugin-system.md` stops calling it an Express
-     route. This part lands with 1.8.
+     route. This part lands with the second 1.8 PR.
 6. Contract validation for real: add `ajv` as devDependency; extend
    `tests/contracts.test.js` to validate live route responses against
-   `openapi.json`, including the 400, 404, 413 and 415 envelope cases, served through
-   `core.handler` once 1.8 lands.
+   `openapi.json`, including the 400, 404, 413 and 415 envelope cases. Lands after 1.2
+   and 1.3 and before 1.8, so the schema checks guard the transport rewrite; 1.8
+   moves these tests onto `core.handler` with the rest of the suite.
 7. Contract freeze is the LAST PR of Phases 1+2 combined (after the native transport
    (1.8), the embedding contract (2.1) and the concurrency shed (2.4)); then the 1.x
    compatibility policy goes in the docs. Within 1.x, existing fields do not change
@@ -188,13 +199,15 @@ post-V1.
    fields. The embedding contract is part of 1.x: `createCore()` returns
    `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`
    (the object may gain members); `handler` and `fetch` work mounted under any path
-   prefix behind host middleware; the functions accept the same input as the routes
-   and fail with the same status and code; the plugin `addRoute` contract and the
-   HTTP surface rules from 1.8 hold (exact, case-sensitive paths; HEAD on every GET
-   route; the error envelope on every non-2xx); and the standalone server stays. New
-   error codes are
-   reserved for the next major version; new failure cases in 1.x map to the frozen
-   enum. The policy also states that generated CSS and the contents of `rejected`
+   prefix behind host middleware (`fetch` through its `basePath` option); the
+   functions accept the same input as the routes, return what the routes send on
+   success (the CSS functions return `{ css, etag }`), and fail with a
+   `RichWindError` carrying the same status and code; `ctx.compile` behaves like
+   `core.compile`; the plugin `addRoute` contract and the HTTP surface rules from 1.8
+   hold (exact, case-sensitive paths; HEAD on every GET route; the error envelope on
+   every non-2xx); and the standalone server stays. New error codes are reserved for
+   the next major version; new failure cases in 1.x map to the frozen enum. The
+   policy also states that generated CSS and the contents of `rejected`
    track the installed Tailwind CSS 4.x release (a Tailwind minor can add utilities,
    turning a rejected class into a valid one), and that Rich Wind depends on
    Tailwind's `__unstable__loadDesignSystem` and `candidatesToCss`, so a Tailwind
@@ -202,24 +215,47 @@ post-V1.
    dependency range. Set `docs/openapi.json` `info.version` to `1.0.0` (today
    `0.0.1`); it is the API contract version and carries no package prerelease tag.
 8. Native transport: core drops Express before the freeze (owner decision 2026-09-27;
-   evidence in Appendix C). Lands after 1.3 and 1.2, so the functions never learn the
-   aliases and the envelope tests already pin the behavior; absorbs 2.7. The compile
-   engine does not change; the HTTP layer is rewritten on `node:http` and the Web
-   `Request`/`Response` globals (Node 22 or later, 3.6).
-   - Functions: `core.compile`, `core.getCss`, `core.getProjectCss`, `core.invalidate`
-     and `core.suggest`. Input validation moves out of the route handlers into them,
-     so a direct call and an HTTP call accept the same input and fail with the same
-     status and `code` (the functions throw an error carrying both). Fastify and the
-     Next.js Pages Router call these (the Pages Router consumes the body before a
-     handler runs).
+   evidence in Appendix C). Lands after 1.3, 1.2 and 1.6, so the functions never
+   learn the aliases and the envelope and schema tests already pin the behavior;
+   absorbs 2.7. The compile engine does not change; the HTTP layer is rewritten on
+   `node:http` and the Web `Request`/`Response` globals (Node 22 or later, 3.6).
+   Two PRs: first the functions (additive: the Express routes start calling them and
+   `express` stays), then the transport (everything else in this item; `addRoute`
+   and client identity depend on Express until it goes, so they cannot land apart
+   from its removal).
+   - Functions (first PR): `core.compile`, `core.getCss`, `core.getProjectCss`,
+     `core.invalidate` and `core.suggest`. Input validation moves out of the route
+     handlers into them, so a direct call and an HTTP call accept the same input and
+     fail the same way. On success each returns what its route sends: the JSON body
+     of the 200 response, or for the two CSS functions `{ css, etag }` (a miss throws
+     `NOT_FOUND`, 1.4; `If-None-Match` and the 304 stay in the HTTP layer). On failure
+     they throw a `RichWindError`, exported by the package: an `Error` with `status`,
+     `code` from the 1.2 enum, and `message` equal to the envelope's `error`. The
+     plugin guard runs on HTTP requests only; a direct caller is the host, which has
+     already decided who may call. `index.d.ts` gains the five functions and
+     `RichWindError`. Fastify and the Next.js Pages Router call these functions (the
+     Pages Router consumes the body before a handler runs).
+   - One compile function for hosts and plugins (first PR): `ctx.compile` keeps its
+     plugin bookkeeping (`source: 'plugin'`, hook suppression inside hooks, the
+     chain-depth limit) but takes `core.compile`'s input, return value and error.
+     Exceeding the chain depth becomes 500 `INTERNAL`, since it is a plugin recursion
+     bug (today a 429 with no code; `onError` keeps `PLUGIN_COMPILE_CHAIN_LIMIT` in its
+     context). Auto-promote's `ctx.compile` call moves from checking `result.error` to
+     a try/catch.
    - Adapters over one internal router: `core.handler(req, res)` for Node-style
      servers (plain `node:http`; Express via `app.use('/rw', core.handler)`; Koa;
-     Nest), and `core.fetch(request, { ip })` returning a `Response`, for the Next.js
-     App Router, Hono and other Fetch-style hosts (a `Request` carries no client
-     address, so the host passes it). Express rewrites `req.url` under a mount, so
-     paths resolve relative to the prefix as today. Bun and Deno are not promised;
-     edge runtimes cannot load `@tailwindcss/oxide` (a native addon), and the docs say
-     so.
+     Nest), and `core.fetch(request, { ip, basePath })` returning a `Response`, for
+     the Next.js App Router, Hono and other Fetch-style hosts. A `Request` carries no
+     client address, so the host passes `ip` (without it, `request.ip` is undefined in
+     plugin hooks); `trustProxy` applies to it as to a socket address. Express
+     rewrites `req.url` under a mount, so `core.handler` resolves paths relative to
+     the prefix as today. A `Request` keeps its full URL (a Next.js route at
+     `/rw/[...path]` receives `/rw/api/compile`), so `core.fetch` strips `basePath`
+     before routing and answers 404 `NOT_FOUND` for a path outside it; a host that
+     already strips the prefix leaves `basePath` unset. A Node-style host that does
+     not rewrite `req.url` rewrites it before calling `core.handler` (2.1 shows how).
+     Bun and Deno are not promised; edge runtimes cannot load `@tailwindcss/oxide` (a
+     native addon), and the docs say so.
    - HTTP surface rules, frozen in 1.7: exact, case-sensitive paths with no trailing
      slash (Express today also matches `/API/CSS` and `/api/css/`); HEAD answered on
      every GET route; the 1.2 envelope on every non-2xx, unknown paths and methods
@@ -246,7 +282,8 @@ post-V1.
      `headers.get()`, `ip`, and `json()`/`text()` capped at `maxBodyBytes`) and
      returns `{ status, headers, body }` (an object body is sent as JSON). The same
      handler runs under both adapters and is testable without a socket. Port
-     auto-promote's two routes (its ETag/304 becomes a returned 304).
+     auto-promote's two routes (its ETag/304 becomes a returned 304) in the second
+     PR.
    - Client identity (was 2.7). `RW_TRUST_PROXY` is boolean-only today
      (`parseBoolean`), and `true` takes the leftmost `X-Forwarded-For` entry, which
      the client controls (verified 2026-09-27, Appendix B). Resolve the address with
@@ -263,17 +300,21 @@ post-V1.
      `express` as a devDependency for the mount tests and the demo dev server
      (`lexical-demo/scripts/dev-server.js` uses `express.static`). `index.d.ts` stops
      importing its types from `express` (full alignment in 3.4).
-   - Tests: `library-import.test.js` (today asserts `app.get/post/use/listen`) checks
-     the new members; the 42 `app.listen(0)` calls in 8 test files and
-     `tests/helpers/createTestServer.js` move to `http.createServer(core.handler)`.
-     New tests for each surface and body rule above, for `core.fetch`, for Express
-     mounting, for plugin routes under both adapters, and for client identity: under
-     a hop count, a spoofed leftmost `X-Forwarded-For` does not change `request.ip`;
-     mounted in an Express host with `trust proxy` set, plugin hooks see the
-     host-resolved address.
-   - Docs whose examples use `{ app }` or `app.listen` change in the same PR so none
-     breaks: `README.md`, `docs/index.md`, `api-reference.md`, `plugin-system.md`
-     and `integration-cookbook.md`. Phase 4 rewrites them further.
+   - Tests, first PR: each function's return value against its route's response;
+     `RichWindError` status, code and message against the HTTP envelope for the same
+     input; `ctx.compile` against `core.compile`, including the chain-depth
+     `INTERNAL`; a guard that blocks every HTTP request does not block a direct call.
+   - Tests, second PR: `library-import.test.js` (today asserts
+     `app.get/post/use/listen`) checks the new members; the 42 `app.listen(0)` calls
+     in 8 test files and `tests/helpers/createTestServer.js` move to
+     `http.createServer(core.handler)`. New tests for each surface and body rule
+     above, for `core.fetch` with and without `basePath`, for Express mounting, for
+     plugin routes under both adapters, and for client identity: under a hop count, a
+     spoofed leftmost `X-Forwarded-For` does not change `request.ip`; mounted in an
+     Express host with `trust proxy` set, plugin hooks see the host-resolved address.
+   - Docs whose examples use `{ app }` or `app.listen` change in the second PR so
+     none breaks: `README.md`, `docs/index.md`, `api-reference.md`,
+     `plugin-system.md` and `integration-cookbook.md`. Phase 4 rewrites them further.
 
 ## Phase 2 — Core hardening
 
@@ -284,21 +325,24 @@ front of the standalone server; core provides the embedding contract and a docum
 recipe, not the policy (owner decision 2026-09-27). This does not make the
 auth-agnostic core a tenant-isolation boundary.
 
-1. Embedding contract, replacing the in-core rate limiter. The docs promise a per-IP
-   rate limiter core never had (Appendix A item 1). Remove the promise instead of
-   building it: delete `rateLimit*` from `index.d.ts`, `runtime-spec.md` and
-   `api-reference.md`, drop "rate limits" from the options sentence in
-   `docs/index.md`, and delete `plugins/rate-limit` (never published). Add a
-   `runtime-spec.md` section on including Rich Wind in an app: mount `core.handler`
-   under a path prefix behind host middleware (an Express example,
-   `app.use('/rw', limiter, auth, core.handler)`), serve `core.fetch` from a Next.js
-   App Router route handler, call the functions from Fastify, or run the standalone
-   server behind a proxy (the nginx template from 6.0, with the field-tested zones of
-   120/min for compile and 600/min for the rest; the demo makes about 4 requests per
-   keystroke). State that plugin routes must enforce their own access policy when
-   they expose sensitive data or mutations. Tests: `core.handler` mounted under a
-   prefix in a host Express app serves compile, the CSS GETs and the loader; host
-   middleware answers before core runs.
+1. Embedding contract, replacing the in-core rate limiter. Lands after 1.8, whose
+   members it documents and tests. The docs promise a per-IP rate limiter core never
+   had (Appendix A item 1). Remove the promise instead of building it: delete
+   `rateLimit*` from `index.d.ts`, `runtime-spec.md` and `api-reference.md`, drop
+   "rate limits" from the options sentence in `docs/index.md`, and delete
+   `plugins/rate-limit` (never published). Add a `runtime-spec.md` section on
+   including Rich Wind in an app: mount `core.handler` under a path prefix behind
+   host middleware (an Express example, `app.use('/rw', limiter, auth,
+   core.handler)`; a plain `node:http` host that routes a prefix to core strips it
+   from `req.url` first), serve `core.fetch` from a Next.js App Router route handler
+   with `basePath` set to the route's prefix, call the functions from Fastify and
+   catch `RichWindError`, or run the standalone server behind a proxy (the nginx
+   template from 6.0, with the field-tested zones of 120/min for compile and 600/min
+   for the rest; the demo makes about 4 requests per keystroke). State that plugin
+   routes must enforce their own access policy when they expose sensitive data or
+   mutations. Tests: `core.handler` mounted under a prefix in a host Express app
+   serves compile, the CSS GETs and the loader; host middleware answers before core
+   runs; `core.fetch` with `basePath` serves the same routes under a prefix.
 2. DROPPED 2026-09-27 (owner decision): the optional `RW_API_KEY` on the three POST
    endpoints. Access control belongs to the host app or the proxy in front (2.1
    documents how); the public browser demo could not hold a key anyway.
@@ -306,7 +350,13 @@ auth-agnostic core a tenant-isolation boundary.
    and API key, since neither is built. `pluginRunner.runGuard` keeps its place.
 4. Compile insurance: `RW_MAX_CONCURRENT_COMPILES` (default 8), with no wait queue;
    shed immediately with 503 `SERVER_BUSY` + `Retry-After` when all slots are in use.
-   The slot check lives in `core.compile` (1.8), so direct calls are bounded too.
+   Lands after 1.8: the slot check lives in `core.compile`, so direct calls are
+   bounded too. A `ctx.compile` made from a hook that its parent compile awaits runs
+   inside the parent's slot and takes no second one; otherwise it would be shed
+   whenever its parent holds the last slot. One made from a deferred hook or a plugin
+   route takes its own slot and can be shed like any other call: auto-promote defers
+   its `onCompileResult`, so under full load its promotion compile gets
+   `SERVER_BUSY`, which it treats as a skipped promotion. Tests for both cases.
 5. `UNSAFE_CLASS_CHAR_RE` gains `{` and `}`. Regression tests: brace-expansion bomb
    via classes and via html; prose-noise html asserting `rejected: []`.
 6. Threat model section in `runtime-spec.md`: defended by core (compile abuse: caps +
@@ -336,9 +386,9 @@ auth-agnostic core a tenant-isolation boundary.
    instantiate each factory, verify unexported paths fail.
 4. Align `services/index.d.ts` with post-Phase-1/2 reality (`rateLimit*` removed,
    `trustProxy` accepts a boolean, hop count or address list, `guard` hook typed,
-   `ctx.compile` shape, removed aliases, the 1.8 members: `handler`, `fetch`, the five
-   functions and their error type, the plugin route request and response; no type
-   import from `express`).
+   `ctx.compile` shape, removed aliases, the 1.8 members: `handler`, `fetch` and its
+   `basePath` option, the five functions and `RichWindError`, the plugin route
+   request and response; no type import from `express`).
 5. Dependency hygiene: `npm audit fix` without `--force` (the Phase 0 snapshot,
    `evidence/npm-audit-2026-09-26.txt`, shows all 8 advisories fixable that way;
    production: `qs` and `body-parser` via Express, not reachable (Appendix C) and gone
@@ -381,12 +431,14 @@ auth-agnostic core a tenant-isolation boundary.
    other uses. Preserve the core/wrapper boundary. State plainly that V1 uses
    Tailwind's default design system. `package.json` `description` and `keywords`
    describe a library (today: "A stateless Tailwind CSS runtime service", keywords
-   `api` and `service`).
+   `api` and `service`). Lands after 1.8, so the docs are written once against
+   `core.handler`, `core.fetch` and the functions.
 2. New agent quickstart: model emits HTML plus an explicit class list ->
    `POST /api/compile` -> feed explicit-input `rejected` values back to the model ->
    recompile -> serve `GET /api/css`. Explain that wrappers may parse HTML into the
    explicit class list, while core does not own that workflow. Node example + curl
-   transcript, wired into `docs-examples.test.js`.
+   transcript, wired into `docs-examples.test.js`. Lands after 1.8 (and 1.1, which
+   adds `rejected`).
 3. Divergence doc fixes not already absorbed by Phase 1/2 PRs (Appendix A): design
    system loads lazily on first use (not "once at startup"); `GET /api/css`
    materializes a missing bundle from cached classes (document as behavior);
@@ -395,9 +447,10 @@ auth-agnostic core a tenant-isolation boundary.
    the new exports map; api-reference gains query `bundle` on CSS routes;
    suggest/invalidate alias rows dropped. Also drop the empty `<claude-mem-context>`
    block at the end of `AGENTS.md` (tool residue that would go public).
-4. api-reference: error enum, `rejected` field, and what core enforces versus what
-   the host enforces (no in-core rate limits or keys). Verify
-   `docs/_config.yml` renders for Pages (flip in Phase 5).
+4. api-reference: error enum, `rejected` field, the functions and `RichWindError`,
+   and what core enforces versus what the host enforces (no in-core rate limits or
+   keys). Lands after 1.8. Verify `docs/_config.yml` renders for Pages (flip in
+   Phase 5).
 
 ## Phase 5 — Go-public gate
 

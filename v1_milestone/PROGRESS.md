@@ -8,7 +8,8 @@ Plan revised 2026-09-27 (gap review, `README.md` Appendix B): new items 2.7, 3.5
 5.0, 6.0. Revised again 2026-09-27 (owner): library-first positioning; no in-core rate
 limiter or API key (2.1 rewritten, 2.2 and 2.3 dropped). Revised a third time
 2026-09-27 (owner): core drops Express before the freeze; new 1.8 native transport
-absorbs 2.7 (`README.md` Appendix C).
+absorbs 2.7 (`README.md` Appendix C). Tightened 2026-09-30 (owner): the 1.8 contract
+details, 1.8 as two PRs, and the order around 1.8.
 
 ## Phase 0 — Cleanup and baseline
 
@@ -38,24 +39,26 @@ absorbs 2.7 (`README.md` Appendix C).
   openapi error schema (#46)
 - [ ] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) (#47)
 - [ ] 1.4 CSS GET miss -> 404 NOT_FOUND (#48)
-- [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs, ctx.compile
-  shape, addRoute contract with 1.8) (#49)
+- [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
+  shape with the first 1.8 PR, addRoute contract with the second) (#49)
 - [ ] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
-  included (#50)
+  included; after 1.2 and 1.3, before 1.8 (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy (#51)
-- [ ] 1.8 Native transport: drop Express; functions, core.handler, core.fetch,
+- [ ] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
+  shares core.compile; (b) drop Express, core.handler, core.fetch with basePath,
   neutral plugin routes, client identity via proxy-addr (absorbs 2.7) (#81)
 
 ## Phase 2 — Core hardening
 
 - [ ] 2.1 Embedding contract: drop the rate-limit promise and plugins/rate-limit;
-  mount-under-prefix tests; host-side recipe (#52)
+  mount-under-prefix tests; host-side recipe; after 1.8 (#52)
 - [x] 2.2 Optional RW_API_KEY on the POST endpoints — DROPPED 2026-09-27 (owner:
   access control belongs to the host app or the proxy in front) (#53)
 - [x] 2.3 Middleware placement for the limiter and key — DROPPED 2026-09-27 (neither
   is built) (#54)
-- [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed (#55)
+- [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed; after 1.8
+  (#55)
 - [ ] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests (#56)
 - [ ] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
   security-headers audit (#57)

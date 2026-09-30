@@ -74,12 +74,15 @@ Some steps cannot run from a fresh clone or a cloud environment:
 ## Hard sequencing constraints
 
 - Phase 0.1 (untrack `.claude/CLAUDE.md`) lands before any other milestone commits.
-- Within Phases 1+2: alias removal (1.3) and the error envelope (1.2) land before the
-  native transport (1.8); the `addRoute` part of 1.5 lands with 1.8. Alias removal,
-  the native transport, the embedding contract (2.1) and the concurrency shed (2.4)
-  land before the contract freeze (1.7). The freeze PR is the LAST PR of Phases 1+2.
-- Phases 1-4 are otherwise parallelizable; Phase 5 strictly precedes Phase 6, except
-  6.0 (restore the deploy target), which may start any time.
+- Within Phases 1+2: alias removal (1.3) and the error envelope (1.2) land first,
+  then contract validation (1.6), then the native transport (1.8) as two PRs: the
+  functions, then the transport. The `ctx.compile` part of 1.5 lands with the first
+  1.8 PR and the `addRoute` part with the second. The embedding contract (2.1) and
+  the concurrency shed (2.4) build on 1.8 and land after it. The contract freeze
+  (1.7) is the LAST PR of Phases 1+2.
+- Phases 1-4 are otherwise parallelizable, except that 4.1, 4.2 and 4.4 land after
+  1.8, so the docs are written once. Phase 5 strictly precedes Phase 6, except 6.0
+  (restore the deploy target), which may start any time.
 - The Phase 5.0 owner decisions come before 5.1; D1 decides whether 5.2 force-pushes
   or pushes to a new repository.
 - Phase 5.1-5.2 (gitleaks + history purge) strictly precede 5.5 (flip public), and
