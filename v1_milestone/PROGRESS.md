@@ -18,7 +18,7 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 0.2 Delete stray `installed-versions.txt` — DONE 2026-09-26 (verified redundant: 164
   of 165 entries matched the two lockfiles; the other was the demo workspace itself)
 - [x] 0.3 OWNER DECISION: `parked-demos` — DONE 2026-09-26: replace the branch with the
-  annotated tag `archive/parked-demos` (same commit 4012000; the branch had no commits of
+  annotated tag `archive/parked-demos` (same commit 82d1da1; the branch had no commits of
   its own and is an ancestor of `main`; a tag survives the Phase 5.2 rewrite)
 - [x] 0.4a `npm test` baseline — DONE 2026-08-18 (277/277, 19 files)
 - [x] 0.4b `npm run test:pack` + `npm audit` snapshot + CI green on dev — DONE 2026-09-26:
@@ -26,34 +26,34 @@ details, 1.8 as two PRs, and the order around 1.8.
   1 critical, 3 high, 2 moderate, 2 low; all fixable via `npm audit fix`; production
   dependencies only: `qs` moderate and `body-parser` low, both via express, the rest are
   test/build tooling); CI green on the
-  dev head 0cb1c97 (PR #44 checks)
+  dev head 7133896 (PR #44 checks, now in rich-wind-archive)
 - [x] 0.5 Docs-vs-code divergence inventory — DONE 2026-08-18 (Appendix A)
-- [x] 0.6 GitHub milestone "V1" + issues — DONE 2026-09-26: milestone #1, issues #45-#73
+- [x] 0.6 GitHub milestone "V1" + issues — DONE 2026-09-26: milestone #1, issues #2-#30
   (one per open item in Phases 1-6; 5.3 has none, only the owner's branch deletion remains)
 
 ## Phase 1 — Machine-readable API contract
 
-- [x] 1.1 `rejected` field on compile (explicit classes input only) — DONE 2026-09-30 (#45)
+- [x] 1.1 `rejected` field on compile (explicit classes input only) — DONE 2026-09-30 (#2)
 - [x] 1.2 Central error helper + closed code enum (INVALID_BODY and
   UNSUPPORTED_MEDIA_TYPE added; no HTML error pages) + plugin guard mappings +
-  openapi error schema — DONE 2026-09-30 (#46)
-- [x] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) — DONE 2026-09-30 (#47)
-- [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#48)
+  openapi error schema — DONE 2026-09-30 (#3)
+- [x] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) — DONE 2026-09-30 (#4)
+- [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#5)
 - [x] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
   shape with the first 1.8 PR, addRoute contract with the second) — DONE 2026-10-01
   2026-09-30: guard types and HTTP-only request-hook reality documented. 2026-10-01:
   ctx.compile contract documented with 1.8a (result shape, RichWindError, chain depth
   500 INTERNAL); neutral addRoute contract (request in, { status, headers, body } out)
-  documented and typed with 1.8b (#49)
+  documented and typed with 1.8b (#6)
 - [x] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
-  included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#50)
+  included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#7)
 - [x] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy — DONE 2026-10-01
   2026-10-01: "Compatibility Policy (1.x)" in docs/api-reference.md (field/status/
   error-code stability, optional fields may be added, embedding contract, frozen error
   enum with new codes reserved for 2.0, CSS and `rejected` track Tailwind 4.x, narrowing
   the tailwindcss range if `__unstable__loadDesignSystem`/`candidatesToCss` break);
-  linked from README and docs/index.md; openapi info.version 1.0.0 (#51)
+  linked from README and docs/index.md; openapi info.version 1.0.0 (#8)
 - [x] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
   shares core.compile; (b) drop Express, core.handler, core.fetch with basePath,
   neutral plugin routes, client identity via proxy-addr (absorbs 2.7) — DONE 2026-10-01
@@ -76,7 +76,7 @@ details, 1.8 as two PRs, and the order around 1.8.
   express; tests migrated to http.createServer(core.handler), new
   tests/transport.test.js; lexical-demo dev server mounts core.handler in an Express
   host. Deploy note for 6.0: an out-of-repo startup script that uses `core.app` breaks
-  on the first post-1.8 release, and the VM's RW_TRUST_PROXY=1 now means one hop (#81)
+  on the first post-1.8 release, and the VM's RW_TRUST_PROXY=1 now means one hop (#37)
 
 ## Phase 2 — Core hardening
 
@@ -87,11 +87,11 @@ details, 1.8 as two PRs, and the order around 1.8.
   runtime-spec "Including Rich Wind in an App" (Express mount behind middleware,
   node:http prefix strip, Next.js core.fetch with basePath, Fastify library calls,
   standalone behind nginx with the 120/600 per-minute zones; plugin routes own their
-  access policy); tests/embedding.test.js (#52)
+  access policy); tests/embedding.test.js (#9)
 - [x] 2.2 Optional RW_API_KEY on the POST endpoints — DROPPED 2026-09-27 (owner:
-  access control belongs to the host app or the proxy in front) (#53)
+  access control belongs to the host app or the proxy in front) (#10)
 - [x] 2.3 Middleware placement for the limiter and key — DROPPED 2026-09-27 (neither
-  is built) (#54)
+  is built) (#11)
 - [x] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed; after 1.8
   — DONE 2026-10-01
   2026-10-01: maxConcurrentCompiles (default 8, min 1), no wait queue; slot taken in
@@ -99,37 +99,37 @@ details, 1.8 as two PRs, and the order around 1.8.
   with Retry-After: 1 over HTTP and plugin routes; ctx.compile from an awaited hook
   reuses the parent slot, from a deferred hook or plugin route takes its own and can be
   shed (auto-promote's try/catch skips the promotion); tests/concurrency.test.js;
-  config tables, threat model, openapi 503 and index.d.ts updated (#55)
-- [x] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests — DONE 2026-09-30 (#56)
+  config tables, threat model, openapi 503 and index.d.ts updated (#12)
+- [x] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests — DONE 2026-09-30 (#13)
 - [x] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
-  security-headers audit — DONE 2026-09-30 (#57)
+  security-headers audit — DONE 2026-09-30 (#14)
 - [x] 2.7 Client identity behind proxies — MOVED 2026-09-27 into 1.8 (native
-  transport) (#74)
+  transport) (#31)
 
 ## Phase 3 — Packaging
 
-- [x] 3.1 files + explicit exports for auto-promote and cache-store-fs — DONE 2026-09-30 (#58)
-- [x] 3.2 Remove Dockerfile — DONE 2026-09-30 (#59)
-- [x] 3.3 pack-smoke imports exported plugin subpaths from tarball — DONE 2026-09-30 (#60)
+- [x] 3.1 files + explicit exports for auto-promote and cache-store-fs — DONE 2026-09-30 (#15)
+- [x] 3.2 Remove Dockerfile — DONE 2026-09-30 (#16)
+- [x] 3.3 pack-smoke imports exported plugin subpaths from tarball — DONE 2026-09-30 (#17)
 - [x] 3.4 index.d.ts aligned with post-Phase-1/2 reality — DONE 2026-10-01
   2026-10-01: rateLimit* gone, trustProxy boolean/hop count/list, guard typed,
   ctx.compile shape, aliases removed, handler/fetch/basePath, five functions and
   RichWindError, plugin route request/response, maxConcurrentCompiles, no express
   import; verified with `tsc --noEmit --strict` against a usage file including
-  @ts-expect-error checks for rateLimitMax, core.app and snake_case aliases (#61)
+  @ts-expect-error checks for rateLimitMax, core.app and snake_case aliases (#18)
 - [x] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile — DONE 2026-10-01
   2026-09-30: stale lockfile removed; npm audit fix currently fails in npm's dependency-tree
   resolver (`Cannot read properties of null (reading 'edgesOut')`). 2026-10-01: npm 10.9.8
   still crashes; `npx npm@11 audit fix` (no --force) succeeds. Lockfile stays v3, Tailwind
   stays 4.1.18, vite deduped to 8.3.1, vitest 4.1.11, all within declared ranges. `npm ci`
   with npm 10 installs it cleanly; npm audit and npm audit --omit=dev both report 0
-  (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#75)
-- [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#76)
+  (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#32)
+- [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#33)
 - [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge — IN PROGRESS
   2026-10-01: release-npm.yml takes an explicit semver `version` input (prerelease never
   to `latest`, dist_tag default `next`), inputs passed via env, final step merges main
   back into dev without --force; npm name still unclaimed. Open: NPM_TOKEN (owner: "no
-  npm yet") (#77)
+  npm yet") (#34)
 
 ## Phase 4 — Docs repositioning
 
@@ -139,19 +139,19 @@ details, 1.8 as two PRs, and the order around 1.8.
   code documents the internals). README and docs/index.md cut down to a short why,
   default design system note, core/wrapper boundary, one usage snippet and links;
   ai-runtime-styling.md trimmed to the AI-driven UI story; package.json description and
-  keywords describe a library (#62)
+  keywords describe a library (#19)
 - [x] 4.2 Agent quickstart (explicit classes + rejected feedback loop) +
   docs-examples test — DONE 2026-10-01
   2026-10-01: docs/agent-quickstart.md (loop, Node example, curl transcript captured
   from a real local core); docs-examples.test.js runs the loop via core calls and HTTP
-  and asserts `rejected` (#63)
-- [x] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) — DONE 2026-09-30 (#64)
+  and asserts `rejected` (#20)
+- [x] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) — DONE 2026-09-30 (#21)
 - [x] 4.4 api-reference: error enum, rejected, core vs host enforcement; Pages render
   check — DONE 2026-10-01
   2026-10-01: Errors table (13 codes, status, when), Functions table with RichWindError,
   `rejected` defined in one sentence, core vs host enforcement table linking the threat
   model; GET /api/css wording fixed (serves cached CSS, never compiles new classes).
-  docs/_config.yml parses (ruby yaml); no Jekyll build run; Pages stays off (#65)
+  docs/_config.yml parses (ruby yaml); no Jekyll build run; Pages stays off (#22)
 
 ## Phase 5 — Go-public gate
 
@@ -161,15 +161,21 @@ details, 1.8 as two PRs, and the order around 1.8.
   private), push the purged history to a new `rich-wind`, transfer the issues. D2:
   author email mapped to the GitHub noreply address and AI Co-Authored-By / "Generated
   with Claude Code" lines removed, in the 5.2 run. D3: the public demo URL is allowed in
-  tracked files (EXECUTION.md amended); IPs, SSH details and keys stay banned (#78)
+  tracked files (EXECUTION.md amended); IPs, SSH details and keys stay banned (#35)
 - [x] 5.1 gitleaks full history, all branches — DONE 2026-10-01
   2026-10-01: gitleaks 8.30.1 over --all (dev, main, archive/parked-demos): no leaks.
   Extra grep for the server IP, the SSH key name and the personal email: found only in
-  `.claude/CLAUDE.md`, which 5.2 purges (#66)
-- [ ] 5.2 git filter-repo purge + force-push + fresh clone (#67)
+  `.claude/CLAUDE.md`, which 5.2 purges (#23)
+- [x] 5.2 git filter-repo purge + force-push + fresh clone — DONE 2026-10-01 (#24)
+  2026-10-01: old repo renamed rich-wind-archive (private, keeps PRs and old refs). Purged
+  history (no `.claude/`, noreply author email, AI trailers removed; trees identical,
+  196 commits to 187) pushed to a new private `rich-wind`; labels, milestone V1 and
+  workflow permissions copied; 36 issues transferred (old #45-#81 now #2-#37). Fresh
+  clone: no `.claude/` in any ref, gitleaks clean, 339 tests pass. Old PR numbers in
+  this file refer to rich-wind-archive
 - [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
   pushed; `parked-demos` branch deleted (remote and local)
-- [ ] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot (#68)
+- [ ] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot (#25)
   - 2026-10-01: SECURITY.md, CONTRIBUTING.md, issue forms, PR template and
     dependabot.yml (npm + github-actions, weekly, target dev) added; branch protection
     follows 5.5
@@ -178,13 +184,13 @@ details, 1.8 as two PRs, and the order around 1.8.
     plan). `release-npm.yml` pushes the version commit and tag straight to `main`
     (`git push origin HEAD:main --follow-tags`), so a require-PR rule on `main` must
     leave that push possible (or the release job must switch to opening a PR).
-- [ ] 5.5 Flip public + enable Pages + repo metadata (#69)
+- [ ] 5.5 Flip public + enable Pages + repo metadata (#26)
 
 ## Phase 6 — Release and go-live
 
 - [ ] 6.0 Restore deploy target: host-key check, tunnel, deploy/ templates,
-  rollback, VM config (#79)
-- [ ] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next (#70)
-- [ ] 6.2 Deploy rc to VM (owner picks the moment) (#71)
-- [ ] 6.3 Soak + test:load (#72)
-- [ ] 6.4 Promote 1.0.0 to latest; CHANGELOG; GitHub Release (#73)
+  rollback, VM config (#36)
+- [ ] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next (#27)
+- [ ] 6.2 Deploy rc to VM (owner picks the moment) (#28)
+- [ ] 6.3 Soak + test:load (#29)
+- [ ] 6.4 Promote 1.0.0 to latest; CHANGELOG; GitHub Release (#30)

@@ -164,13 +164,13 @@ post-V1.
    `richwind-loader.js` / lexical demo handle it (pre-verified safe); align docs.
    Scope: the two core CSS GETs (`GET /api/css`, `GET /api/projects/:projectId/css`);
    the auto-promote plugin's CSS route is plugin-owned and keeps its behavior. This
-   knowingly reverses commit 9e157d8 (2026-05-03), which moved misses to 200 empty
+   knowingly reverses commit 64e2093 (2026-05-03), which moved misses to 200 empty
    `text/css` because browsers ORB-block a JSON body loaded by a cross-origin
    `<link>`. The page result is the same either way (no stylesheet applied, no
    retry); the difference is a console message. The loader adds the project theme
    stylesheet before its first compile, so a first visit to a new project hits that
    404 (today: 200 empty). The 404 body is the 1.2 JSON envelope like every other
-   non-2xx; api-reference notes the console message. Cite 9e157d8 in the PR.
+   non-2xx; api-reference notes the console message. Cite 64e2093 in the PR.
 5. Plugin contract truth-up (types + docs match code):
    - Add `guard` to `PluginHookName`/`RichWindPlugin` types and `plugin-system.md`.
    - Fix `onRequestStart`/`onResponseSent` docs: they fire for built-in route
@@ -599,7 +599,7 @@ locations in parentheses.
 8. The range `^4.1.18` resolves Tailwind 4.3.3 on a fresh install. The full suite
    passes 277/277 on 4.3.3 and `__unstable__loadDesignSystem` is still exported, but
    CI only tests the lockfile (3.6, 1.7).
-9. 1.4 reverses 9e157d8 (ORB); the loader's theme stylesheet misses on a first visit
+9. 1.4 reverses 64e2093 (ORB); the loader's theme stylesheet misses on a first visit
    to a new project, checked against a local core (1.4).
 10. The tracked `lexical-demo/.env.production` holds the public demo hostname,
     against the EXECUTION.md rule (5.0 D3).
