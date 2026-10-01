@@ -71,6 +71,15 @@ export const ERROR_CODES = Object.freeze([
     'UNAUTHORIZED', 'FORBIDDEN', 'REQUEST_BLOCKED', 'NOT_FOUND', 'INTERNAL'
 ]);
 
+export class RichWindError extends Error {
+    constructor(status, code, message) {
+        super(message);
+        this.name = 'RichWindError';
+        this.status = status;
+        this.code = code;
+    }
+}
+
 function sendError(res, status, code, error) {
     return res.status(status).json({ error, code });
 }

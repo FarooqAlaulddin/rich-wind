@@ -17,6 +17,12 @@ export type RichWindErrorCode =
   | 'NOT_FOUND'
   | 'INTERNAL';
 
+export declare class RichWindError extends Error {
+  status: number;
+  code: RichWindErrorCode;
+  constructor(status: number, code: RichWindErrorCode, message: string);
+}
+
 export type NormalizedBundle = 'full' | 'base' | 'theme' | 'utilities';
 
 export type Bundle = NormalizedBundle;
