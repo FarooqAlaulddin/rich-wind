@@ -102,7 +102,7 @@ const LAYER_DECL_RE = /@layer[^;]*;/;
 const ESCAPE_BACKSLASH_RE = /\\/g;
 const ESCAPE_QUOTE_RE = /"/g;
 // Reject characters that could break out of @source inline("...") directives
-const UNSAFE_CLASS_CHAR_RE = /[);\n\r\0]/;
+const UNSAFE_CLASS_CHAR_RE = /[(){};,\n\r\0]/;
 
 function normalizeNodeRole(value) {
     if (typeof value !== 'string') return 'hybrid';

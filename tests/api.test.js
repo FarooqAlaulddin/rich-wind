@@ -63,6 +63,22 @@ describe('POST /api/compile', () => {
     expect(body.rejected).toEqual(['definitely-not-a-tailwind-class']);
   });
 
+  it('rejects brace-expansion syntax before it can enter an inline source directive', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'brace-input',
+        classes: 'p-4 bg-{red,blue}-500',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.classes).toEqual(['p-4']);
+    expect(body.rejected).toEqual(['bg-{red,blue}-500']);
+  });
+
   it('returns cached: true on identical second request (same html+classes)', async () => {
     const payload = {
       projectId: 'proj-cache-test',
