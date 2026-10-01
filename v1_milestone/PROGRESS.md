@@ -39,7 +39,7 @@ details, 1.8 as two PRs, and the order around 1.8.
   openapi error schema — IN PROGRESS 2026-09-30: runtime envelope, parser/media
   validation, guard mappings, and schema landed; route-level OpenAPI responses remain (#46)
 - [x] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) — DONE 2026-09-30 (#47)
-- [ ] 1.4 CSS GET miss -> 404 NOT_FOUND (#48)
+- [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#48)
 - [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
   shape with the first 1.8 PR, addRoute contract with the second) (#49)
 - [ ] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases

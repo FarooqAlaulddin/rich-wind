@@ -103,8 +103,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/css?projectId=bad-artifact&pageId=home`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -130,8 +130,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/css?projectId=expired&pageId=home`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -161,8 +161,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/css?projectId=timeout&pageId=home`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
       const reported = errors.find((entry) => entry?.stage === 'cache-store' && entry?.op === 'readPageArtifact');
       expect(reported).toBeTruthy();
       expect(reported.timedOut).toBe(true);
@@ -186,12 +186,12 @@ describe('Cache store integration', () => {
 
     try {
       const pageRead = await fetch(`${baseUrl}/api/css?projectId=missing-ops&pageId=home`);
-      expect(pageRead.status).toBe(200);
-      expect(await pageRead.text()).toBe('');
+      expect(pageRead.status).toBe(404);
+      expect(await pageRead.json()).toMatchObject({ code: 'NOT_FOUND' });
 
       const projectRead = await fetch(`${baseUrl}/api/projects/missing-ops/css`);
-      expect(projectRead.status).toBe(200);
-      expect(await projectRead.text()).toBe('');
+      expect(projectRead.status).toBe(404);
+      expect(await projectRead.json()).toMatchObject({ code: 'NOT_FOUND' });
 
       const compile = await fetch(`${baseUrl}/api/compile`, {
         method: 'POST',
@@ -579,8 +579,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/projects/project-invalid/css`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -604,8 +604,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/projects/project-expired/css`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -636,8 +636,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/projects/project-timeout/css`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
 
       const err = errors.find((entry) => entry?.stage === 'cache-store' && entry?.op === 'readProjectArtifact');
       expect(err).toBeTruthy();
@@ -943,8 +943,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/css?projectId=big-page&pageId=home`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -968,8 +968,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/projects/big-project/css`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -1001,8 +1001,8 @@ describe('Cache store integration', () => {
 
     try {
       const response = await fetch(`${baseUrl}/api/css?projectId=env-timeout&pageId=home`);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toBe('');
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
       const reported = errors.find((entry) => entry?.stage === 'cache-store' && entry?.op === 'readPageArtifact');
       expect(reported).toBeTruthy();
       expect(reported.timedOut).toBe(true);

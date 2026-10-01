@@ -827,12 +827,12 @@ describe('Plugin mutation functions', () => {
     expect(projectArtifacts.size).toBe(0);
 
     const pageAfterPurge = await fetch(`${baseUrl}/api/css?projectId=purge-proj&pageId=p1`);
-    expect(pageAfterPurge.status).toBe(200);
-    expect(await pageAfterPurge.text()).toBe('');
+    expect(pageAfterPurge.status).toBe(404);
+    expect(await pageAfterPurge.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     const projectAfterPurge = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
-    expect(projectAfterPurge.status).toBe(200);
-    expect(await projectAfterPurge.text()).toBe('');
+    expect(projectAfterPurge.status).toBe(404);
+    expect(await projectAfterPurge.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1497,7 +1497,7 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
     await close();
   });
 
-  it('resolve with invalid payload (missing css) falls through to empty CSS', async () => {
+  it('resolve with invalid payload falls through to NOT_FOUND', async () => {
     const plugin = {
       name: 'bad-resolver',
       resolvePageCss() {
@@ -1515,8 +1515,8 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=bad&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1542,8 +1542,8 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=big&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1567,8 +1567,8 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=tr&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();

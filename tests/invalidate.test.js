@@ -19,8 +19,7 @@ async function invalidate(baseUrl, body) {
 }
 
 async function getPageCss(baseUrl, projectId, pageId) {
-  const res = await fetch(`${baseUrl}/api/css?projectId=${projectId}&pageId=${pageId}`);
-  return res.text();
+  return fetch(`${baseUrl}/api/css?projectId=${projectId}&pageId=${pageId}`);
 }
 
 describe('POST /api/invalidate', () => {
@@ -68,14 +67,15 @@ describe('POST /api/invalidate', () => {
     }
   });
 
-  it('purges a single page — subsequent GET returns empty CSS', async () => {
+  it('purges a single page — subsequent GET returns NOT_FOUND', async () => {
     const { baseUrl, close } = await createTestServer();
     try {
       await compile(baseUrl, 'proj-inv', 'page1', 'text-red-500');
 
       // Confirm page is cached
       const before = await getPageCss(baseUrl, 'proj-inv', 'page1');
-      expect(before.length).toBeGreaterThan(0);
+      expect(before.status).toBe(200);
+      expect((await before.text()).length).toBeGreaterThan(0);
 
       const res = await invalidate(baseUrl, { projectId: 'proj-inv', pageId: 'page1' });
       expect(res.status).toBe(200);
@@ -86,7 +86,8 @@ describe('POST /api/invalidate', () => {
 
       // After invalidation, the page has no compiled CSS in cache
       const after = await getPageCss(baseUrl, 'proj-inv', 'page1');
-      expect(after).toBe('');
+      expect(after.status).toBe(404);
+      expect(await after.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -103,14 +104,16 @@ describe('POST /api/invalidate', () => {
       const page1Css = await getPageCss(baseUrl, 'proj-partial', 'page1');
       const page2Css = await getPageCss(baseUrl, 'proj-partial', 'page2');
 
-      expect(page1Css).toBe('');
-      expect(page2Css.length).toBeGreaterThan(0);
+      expect(page1Css.status).toBe(404);
+      expect(await page1Css.json()).toMatchObject({ code: 'NOT_FOUND' });
+      expect(page2Css.status).toBe(200);
+      expect((await page2Css.text()).length).toBeGreaterThan(0);
     } finally {
       await close();
     }
   });
 
-  it('purges an entire project — all pages return empty CSS', async () => {
+  it('purges an entire project — all pages return NOT_FOUND', async () => {
     const { baseUrl, close } = await createTestServer();
     try {
       await compile(baseUrl, 'proj-all', 'page1', 'text-red-500');
@@ -123,8 +126,11 @@ describe('POST /api/invalidate', () => {
       expect(body.projectId).toBe('proj-all');
       expect(body.pageId).toBeUndefined();
 
-      expect(await getPageCss(baseUrl, 'proj-all', 'page1')).toBe('');
-      expect(await getPageCss(baseUrl, 'proj-all', 'page2')).toBe('');
+      for (const pageId of ['page1', 'page2']) {
+        const page = await getPageCss(baseUrl, 'proj-all', pageId);
+        expect(page.status).toBe(404);
+        expect(await page.json()).toMatchObject({ code: 'NOT_FOUND' });
+      }
     } finally {
       await close();
     }
@@ -136,14 +142,15 @@ describe('POST /api/invalidate', () => {
       await compile(baseUrl, 'proj-repop', 'page1', 'text-red-500');
       await invalidate(baseUrl, { projectId: 'proj-repop', pageId: 'page1' });
 
-      // Should be empty now
-      expect(await getPageCss(baseUrl, 'proj-repop', 'page1')).toBe('');
+      // It should be absent now.
+      const missing = await getPageCss(baseUrl, 'proj-repop', 'page1');
+      expect(missing.status).toBe(404);
 
       // Recompile
       await compile(baseUrl, 'proj-repop', 'page1', 'text-red-500');
       const after = await getPageCss(baseUrl, 'proj-repop', 'page1');
-      expect(after.length).toBeGreaterThan(0);
-      expect(after).toMatch(/text-red/);
+      expect(after.status).toBe(200);
+      expect(await after.text()).toMatch(/text-red/);
     } finally {
       await close();
     }

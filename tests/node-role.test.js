@@ -363,8 +363,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       artifacts.delete(key);
 
       const second = await fetch(`${baseUrl}/api/css?projectId=reader-store&pageId=home`);
-      expect(second.status).toBe(200);
-      expect(await second.text()).toBe('');
+      expect(second.status).toBe(404);
+      expect(await second.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();
@@ -405,8 +405,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       artifacts.delete(projectKey);
 
       const second = await fetch(`${baseUrl}/api/projects/reader-project/css`);
-      expect(second.status).toBe(200);
-      expect(await second.text()).toBe('');
+      expect(second.status).toBe(404);
+      expect(await second.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();
@@ -518,8 +518,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       const readerAfterWriterDelete = await fetch(
         `${reader.baseUrl}/api/css?projectId=real-life&pageId=home`
       );
-      expect(readerAfterWriterDelete.status).toBe(200);
-      expect(await readerAfterWriterDelete.text()).toBe('');
+      expect(readerAfterWriterDelete.status).toBe(404);
+      expect(await readerAfterWriterDelete.json()).toMatchObject({ code: 'NOT_FOUND' });
 
       const readerMutationRoute = await fetch(
         `${reader.baseUrl}/plugins/mutation-probe/mutate/real-life/home`,

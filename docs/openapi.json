@@ -130,7 +130,7 @@
         ],
         "responses": {
           "200": {
-            "description": "CSS found (or empty if page not cached)",
+            "description": "CSS found",
             "headers": {
               "ETag": {
                 "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
@@ -151,6 +151,14 @@
           },
           "304": {
             "description": "Not Modified — CSS unchanged since If-None-Match"
+          },
+          "404": {
+            "description": "Cached CSS not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -189,7 +197,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Project CSS found (or empty if no pages cached)",
+            "description": "Project CSS found",
             "headers": {
               "ETag": {
                 "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
@@ -210,6 +218,14 @@
           },
           "304": {
             "description": "Not Modified — CSS unchanged since If-None-Match"
+          },
+          "404": {
+            "description": "Project CSS not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
           },
           "400": {
             "description": "Validation error",

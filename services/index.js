@@ -1888,7 +1888,7 @@ app.get('/api/css', async (req, res) => {
             return res.type('text/css').send(resolved.css);
         }
 
-        return res.type('text/css').send('');
+        return sendError(res, 404, 'NOT_FOUND', 'Cached CSS was not found.');
     } catch (err) {
         const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
         await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: reqInfo });
@@ -1961,7 +1961,7 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
             if (resolved) {
                 return res.type('text/css').send(resolved.css);
             }
-            return res.type('text/css').send('');
+            return sendError(res, 404, 'NOT_FOUND', 'Project CSS was not found.');
         }
 
         if (

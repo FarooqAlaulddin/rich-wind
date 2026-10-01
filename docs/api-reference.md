@@ -101,7 +101,9 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 | `pageId` | no | Defaults to `"default"` |
 | `bundle` | no | Same normalization as compile |
 
-This endpoint only reads from cache — it doesn't compile anything. If the page hasn't been compiled yet (or its cache has expired), it returns `200` with an empty stylesheet.
+This endpoint only reads from cache — it doesn't compile anything. If the page hasn't
+been compiled yet (or its cache has expired), it returns `404 NOT_FOUND` with the JSON
+error envelope. A browser stylesheet link may log that 404; no stylesheet is applied.
 
 Responses include an `ETag` (derived from the page's class hash) and `Cache-Control: no-cache`. Send `If-None-Match` with the ETag to receive a `304 Not Modified` when the CSS hasn't changed.
 
@@ -121,7 +123,9 @@ This compiles the **union** of every class from every currently-cached page in t
 | --- | --- | --- |
 | `bundle` | no | Query param, same normalization as compile |
 
-The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's invalidated automatically when pages are added, removed, or their classes change. If no classes are cached for the project, it returns `200` with an empty stylesheet.
+The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's
+invalidated automatically when pages are added, removed, or their classes change. If no
+classes are cached for the project, it returns `404 NOT_FOUND` with the JSON error envelope.
 
 Responses include an `ETag` and `Cache-Control: no-cache`. Send `If-None-Match` to receive `304 Not Modified` when the CSS hasn't changed.
 
@@ -155,7 +159,9 @@ Immediately purge a page or an entire project from the in-memory cache and the p
 { "invalidated": true, "projectId": "my-app", "pageId": "home" }
 ```
 
-After invalidation, the next `GET /api/css` for that page returns an empty stylesheet until it is recompiled via `POST /api/compile`. Not allowed on reader nodes — returns `409` with `code: "READ_ONLY_REPLICA"`.
+After invalidation, the next `GET /api/css` for that page returns `404 NOT_FOUND` until it
+is recompiled via `POST /api/compile`. Not allowed on reader nodes — returns `409` with
+`code: "READ_ONLY_REPLICA"`.
 
 ```bash
 curl -X POST http://localhost:3001/api/invalidate \

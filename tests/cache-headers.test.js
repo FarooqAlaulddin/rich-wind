@@ -67,12 +67,12 @@ describe('Cache-Control and ETag on /api/css', () => {
     }
   });
 
-  it('returns empty CSS for an uncached page (cache miss)', async () => {
+  it('returns NOT_FOUND for an uncached page', async () => {
     const { baseUrl, close } = await createTestServer();
     try {
       const res = await fetch(`${baseUrl}/api/css?projectId=proj-miss&pageId=nonexistent`);
-      expect(res.status).toBe(200);
-      expect(await res.text()).toBe('');
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
@@ -110,12 +110,12 @@ describe('Cache-Control and ETag on /api/projects/:projectId/css', () => {
     }
   });
 
-  it('returns empty CSS for an unknown project', async () => {
+  it('returns NOT_FOUND for an unknown project', async () => {
     const { baseUrl, close } = await createTestServer();
     try {
       const res = await fetch(`${baseUrl}/api/projects/unknown-proj/css`);
-      expect(res.status).toBe(200);
-      expect(await res.text()).toBe('');
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await close();
     }
