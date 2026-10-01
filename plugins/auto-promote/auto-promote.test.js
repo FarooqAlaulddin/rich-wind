@@ -323,13 +323,12 @@ describe('Auto-Promote Plugin', () => {
       await stopServer({ server, close });
     });
 
-    it('promoted bundle sets Cache-Control: public with max-age', async () => {
+    it('promoted bundle sets Cache-Control: public, no-cache', async () => {
       const plugin = createAutoPromotePlugin({ threshold: 2 });
       const { port, server, close } = await startServer({ plugins: [plugin] });
 
       const cssRes = await fetch(`http://localhost:${port}/plugins/auto-promote/css/proj`);
-      expect(cssRes.headers.get('cache-control')).toMatch(/public/);
-      expect(cssRes.headers.get('cache-control')).toMatch(/max-age=/);
+      expect(cssRes.headers.get('cache-control')).toBe('public, no-cache');
 
       await stopServer({ server, close });
     });

@@ -245,4 +245,20 @@ describe('Cache behavior tests', () => {
     // CSS should be different after update
     expect(css1).not.toBe(css2);
   });
+
+  it('changing a page\'s classes in one bundle never serves stale CSS from another', async () => {
+    const core = await createCore();
+    try {
+      const page = { projectId: 'stale-bundle', pageId: 'p' };
+      await core.compile({ ...page, bundle: 'full', classes: 'p-4' });
+      await core.compile({ ...page, bundle: 'utilities', classes: 'm-2' });
+      const full = await core.compile({ ...page, bundle: 'full', classes: 'm-2' });
+      expect(full.css).toMatch(/\.m-2\s*\{/);
+      expect(full.css).not.toMatch(/\.p-4\s*\{/);
+      const cached = await core.getCss({ ...page, bundle: 'full' });
+      expect(cached.css).toMatch(/\.m-2\s*\{/);
+    } finally {
+      await core.close();
+    }
+  });
 });

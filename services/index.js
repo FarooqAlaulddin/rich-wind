@@ -1228,6 +1228,12 @@ async function compileAndCachePage({
     }
 
     if (existing) {
+        if (classesChanged) {
+            // CSS stored for the other bundles was built from the old classes.
+            existing.css = null;
+            existing.utilitiesCss = null;
+            existing.themeCss = null;
+        }
         existing.hash = classHash;
         existing.classes = newClassSet;
         existing.updatedAt = now;
