@@ -184,7 +184,13 @@ details, 1.8 as two PRs, and the order around 1.8.
     plan). `release-npm.yml` pushes the version commit and tag straight to `main`
     (`git push origin HEAD:main --follow-tags`), so a require-PR rule on `main` must
     leave that push possible (or the release job must switch to opening a PR).
-- [ ] 5.5 Flip public + enable Pages + repo metadata (#26)
+  - 2026-10-01: ruleset "main protection" active on main: no deletion, no force-push.
+    A require-PR or required-checks rule needs a bypass for the release push, and a
+    personal repo cannot list GitHub Actions as a bypass actor, so those rules wait on
+    the release-flow choice
+- [x] 5.5 Flip public + enable Pages + repo metadata — DONE 2026-10-01 (#26)
+  2026-10-01: repo public; Pages from main /docs (built); description, homepage and
+  topics set from package.json; rich-wind-archive stays private
 
 ## Phase 6 — Release and go-live
 
