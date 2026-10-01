@@ -858,6 +858,107 @@ async function generateBaseCss() {
 }
 
 // =============================================================================
+// Standalone export (no cache, no plugins, no project state)
+// =============================================================================
+const CLASS_ATTR_RE = /\sclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+
+/**
+ * Classes in HTML. `classes` are the scanner's valid candidates (sorted);
+ * `rejected` are tokens written in class attributes that compile to nothing.
+ * Other scanner words (prose, attribute values) are never reported.
+ */
+export async function scanHtml(html) {
+    if (typeof html !== 'string' || html.length === 0) return { classes: [], rejected: [] };
+    const written = [];
+    for (const match of html.matchAll(CLASS_ATTR_RE)) {
+        written.push(...normalizeClassList(match[1] ?? match[2]));
+    }
+    const [classes, checked] = await Promise.all([extractClasses(html), validateExplicitClasses(written)]);
+    return {
+        classes: Array.from(new Set(classes)).sort(),
+        rejected: checked.rejected
+    };
+}
+
+async function resolveExportInput({ html, classes } = {}) {
+    const [fromHtml, fromInput] = await Promise.all([scanHtml(html), validateExplicitClasses(classes)]);
+    return {
+        classes: Array.from(new Set([...fromHtml.classes, ...fromInput.valid])).sort(),
+        rejected: Array.from(new Set([...fromHtml.rejected, ...fromInput.rejected])).sort()
+    };
+}
+
+/**
+ * One page in, complete CSS out (preflight, theme variables, utilities).
+ * Depends only on the input, so the same input always gives byte-identical CSS.
+ */
+export async function exportCss(input = {}) {
+    const { classes, rejected } = await resolveExportInput(input);
+    return { css: await generateCssForClasses(classes), classes, rejected };
+}
+
+/**
+ * N pages in, one shared sheet plus one sheet per page out. Load the shared
+ * sheet first, then the page's own sheet.
+ *
+ * The shared sheet holds preflight, the theme variables of every page and the
+ * utilities used on at least `minPages` pages. A page sheet starts at the
+ * page's first class (in Tailwind order) that is not shared and repeats any
+ * shared class sorting after it, so every page keeps Tailwind's cascade order.
+ */
+export async function exportSet(pages, { minPages = 2 } = {}) {
+    if (!Array.isArray(pages)) throw new TypeError('exportSet: pages must be an array');
+    const ids = new Set();
+    for (const page of pages) {
+        if (!page || typeof page.id !== 'string' || page.id.length === 0) {
+            throw new TypeError('exportSet: every page needs a string id');
+        }
+        if (ids.has(page.id)) throw new TypeError(`exportSet: duplicate page id "${page.id}"`);
+        ids.add(page.id);
+    }
+    const threshold = Number.isInteger(minPages) && minPages >= 1 ? minPages : 2;
+    const sorted = pages.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const resolved = await Promise.all(sorted.map((page) => resolveExportInput(page)));
+
+    const usage = new Map();
+    for (const { classes } of resolved) {
+        for (const cls of classes) usage.set(cls, (usage.get(cls) ?? 0) + 1);
+    }
+    const union = Array.from(usage.keys()).sort();
+    const shared = union.filter((cls) => usage.get(cls) >= threshold);
+
+    const designSystem = await getDesignSystem();
+    const order = new Map(designSystem.getClassOrder(union).map(([cls, rank]) => [cls, rank ?? 0n]));
+
+    const [sharedCss, unionCss] = await Promise.all([
+        generateCssForClasses(shared),
+        union.length > 0 ? generateCssForClasses(union) : ''
+    ]);
+    const unionTheme = (unionCss.match(THEME_BLOCK_RE) || []).join('').trim();
+    const sharedBody = sharedCss.replace(THEME_BLOCK_RE, '').trimEnd();
+
+    const out = { shared: unionTheme ? `${sharedBody}\n${unionTheme}\n` : `${sharedBody}\n`, pages: {}, classes: {}, rejected: {} };
+    await Promise.all(sorted.map(async (page, index) => {
+        const { classes, rejected } = resolved[index];
+        const own = classes.filter((cls) => usage.get(cls) < threshold);
+        let css = '';
+        if (own.length > 0) {
+            const start = own.reduce((min, cls) => (order.get(cls) < min ? order.get(cls) : min), order.get(own[0]));
+            const sheet = classes.filter((cls) => order.get(cls) >= start);
+            css = (await generateThemeUtilitiesForClasses(sheet)).utilitiesCss;
+        }
+        out.pages[page.id] = css;
+        out.classes[page.id] = classes;
+        out.rejected[page.id] = rejected;
+    }));
+    // Key order follows the sorted ids, whatever order the compiles finished in.
+    for (const key of ['pages', 'classes', 'rejected']) {
+        out[key] = Object.fromEntries(sorted.map((page) => [page.id, out[key][page.id]]));
+    }
+    return out;
+}
+
+// =============================================================================
 // Input normalization + compile orchestration
 // =============================================================================
 function normalizeBundle(value) {
@@ -1084,16 +1185,11 @@ const RICH_WIND_RELOAD_JS = `(function () {
 `;
 
 async function resolveClassesFromInput({ html, validInput }) {
-    // extractClasses already validates via candidatesToCss, so only
+    // scanHtml already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
-    const fromHtml = html ? await extractClasses(html) : [];
-    const fromInput = validInput;
-
-    if (fromInput.length === 0) {
-        return Array.from(new Set(fromHtml)).sort();
-    }
-    const combined = new Set([...fromHtml, ...fromInput]);
-    return Array.from(combined).sort();
+    const scanned = html ? await scanHtml(html) : { classes: [], rejected: [] };
+    const combined = new Set([...scanned.classes, ...validInput]);
+    return { classes: Array.from(combined).sort(), htmlRejected: scanned.rejected };
 }
 
 async function compileAndCachePage({
@@ -1112,8 +1208,10 @@ async function compileAndCachePage({
     request = null
 }) {
     const normalizedBundle = normalizeBundle(bundle);
-    // HTML scanner candidates are intentionally excluded from rejection feedback.
-    const { valid: validInput, rejected } = await validateExplicitClasses(classes);
+    // Rejections come from the class list and from HTML class attributes; other
+    // scanner words (prose, attribute values) are never reported.
+    const { valid: validInput, rejected: inputRejected } = await validateExplicitClasses(classes);
+    let rejected = inputRejected;
 
     // Base bundle handling
     if (normalizedBundle === 'base') {
@@ -1135,7 +1233,11 @@ async function compileAndCachePage({
         await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle);
     }
 
-    let resolvedClasses = await resolveClassesFromInput({ html, validInput });
+    const resolved = await resolveClassesFromInput({ html, validInput });
+    let resolvedClasses = resolved.classes;
+    if (resolved.htmlRejected.length > 0) {
+        rejected = Array.from(new Set([...inputRejected, ...resolved.htmlRejected])).sort();
+    }
 
     // transformClasses pipeline
     if (!skipHooks && pluginRunner) {

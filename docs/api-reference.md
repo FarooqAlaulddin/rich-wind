@@ -92,6 +92,22 @@ try {
 }
 ```
 
+### Standalone export
+
+Module-level functions with no cache, plugins or project state: the same input always gives byte-identical CSS, so a host can store source and rebuild CSS on demand.
+
+```js
+import { scanHtml, exportCss, exportSet } from "rich-wind";
+```
+
+| Function | Returns |
+| --- | --- |
+| `scanHtml(html)` | `{ classes, rejected }`: valid classes found in the HTML, and class-attribute tokens that compile to nothing |
+| `exportCss({ html?, classes? })` | `{ css, classes, rejected }`: one complete sheet (preflight, theme variables, utilities) |
+| `exportSet(pages, { minPages = 2 }?)` | `{ shared, pages, classes, rejected }` for `pages` = `[{ id, html?, classes? }]`; `pages`, `classes` and `rejected` are keyed by id |
+
+`exportSet` puts preflight, every page's theme variables and the utilities used on at least `minPages` pages in `shared`. Load `shared` first, then the page's sheet. A page sheet may repeat a shared class to keep Tailwind's cascade order. It is `""` when the page needs nothing beyond `shared`.
+
 ### HTTP surface
 
 - Paths are exact and case-sensitive, with no trailing slash.
@@ -146,7 +162,7 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 - `hash` — SHA-256 of the sorted class list. Same classes always produce the same hash.
 - `cached` — `true` if this result came from cache without recompilation.
 - `classes` — the validated, sorted list of classes that were actually compiled.
-- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input that Tailwind could not compile or that Rich Wind withheld as unsafe. Tokens found by scanning `html` are never listed. Always an array: `[]` when nothing was rejected, for `html`-only input, and for the `base` bundle.
+- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input and from `class` / `className` attributes in `html` that Tailwind could not compile or that Rich Wind withheld as unsafe. Other words the HTML scanner finds (prose, attribute values) are never listed. Always an array: `[]` when nothing was rejected, and for the `base` bundle.
 
 Errors: see [Errors](#errors).
 

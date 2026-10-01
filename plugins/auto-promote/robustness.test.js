@@ -211,4 +211,34 @@ describe('auto-promote robustness', () => {
       }
     }
   });
+
+  it('promotes and demotes across page update and delete', async () => {
+    const plugin = createAutoPromotePlugin({ threshold: 2 });
+    core = await createCore({ plugins: [plugin] });
+    const stats = async () => (await (await core.fetch(new Request('http://localhost/plugins/auto-promote/stats'))).json()).life;
+
+    await core.compile({ projectId: 'life', pageId: 'a', classes: 'p-4 m-2' });
+    await core.compile({ projectId: 'life', pageId: 'b', classes: 'p-4 m-2' });
+    await settle(plugin);
+    expect((await stats()).promoted).toEqual(['m-2', 'p-4']);
+
+    // Update: b drops m-2.
+    await core.compile({ projectId: 'life', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+    expect((await stats()).promoted).toEqual(['p-4']);
+    await expectCovered(core, 'life', 'a', ['p-4', 'm-2']);
+    await expectCovered(core, 'life', 'b', ['p-4']);
+
+    // Delete: b goes away, p-4 is demoted; a still covered, then sheds p-4 from the bundle.
+    await core.invalidate({ projectId: 'life', pageId: 'b' });
+    await core.compile({ projectId: 'life', pageId: 'a', classes: 'p-4 m-2' });
+    await settle(plugin);
+    expect((await stats()).promoted).toEqual([]);
+    await expectCovered(core, 'life', 'a', ['p-4', 'm-2']);
+    await core.compile({ projectId: 'life', pageId: 'a', classes: 'p-4 m-2' });
+    await settle(plugin);
+    expect(await bundleCss(core, 'life')).toBe('');
+    await expectCovered(core, 'life', 'a', ['p-4', 'm-2']);
+  });
 });
+

@@ -575,3 +575,40 @@ export interface RichWindCore {
 export declare function createCore(
   options?: CreateCoreOptions
 ): Promise<RichWindCore>;
+
+export interface ExportInput {
+  html?: string;
+  classes?: string | string[];
+}
+
+export interface ScanHtmlResult {
+  classes: string[];
+  rejected: string[];
+}
+
+export interface ExportCssResult {
+  css: string;
+  classes: string[];
+  rejected: string[];
+}
+
+export interface ExportSetPage extends ExportInput {
+  id: string;
+}
+
+export interface ExportSetResult {
+  shared: string;
+  pages: Record<string, string>;
+  classes: Record<string, string[]>;
+  rejected: Record<string, string[]>;
+}
+
+/** Valid classes in the HTML, and class-attribute tokens that compile to nothing. */
+export declare function scanHtml(html: string): Promise<ScanHtmlResult>;
+/** One page in, complete standalone CSS out; byte-identical for the same input. */
+export declare function exportCss(input?: ExportInput): Promise<ExportCssResult>;
+/** N pages in, one shared sheet plus one sheet per page out; deterministic. */
+export declare function exportSet(
+  pages: ExportSetPage[],
+  options?: { minPages?: number }
+): Promise<ExportSetResult>;
