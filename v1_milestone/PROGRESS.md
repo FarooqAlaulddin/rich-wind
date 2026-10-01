@@ -117,9 +117,13 @@ details, 1.8 as two PRs, and the order around 1.8.
   RichWindError, plugin route request/response, maxConcurrentCompiles, no express
   import; verified with `tsc --noEmit --strict` against a usage file including
   @ts-expect-error checks for rateLimitMax, core.app and snake_case aliases (#61)
-- [ ] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile — IN PROGRESS
+- [x] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile — DONE 2026-10-01
   2026-09-30: stale lockfile removed; npm audit fix currently fails in npm's dependency-tree
-  resolver (`Cannot read properties of null (reading 'edgesOut')`) (#75)
+  resolver (`Cannot read properties of null (reading 'edgesOut')`). 2026-10-01: npm 10.9.8
+  still crashes; `npx npm@11 audit fix` (no --force) succeeds. Lockfile stays v3, Tailwind
+  stays 4.1.18, vite deduped to 8.3.1, vitest 4.1.11, all within declared ranges. `npm ci`
+  with npm 10 installs it cleanly; npm audit and npm audit --omit=dev both report 0
+  (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#75)
 - [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#76)
 - [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge (#77)
 
