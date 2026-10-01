@@ -771,14 +771,16 @@
       "ErrorResponse": {
         "type": "object",
         "required": [
-          "error"
+          "error",
+          "code"
         ],
         "properties": {
           "error": {
             "type": "string"
           },
           "code": {
-            "type": "string"
+            "type": "string",
+            "enum": ["INVALID_ID", "MISSING_INPUT", "INVALID_BODY", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE", "READ_ONLY_REPLICA", "RATE_LIMITED", "SERVER_BUSY", "UNAUTHORIZED", "FORBIDDEN", "REQUEST_BLOCKED", "NOT_FOUND", "INTERNAL"]
           }
         }
       },

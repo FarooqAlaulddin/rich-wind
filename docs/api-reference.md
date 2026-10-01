@@ -75,6 +75,12 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 
 **Errors:**
 
+Every non-success response is JSON in the form `{ "error": string, "code": string }`.
+`code` is one of `INVALID_ID`, `MISSING_INPUT`, `INVALID_BODY`,
+`UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `READ_ONLY_REPLICA`,
+`RATE_LIMITED`, `SERVER_BUSY`, `UNAUTHORIZED`, `FORBIDDEN`, `REQUEST_BLOCKED`,
+`NOT_FOUND`, or `INTERNAL`.
+
 | Status | Cause |
 | --- | --- |
 | `400` | Missing `projectId`, invalid ID format, or no valid classes found |

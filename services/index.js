@@ -65,6 +65,34 @@ const appendVaryHeader = (existingValue, nextToken) => {
 
 const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
 const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
+export const ERROR_CODES = Object.freeze([
+    'INVALID_ID', 'MISSING_INPUT', 'INVALID_BODY', 'UNSUPPORTED_MEDIA_TYPE',
+    'PAYLOAD_TOO_LARGE', 'READ_ONLY_REPLICA', 'RATE_LIMITED', 'SERVER_BUSY',
+    'UNAUTHORIZED', 'FORBIDDEN', 'REQUEST_BLOCKED', 'NOT_FOUND', 'INTERNAL'
+]);
+
+function sendError(res, status, code, error) {
+    return res.status(status).json({ error, code });
+}
+
+function guardErrorCode(status) {
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 429) return 'RATE_LIMITED';
+    return 'REQUEST_BLOCKED';
+}
+
+function defaultErrorCode(status) {
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 404) return 'NOT_FOUND';
+    if (status === 409) return 'READ_ONLY_REPLICA';
+    if (status === 413) return 'PAYLOAD_TOO_LARGE';
+    if (status === 415) return 'UNSUPPORTED_MEDIA_TYPE';
+    if (status === 429) return 'RATE_LIMITED';
+    if (status >= 500) return 'INTERNAL';
+    return 'INVALID_BODY';
+}
 
 // Pre-compiled regex constants
 const VALID_ID_RE = /^[a-zA-Z0-9._-]+$/;
@@ -1692,26 +1720,22 @@ app.post('/api/compile', async (req, res) => {
         }
 
         if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
+            return sendError(res, 400, 'MISSING_INPUT', 'projectId is required.');
         }
         if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
+            return sendError(res, 400, 'INVALID_ID', `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`);
         }
         if (!isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
+            return sendError(res, 400, 'INVALID_ID', `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`);
         }
         if (!html && !classes && bundle !== 'base') {
-            return res.status(400).json({ error: 'Either html or classes is required.' });
+            return sendError(res, 400, 'MISSING_INPUT', 'Either html or classes is required.');
         }
         if (typeof html === 'string' && html.length > config.maxHtmlChars) {
-            return res.status(413).json({ error: `html is too large. Limit is ${config.maxHtmlChars} chars.` });
+            return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `html is too large. Limit is ${config.maxHtmlChars} chars.`);
         }
         if (typeof classes === 'string' && classes.length > config.maxClassChars) {
-            return res.status(413).json({ error: `classes is too large. Limit is ${config.maxClassChars} chars.` });
+            return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
         }
 
         const result = await compileAndCachePage({
@@ -1721,7 +1745,7 @@ app.post('/api/compile', async (req, res) => {
             skipHooks: false, source: 'http', request: hookContext.request
         });
         if (result.error) {
-            return res.status(result.status || 400).json({ error: result.error });
+            return sendError(res, result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
         }
 
         res.json({
@@ -1737,7 +1761,7 @@ app.post('/api/compile', async (req, res) => {
         });
     } catch (err) {
         await pluginRunner.runHook('onError', { error: err, stage: 'compile', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: 'Internal server error.' });
+        sendError(res, 500, 'INTERNAL', 'Internal server error.');
     }
 });
 
@@ -2124,9 +2148,10 @@ app.get('/health', (req, res) => {
 app.use((err, req, res, next) => {
     if (err && err.type === 'entity.too.large') {
         pluginRunner.runHook('onError', { error: err, stage: 'body', context: { path: req.path } });
-        return res.status(413).json({ error: 'Payload too large.' });
+        return sendError(res, 413, 'PAYLOAD_TOO_LARGE', 'Payload too large.');
     }
-    return next(err);
+    pluginRunner.runHook('onError', { error: err, stage: 'body', context: { path: req.path } });
+    return sendError(res, 400, 'INVALID_BODY', 'Invalid JSON request body.');
 });
 }
 
@@ -2362,6 +2387,19 @@ export async function createCore({
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
 
+    // Keep every JSON failure in the public error envelope while individual route
+    // handlers select more precise codes where their validation knows the cause.
+    app.use((req, res, next) => {
+        const json = res.json.bind(res);
+        res.json = (body) => {
+            if (res.statusCode >= 400 && body && typeof body === 'object' && body.error && !body.code) {
+                return json({ ...body, code: defaultErrorCode(res.statusCode) });
+            }
+            return json(body);
+        };
+        next();
+    });
+
     app.use((req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Referrer-Policy', 'no-referrer');
@@ -2403,7 +2441,24 @@ export async function createCore({
         return next();
     });
 
+    app.use((req, res, next) => {
+        if (req.method === 'POST' && req.path.startsWith('/api/')) {
+            if (req.headers['content-encoding'] || !req.is('application/json')) {
+                return sendError(res, 415, 'UNSUPPORTED_MEDIA_TYPE', 'POST API requests require application/json without content encoding.');
+            }
+        }
+        return next();
+    });
+
     app.use(express.json({ limit: config.maxBodyBytes }));
+
+    app.use((req, res, next) => {
+        if (req.method === 'POST' && req.path.startsWith('/api/') &&
+            (!req.body || Array.isArray(req.body) || typeof req.body !== 'object')) {
+            return sendError(res, 400, 'INVALID_BODY', 'Request body must be a JSON object.');
+        }
+        return next();
+    });
 
     const pluginContext = buildPluginContext(state, config);
     const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs, pluginContext });
@@ -2416,7 +2471,8 @@ export async function createCore({
         });
         if (block) {
             if (block.retryAfter != null) res.setHeader('Retry-After', block.retryAfter);
-            return res.status(block.status ?? 429).json({ error: block.error ?? 'Blocked.' });
+            const status = block.status ?? 429;
+            return sendError(res, status, guardErrorCode(status), block.error ?? 'Blocked.');
         }
         return next();
     });
@@ -2649,6 +2705,8 @@ export async function createCore({
         { isWriteAllowed, reportWriteBlocked },
         { queueStoreWrite }
     );
+
+    app.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found.'));
 
     let closePromise = null;
     const close = () => {

@@ -2,6 +2,21 @@ import type { Express, RequestHandler } from 'express';
 
 export type MaybePromise<T> = T | Promise<T>;
 
+export type RichWindErrorCode =
+  | 'INVALID_ID'
+  | 'MISSING_INPUT'
+  | 'INVALID_BODY'
+  | 'UNSUPPORTED_MEDIA_TYPE'
+  | 'PAYLOAD_TOO_LARGE'
+  | 'READ_ONLY_REPLICA'
+  | 'RATE_LIMITED'
+  | 'SERVER_BUSY'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'REQUEST_BLOCKED'
+  | 'NOT_FOUND'
+  | 'INTERNAL';
+
 export type NormalizedBundle = 'full' | 'base' | 'theme' | 'utilities';
 
 export type Bundle =

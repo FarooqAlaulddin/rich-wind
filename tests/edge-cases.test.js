@@ -4,7 +4,7 @@ import { createTestServer } from './helpers/createTestServer.js';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('POST without JSON content-type', () => {
-  it('/api/compile returns 400 with helpful error when body is not JSON', async () => {
+  it('/api/compile returns 415 with the error envelope when body is not JSON', async () => {
     const { baseUrl, close } = await createTestServer({}, {
       config: { rateLimitDisabled: true }
     });
@@ -15,16 +15,15 @@ describe('POST without JSON content-type', () => {
         headers: { 'content-type': 'text/plain' },
         body: 'not json'
       });
-      // Should get a clear error, not a 500 crash
-      expect(response.status).toBeLessThan(500);
+      expect(response.status).toBe(415);
       const body = await response.json();
-      expect(body.error).toBeTruthy();
+      expect(body).toMatchObject({ error: expect.any(String), code: 'UNSUPPORTED_MEDIA_TYPE' });
     } finally {
       await close();
     }
   });
 
-  it('/api/suggest handles non-JSON body gracefully (all fields optional)', async () => {
+  it('/api/suggest returns 415 rather than silently accepting a non-JSON body', async () => {
     const { baseUrl, close } = await createTestServer({}, {
       config: { rateLimitDisabled: true }
     });
@@ -35,11 +34,9 @@ describe('POST without JSON content-type', () => {
         headers: { 'content-type': 'text/plain' },
         body: 'not json'
       });
-      // Should not crash with 500 (the hookContext bug)
-      expect(response.status).toBeLessThan(500);
+      expect(response.status).toBe(415);
       const body = await response.json();
-      expect(body.success).toBe(true);
-      expect(Array.isArray(body.suggestions)).toBe(true);
+      expect(body).toMatchObject({ error: expect.any(String), code: 'UNSUPPORTED_MEDIA_TYPE' });
     } finally {
       await close();
     }

@@ -35,4 +35,29 @@ describe('Package contracts', () => {
     expect(doc.paths?.['/api/suggest']?.post).toBeTruthy();
     expect(doc.paths?.['/health']?.get).toBeTruthy();
   });
+
+  it('uses the closed error envelope for malformed requests and missing routes', async () => {
+    const { createCore } = await import('../services/index.js');
+    const { app, close } = await createCore();
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const baseUrl = `http://localhost:${server.address().port}`;
+
+    try {
+      const malformed = await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{'
+      });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.json()).toMatchObject({ code: 'INVALID_BODY', error: expect.any(String) });
+
+      const missing = await fetch(`${baseUrl}/not-a-route`);
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toMatchObject({ code: 'NOT_FOUND', error: expect.any(String) });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      await close();
+    }
+  });
 });
