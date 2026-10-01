@@ -28,8 +28,9 @@ plan without guessing conventions or overstepping authority.
 - **No emojis** in any file, commit message, or PR text.
 - **This folder goes public with the repo at Phase 5.** Nothing under
   `v1_milestone/` — or any tracked file — may ever contain server IPs, hostnames,
-  SSH key names/paths, tokens, or other infrastructure details. (Open: decision D3
-  in Phase 5.0 on the public demo hostname.) Deploy templates under `deploy/` (6.0)
+  SSH key names/paths, tokens, or other infrastructure details. Exception (D3,
+  owner 2026-10-01): the public demo URL may appear, since it is public anyway; the
+  addresses, SSH details and keys behind it may not. Deploy templates under `deploy/` (6.0)
   use placeholders only.
 
 ## Decision authority

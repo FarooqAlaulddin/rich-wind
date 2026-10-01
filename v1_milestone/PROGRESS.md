@@ -155,9 +155,17 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 ## Phase 5 — Go-public gate
 
-- [ ] 5.0 OWNER DECISIONS: D1 PR-refs route, D2 author email and trailers, D3
-  public demo hostname rule (#78)
-- [ ] 5.1 gitleaks full history, all branches (#66)
+- [x] 5.0 OWNER DECISIONS: D1 PR-refs route, D2 author email and trailers, D3
+  public demo hostname rule — DONE 2026-10-01
+  2026-10-01: D1 (b) new repository: rename this one to rich-wind-archive (stays
+  private), push the purged history to a new `rich-wind`, transfer the issues. D2:
+  author email mapped to the GitHub noreply address and AI Co-Authored-By / "Generated
+  with Claude Code" lines removed, in the 5.2 run. D3: the public demo URL is allowed in
+  tracked files (EXECUTION.md amended); IPs, SSH details and keys stay banned (#78)
+- [x] 5.1 gitleaks full history, all branches — DONE 2026-10-01
+  2026-10-01: gitleaks 8.30.1 over --all (dev, main, archive/parked-demos): no leaks.
+  Extra grep for the server IP, the SSH key name and the personal email: found only in
+  `.claude/CLAUDE.md`, which 5.2 purges (#66)
 - [ ] 5.2 git filter-repo purge + force-push + fresh clone (#67)
 - [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
   pushed; `parked-demos` branch deleted (remote and local)
