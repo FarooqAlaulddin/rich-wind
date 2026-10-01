@@ -75,7 +75,7 @@ CSS is cached per `projectId` + `pageId` with sliding TTL and LRU eviction.
 - **Plugin system** — 14 hooks for observing, transforming, and resolving CSS at every stage of the pipeline
 - **Pluggable persistence** — optional `cacheStore` adapter for shared cache across replicas
 - **Replica roles** — `writer` / `reader` / `hybrid` for horizontal scaling
-- **Rate limiting and CORS** — built-in, configurable per environment
+- **CORS** is built in and configurable per environment; rate limiting belongs to your host app or proxy (see the Runtime Spec)
 - **TypeScript definitions** — full type coverage for the public API and plugin interfaces
 
 ## Configuration
@@ -89,6 +89,7 @@ Key environment variables:
 | `PORT` | `3001` | HTTP port |
 | `RW_CACHE_MAX_PAGES` | `200` | Max cached pages |
 | `RW_CACHE_TTL_MS` | `600000` | Page cache TTL (ms) |
+| `RW_MAX_CONCURRENT_COMPILES` | `8` | Max simultaneous compiles; extra compiles get `503 SERVER_BUSY` |
 | `RW_NODE_ROLE` | `hybrid` | Replica role |
 | `RW_CORS_ORIGIN` | unset | CORS allowlist |
 | `RW_TRUST_PROXY` | unset | Trusted proxy hops or addresses for client IP detection (`1` is a hop count) |
@@ -103,6 +104,7 @@ Docs are plain Markdown in `docs/` so they can be published from GitHub Pages, r
 - **[Runtime Spec](docs/runtime-spec.md)** — caching, `cacheStore` adapter interface, bundle splitting, replica roles
 - **[Plugin System](docs/plugin-system.md)** — hooks, setup context, storage, custom routes, and examples
 - **[Integration Cookbook](docs/integration-cookbook.md)** — multi-tenant wrappers, editor integration, CMS pipelines, cacheStore adapters
+- **[Compatibility Policy (1.x)](docs/api-reference.md#compatibility-policy-1x)** — what stays stable within 1.x
 - **[FAQ](docs/faq.md)** — common questions
 
 ## Development

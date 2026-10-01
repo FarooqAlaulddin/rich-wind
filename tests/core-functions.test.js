@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore, RichWindError } from '../services/index.js';
 
 async function startCore(options = {}) {
-  const core = await createCore({ config: { rateLimitDisabled: true }, ...options });
+  const core = await createCore({ config: {}, ...options });
   const server = http.createServer(core.handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const baseUrl = `http://localhost:${server.address().port}`;
@@ -170,7 +170,7 @@ describe('Core functions match their routes', () => {
 
 describe('Core functions on a reader replica', () => {
   it('compile and invalidate fail like the routes', async () => {
-    const ctx = await startCore({ config: { nodeRole: 'reader', rateLimitDisabled: true } });
+    const ctx = await startCore({ config: { nodeRole: 'reader' } });
     try {
       const compileInput = { projectId: 'ro', classes: 'p-4' };
       await expectSameFailure(

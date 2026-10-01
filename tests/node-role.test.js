@@ -161,7 +161,7 @@ describe('Node role behavior (single writer, many readers)', () => {
     };
     const { baseUrl, close } = await createTestServer({}, {
       plugins: [plugin],
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     try {
@@ -194,7 +194,7 @@ describe('Node role behavior (single writer, many readers)', () => {
 
   it('allows POST /api/compile on writer replicas', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { nodeRole: 'writer', rateLimitDisabled: true }
+      config: { nodeRole: 'writer' }
     });
 
     try {
@@ -261,7 +261,7 @@ describe('Node role behavior (single writer, many readers)', () => {
     const { close } = await createCore({
       plugins: [probe, collector],
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     await expect(ctxRef.compile({
@@ -344,7 +344,7 @@ describe('Node role behavior (single writer, many readers)', () => {
 
     const { handler, close } = await createCore({
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -387,7 +387,7 @@ describe('Node role behavior (single writer, many readers)', () => {
 
     const { handler, close } = await createCore({
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -447,12 +447,12 @@ describe('Node role behavior (single writer, many readers)', () => {
     const writer = await startCore({
       cacheStore: store,
       plugins: [mutationProbePlugin],
-      config: { nodeRole: 'writer', rateLimitDisabled: true }
+      config: { nodeRole: 'writer' }
     });
     const reader = await startCore({
       cacheStore: store,
       plugins: [mutationProbePlugin],
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     try {

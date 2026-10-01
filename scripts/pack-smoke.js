@@ -43,7 +43,7 @@ if (typeof createAutoPromotePlugin !== 'function' || typeof createFsCacheStore !
   throw new Error('Plugin subpath exports are unavailable.');
 }
 
-const { handler, close } = await createCore({ config: { rateLimitDisabled: true } });
+const { handler, close } = await createCore({});
 const server = http.createServer(handler).listen(0);
 await new Promise((resolve) => server.once('listening', resolve));
 const { port } = server.address();

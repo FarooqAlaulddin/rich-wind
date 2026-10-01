@@ -106,7 +106,6 @@ describe('Plugin lifecycle (setup, teardown, close)', () => {
 
     const { handler, close } = await createCore({
       plugins: [failPlugin, goodPlugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -183,7 +182,6 @@ describe('Plugin routes', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
     closeFn = close;
 
@@ -248,7 +246,6 @@ describe('Plugin routes', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const srv = http.createServer(handler).listen(0);
@@ -298,7 +295,6 @@ describe('Plugin context query functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -336,7 +332,6 @@ describe('Plugin context query functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -393,7 +388,6 @@ describe('Plugin context query functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -493,7 +487,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [alpha, beta],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
     await alphaStorage.set('metrics', { count: 1 });
@@ -534,7 +527,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin, collector],
       cacheStore: {},
-      config: { rateLimitDisabled: true }
     });
 
     expect(await storage.get('metrics')).toBeNull();
@@ -600,7 +592,6 @@ describe('Plugin mutation functions', () => {
       plugins: [probe, collector],
       cacheStore,
       cacheStoreTimeoutMs: 20,
-      config: { rateLimitDisabled: true }
     });
 
     expect(await storage.get('metrics')).toBeNull();
@@ -638,7 +629,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await expect(storage.get('bad key')).rejects.toThrow(/Invalid storage key/);
@@ -658,7 +648,6 @@ describe('Plugin mutation functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -691,7 +680,6 @@ describe('Plugin mutation functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -743,7 +731,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'full' });
@@ -793,7 +780,6 @@ describe('Plugin mutation functions', () => {
     const { handler, close } = await createCore({
       plugins: [plugin],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -848,7 +834,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const result = await ctxRef.compile({
@@ -896,7 +881,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'sp', pageId: 'p1', classes: 'text-red-500' });
@@ -921,7 +905,6 @@ describe('Plugin mutation functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1022,7 +1005,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     // Must have a page first
@@ -1073,7 +1055,6 @@ describe('Plugin mutation functions', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     expect(setupComplete).toBe(true);
@@ -1109,7 +1090,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'rp', pageId: 'trigger', classes: 'text-red-500' });
@@ -1138,7 +1118,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 1,
-      config: { rateLimitDisabled: true }
     });
 
     // Direct compile from plugin context (depth 0 -> should succeed)
@@ -1191,7 +1170,6 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1222,7 +1200,6 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1253,7 +1230,6 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1284,7 +1260,6 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1316,7 +1291,7 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true, maxCssChars: 2000000 }
+      config: { maxCssChars: 2000000 }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1348,7 +1323,6 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1381,7 +1355,6 @@ describe('Pipeline hooks (transformSuggestions)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1417,7 +1390,6 @@ describe('Pipeline hooks (transformSuggestions)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1452,7 +1424,6 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1481,7 +1452,6 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1507,7 +1477,6 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1534,7 +1503,7 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true, maxCssChars: 2000000 }
+      config: { maxCssChars: 2000000 }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1559,7 +1528,6 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1599,7 +1567,6 @@ describe('Adversarial: resolve hooks first-wins behavior', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1629,7 +1596,6 @@ describe('Adversarial: resolve hooks first-wins behavior', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1656,7 +1622,6 @@ describe('Adversarial: transformClasses edge cases', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1693,7 +1658,6 @@ describe('Adversarial: transformClasses edge cases', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1726,7 +1690,6 @@ describe('Adversarial: evictProject state cleanup', () => {
 
     const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const server = http.createServer(handler).listen(0);
@@ -1782,7 +1745,6 @@ describe('Adversarial: setup ordering and hook visibility', () => {
 
     const { close } = await createCore({
       plugins: [pluginA, pluginB],
-      config: { rateLimitDisabled: true }
     });
 
     await new Promise(r => setTimeout(r, 50));
@@ -1815,7 +1777,6 @@ describe('Adversarial: chain depth tracking', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 1,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'rg', pageId: 'a', classes: 'text-red-500' });
@@ -1857,7 +1818,6 @@ describe('Adversarial: chain depth tracking', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 2,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'dc', pageId: 'chain-0', classes: 'bg-blue-500' });

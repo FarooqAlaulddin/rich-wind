@@ -115,7 +115,7 @@ try {
 }
 ```
 
-When called from inside a hook, it skips hook execution to avoid recursive loops. Hook events it fires carry `source: "plugin"` and `request: null`.
+When called from inside a hook, it skips hook execution to avoid recursive loops. A call from a hook that its parent compile awaits runs inside the parent's concurrency slot. A call from a deferred hook or a plugin route takes its own slot and can throw `RichWindError` with status `503` and code `SERVER_BUSY` when every slot is in use. Hook events it fires carry `source: "plugin"` and `request: null`.
 
 When `nodeRole` is `reader`, mutation helpers are blocked:
 - `compile()` throws a `RichWindError` with status `409` and code `READ_ONLY_REPLICA`

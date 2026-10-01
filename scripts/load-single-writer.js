@@ -457,13 +457,13 @@ async function main() {
       const store = createSharedStore();
       writer = await startCoreInstance({
         cacheStore: store,
-        config: { nodeRole: 'writer', rateLimitDisabled: true }
+        config: { nodeRole: 'writer' }
       });
       writerUrl = writer.baseUrl;
       for (let i = 0; i < readerCount; i += 1) {
         const reader = await startCoreInstance({
           cacheStore: store,
-          config: { nodeRole: 'reader', rateLimitDisabled: true }
+          config: { nodeRole: 'reader' }
         });
         readers.push(reader);
       }

@@ -22,7 +22,7 @@ describe("Docs examples", () => {
   let baseUrl;
 
   beforeAll(async () => {
-    const { handler } = await createCore({ config: { rateLimitDisabled: true } });
+    const { handler } = await createCore({});
     core = await startServer(handler);
     baseUrl = core.baseUrl;
   });
@@ -179,7 +179,7 @@ describe("Docs examples", () => {
 
   it("api-reference library snippet works", async () => {
     const { handler } = await createCore({
-      config: { cacheTtlMs: 600000, rateLimitDisabled: true },
+      config: { cacheTtlMs: 600000 },
       pluginTimeoutMs: 200,
       plugins: [],
     });
@@ -198,7 +198,6 @@ describe("Docs examples", () => {
         cacheMaxPages: 500,
         cacheTtlMs: 10 * 60 * 1000,
         projectCacheTtlMs: 10 * 60 * 1000,
-        rateLimitDisabled: true,
       },
     });
 
@@ -222,7 +221,7 @@ describe("Docs examples", () => {
   });
 
   it("integration cookbook wrapper snippet works", async () => {
-    const core = await createCore({ config: { rateLimitDisabled: true } });
+    const core = await createCore({});
 
     const wrapper = express();
     wrapper.use(express.json({ limit: "100kb" }));
@@ -311,7 +310,7 @@ describe("Docs examples", () => {
         addRoute("post", "/echo", async (req) => ({ status: 201, body: await req.json() }));
       },
     };
-    const fetchCore = await createCore({ plugins: [plugin], config: { rateLimitDisabled: true } });
+    const fetchCore = await createCore({ plugins: [plugin], config: {} });
     try {
       const res = await fetchCore.fetch(
         new Request("http://x/rw/api/compile", {
@@ -395,7 +394,6 @@ describe("Docs examples", () => {
     };
 
     const { handler } = await createCore({
-      config: { rateLimitDisabled: true },
       plugins: [plugin],
       pluginTimeoutMs: 200,
     });

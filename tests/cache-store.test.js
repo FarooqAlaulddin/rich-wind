@@ -33,7 +33,7 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { suggestFallback: false, rateLimitDisabled: true }
+      config: { suggestFallback: false }
     });
 
     try {
@@ -67,7 +67,7 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { suggestFallback: false, rateLimitDisabled: true }
+      config: { suggestFallback: false }
     });
 
     try {
@@ -98,7 +98,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -125,7 +124,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -156,7 +154,6 @@ describe('Cache store integration', () => {
       cacheStore: store,
       cacheStoreTimeoutMs: 20,
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -181,7 +178,6 @@ describe('Cache store integration', () => {
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -240,7 +236,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -285,7 +280,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     const compile = await fetch(`${baseUrl}/api/compile`, {
@@ -333,7 +327,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -362,7 +355,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -385,7 +377,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -421,7 +412,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -461,7 +451,6 @@ describe('Cache store integration', () => {
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -498,7 +487,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -525,7 +513,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -552,7 +539,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -574,7 +560,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -599,7 +584,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -631,7 +615,6 @@ describe('Cache store integration', () => {
       cacheStore: store,
       cacheStoreTimeoutMs: 20,
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -660,7 +643,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -699,7 +681,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -738,7 +719,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -781,7 +761,6 @@ describe('Cache store integration', () => {
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -828,7 +807,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -859,7 +837,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -897,7 +874,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -938,7 +914,7 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { maxCssChars: 20, rateLimitDisabled: true }
+      config: { maxCssChars: 20 }
     });
 
     try {
@@ -963,7 +939,7 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { maxCssChars: 20, rateLimitDisabled: true }
+      config: { maxCssChars: 20 }
     });
 
     try {
@@ -995,7 +971,6 @@ describe('Cache store integration', () => {
       {
         cacheStore: store,
         plugins: [plugin],
-        config: { rateLimitDisabled: true }
       }
     );
 
@@ -1022,7 +997,6 @@ describe('Cache store integration', () => {
 
     const { baseUrl, close } = await createTestServer({}, {
       cacheStore: store,
-      config: { rateLimitDisabled: true }
     });
 
     try {

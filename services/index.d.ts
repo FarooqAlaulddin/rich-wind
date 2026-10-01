@@ -34,12 +34,11 @@ export interface CoreConfig {
   maxHtmlChars: number;
   maxClassChars: number;
   maxClassCount: number;
+  /** Compiles that may run at once; a compile past the cap throws 503 SERVER_BUSY. */
+  maxConcurrentCompiles: number;
   maxIdLength: number;
   suggestLimit: number;
   suggestFallback: boolean;
-  rateLimitWindowMs: number;
-  rateLimitMax: number;
-  rateLimitDisabled: boolean;
   /** null when unset; a boolean, a hop count, or trusted addresses/subnets. */
   trustProxy: TrustProxySetting | null;
   cacheMaxPages: number;
@@ -55,12 +54,10 @@ export interface CoreConfigInput {
   maxHtmlChars?: number | string;
   maxClassChars?: number | string;
   maxClassCount?: number | string;
+  maxConcurrentCompiles?: number | string;
   maxIdLength?: number | string;
   suggestLimit?: number | string;
   suggestFallback?: boolean | string;
-  rateLimitWindowMs?: number | string;
-  rateLimitMax?: number | string;
-  rateLimitDisabled?: boolean | string;
   trustProxy?: TrustProxySetting | string;
   cacheMaxPages?: number | string;
   cacheTtlMs?: number | string;

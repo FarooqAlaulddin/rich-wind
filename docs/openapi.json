@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Rich Wind API",
-    "version": "0.0.1",
+    "version": "1.0.0",
     "description": "Runtime Tailwind CSS compilation and cache API. Every documented endpoint may be blocked by a plugin guard: 401 uses UNAUTHORIZED, 403 uses FORBIDDEN, 429 uses RATE_LIMITED, and other blocking statuses use REQUEST_BLOCKED."
   },
   "servers": [
@@ -82,7 +82,7 @@
             }
           },
           "429": {
-            "description": "Rate limit exceeded",
+            "description": "Blocked by a plugin guard (RATE_LIMITED); core has no built-in limiter",
             "headers": {
               "Retry-After": {
                 "schema": {
@@ -102,6 +102,25 @@
           },
           "500": {
             "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Every compile slot is in use (SERVER_BUSY); the compile is shed without queueing",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds to wait before retrying. Always 1."
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

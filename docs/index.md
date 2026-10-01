@@ -103,7 +103,8 @@ Splitting makes sense when many pages share the same design tokens but have diff
 - **[API Reference](api-reference.html)** — every endpoint, every parameter, every config option
 - **[AI Runtime Styling](ai-runtime-styling.html)** — 2026 positioning for dynamic and AI-generated UI
 - **[OpenAPI Contract](openapi.json)** — machine-readable API schema for tooling and client generation
-- **[Runtime Spec](runtime-spec.html)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and rate limiting
+- **[Runtime Spec](runtime-spec.html)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and including Rich Wind in an app
 - **[Plugin System](plugin-system.html)** — lifecycle hooks, setup context, plugin storage, and custom behavior
 - **[Integration Cookbook](integration-cookbook.html)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
+- **[Compatibility Policy (1.x)](api-reference.html#compatibility-policy-1x)** — what stays stable within 1.x
 - **[FAQ](faq.html)** — common implementation and architecture questions

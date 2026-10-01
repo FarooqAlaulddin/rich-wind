@@ -47,8 +47,13 @@ details, 1.8 as two PRs, and the order around 1.8.
   documented and typed with 1.8b (#49)
 - [x] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
   included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#50)
-- [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
-  policy (#51)
+- [x] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
+  policy — DONE 2026-10-01
+  2026-10-01: "Compatibility Policy (1.x)" in docs/api-reference.md (field/status/
+  error-code stability, optional fields may be added, embedding contract, frozen error
+  enum with new codes reserved for 2.0, CSS and `rejected` track Tailwind 4.x, narrowing
+  the tailwindcss range if `__unstable__loadDesignSystem`/`candidatesToCss` break);
+  linked from README and docs/index.md; openapi info.version 1.0.0 (#51)
 - [x] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
   shares core.compile; (b) drop Express, core.handler, core.fetch with basePath,
   neutral plugin routes, client identity via proxy-addr (absorbs 2.7) — DONE 2026-10-01
@@ -75,14 +80,26 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 ## Phase 2 — Core hardening
 
-- [ ] 2.1 Embedding contract: drop the rate-limit promise and plugins/rate-limit;
-  mount-under-prefix tests; host-side recipe; after 1.8 (#52)
+- [x] 2.1 Embedding contract: drop the rate-limit promise and plugins/rate-limit;
+  mount-under-prefix tests; host-side recipe; after 1.8 — DONE 2026-10-01
+  2026-10-01: plugins/rate-limit deleted; rateLimit* removed from index.d.ts, docs,
+  tests, scripts and the demo dev server; 429 documented as plugin-guard only;
+  runtime-spec "Including Rich Wind in an App" (Express mount behind middleware,
+  node:http prefix strip, Next.js core.fetch with basePath, Fastify library calls,
+  standalone behind nginx with the 120/600 per-minute zones; plugin routes own their
+  access policy); tests/embedding.test.js (#52)
 - [x] 2.2 Optional RW_API_KEY on the POST endpoints — DROPPED 2026-09-27 (owner:
   access control belongs to the host app or the proxy in front) (#53)
 - [x] 2.3 Middleware placement for the limiter and key — DROPPED 2026-09-27 (neither
   is built) (#54)
-- [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed; after 1.8
-  (#55)
+- [x] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed; after 1.8
+  — DONE 2026-10-01
+  2026-10-01: maxConcurrentCompiles (default 8, min 1), no wait queue; slot taken in
+  core.compile after input validation, so direct calls are bounded; 503 SERVER_BUSY
+  with Retry-After: 1 over HTTP and plugin routes; ctx.compile from an awaited hook
+  reuses the parent slot, from a deferred hook or plugin route takes its own and can be
+  shed (auto-promote's try/catch skips the promotion); tests/concurrency.test.js;
+  config tables, threat model, openapi 503 and index.d.ts updated (#55)
 - [x] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests — DONE 2026-09-30 (#56)
 - [x] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
   security-headers audit — DONE 2026-09-30 (#57)
@@ -94,7 +111,12 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 3.1 files + explicit exports for auto-promote and cache-store-fs — DONE 2026-09-30 (#58)
 - [x] 3.2 Remove Dockerfile — DONE 2026-09-30 (#59)
 - [x] 3.3 pack-smoke imports exported plugin subpaths from tarball — DONE 2026-09-30 (#60)
-- [ ] 3.4 index.d.ts aligned with post-Phase-1/2 reality (#61)
+- [x] 3.4 index.d.ts aligned with post-Phase-1/2 reality — DONE 2026-10-01
+  2026-10-01: rateLimit* gone, trustProxy boolean/hop count/list, guard typed,
+  ctx.compile shape, aliases removed, handler/fetch/basePath, five functions and
+  RichWindError, plugin route request/response, maxConcurrentCompiles, no express
+  import; verified with `tsc --noEmit --strict` against a usage file including
+  @ts-expect-error checks for rateLimitMax, core.app and snake_case aliases (#61)
 - [ ] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile — IN PROGRESS
   2026-09-30: stale lockfile removed; npm audit fix currently fails in npm's dependency-tree
   resolver (`Cannot read properties of null (reading 'edgesOut')`) (#75)

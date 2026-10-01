@@ -52,12 +52,13 @@ Key endpoints in `services/index.js`:
 
 Core runtime is stateless except for process-local in-memory caches.
 
-## Cache & Rate Limit Configuration
+## Cache & Request Configuration
 Config can be set via `createCore({ config: { ... } })` or env vars:
 - Cache: `RW_CACHE_MAX_PAGES`, `RW_CACHE_TTL_MS`, `RW_PROJECT_CACHE_TTL_MS`
 - Request limits: `RW_MAX_BODY_BYTES`, `RW_MAX_HTML_CHARS`, `RW_MAX_CLASS_CHARS`, `RW_MAX_CLASS_COUNT`, `RW_MAX_ID_LENGTH`
+- Compile concurrency: `RW_MAX_CONCURRENT_COMPILES` (default 8, minimum 1); no wait queue, excess compiles are shed with `503 SERVER_BUSY` and `Retry-After: 1`
 - Suggest: `RW_SUGGEST_LIMIT`, `RW_SUGGEST_FALLBACK`
-- Rate limit: `RW_RATE_LIMIT_WINDOW_MS`, `RW_RATE_LIMIT_MAX`, `RW_RATE_LIMIT_DISABLED`, `RW_TRUST_PROXY`
+- Proxy trust: `RW_TRUST_PROXY` (boolean, hop count or subnet list) sets the `request.ip` plugin hooks see
 
 ## Suggestions
 `/api/suggest` returns:
@@ -90,7 +91,7 @@ The lexical-demo is a separate Vite app at `lexical-demo/`:
 
 ## Common Gotchas
 - Do not hardcode preview styles in the compile route; keep styles in Custom CSS.
-- `RW_TRUST_PROXY` affects rate-limit IP behavior; default false unless behind a trusted proxy.
+- `RW_TRUST_PROXY` affects the `request.ip` plugin hooks see (boolean, hop count or subnet list); default unset unless behind a trusted proxy.
 - The full playground/docs/plugin showcase is intentionally parked on `parked-demos`; do not recreate it on `dev` unless requested.
 
 ## Git Workflow Expectations

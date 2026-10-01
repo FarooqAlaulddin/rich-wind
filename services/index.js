@@ -142,6 +142,11 @@ function buildConfig(overrides = {}) {
             50000,
             1
         ),
+        maxConcurrentCompiles: parseIntWithDefault(
+            overrides.maxConcurrentCompiles ?? process.env.RW_MAX_CONCURRENT_COMPILES,
+            8,
+            1
+        ),
         maxClassChars: parseIntWithDefault(
             overrides.maxClassChars ?? process.env.RW_MAX_CLASS_CHARS,
             10000,
@@ -1536,7 +1541,7 @@ function createPluginRunner(plugins = [], options = {}) {
                 continue;
             }
             await hookStore.run(
-                { inHook: true },
+                { inHook: true, slot: hookStore.getStore()?.slot },
                 () => runSingle(plugin, hook, hookContext)
             );
         }
@@ -1553,7 +1558,7 @@ function createPluginRunner(plugins = [], options = {}) {
             if (!fn) continue;
             try {
                 const result = await hookStore.run(
-                    { inHook: true },
+                    { inHook: true, slot: hookStore.getStore()?.slot },
                     () => withTimeout(Promise.resolve(fn({ ...hookContext, value })), plugin.timeoutMs)
                 );
                 if (result !== undefined) {
@@ -1577,7 +1582,7 @@ function createPluginRunner(plugins = [], options = {}) {
             if (!fn) continue;
             try {
                 const result = await hookStore.run(
-                    { inHook: true },
+                    { inHook: true, slot: hookStore.getStore()?.slot },
                     () => withTimeout(Promise.resolve(fn(hookContext)), plugin.timeoutMs)
                 );
                 if (result == null) continue;
@@ -1643,6 +1648,7 @@ function createCoreFunctions({
     state, config, pluginRunner, cacheStoreRunner, queueStoreWrite,
     isWriteAllowed, reportWriteBlocked, chainDepthLimit
 }) {
+    let activeCompiles = 0;
     // Runs one operation; anything that is not a RichWindError reaches onError and
     // becomes 500 INTERNAL, so callers only ever see the public error contract.
     const guarded = async (stage, meta, fn) => {
@@ -1655,6 +1661,29 @@ function createCoreFunctions({
             }
             throw new RichWindError(500, 'INTERNAL', INTERNAL_ERROR_MESSAGE, { cause: err });
         }
+    };
+
+    // Runs the compile with the slot visible to the hooks it awaits. Plugin
+    // compiles also count against the compile chain depth.
+    const runCompilePage = async (compilePage, meta, parentStore, slot, context) => {
+        if (meta.source !== 'plugin') {
+            return hookStore.run({ ...(parentStore ?? {}), slot }, compilePage);
+        }
+        const currentDepth = parentStore?.compileChainDepth ?? 0;
+        if (currentDepth >= chainDepthLimit) {
+            const message = 'Plugin compile chain depth exceeded.';
+            if (!meta.skipHooks) {
+                await pluginRunner.runHook('onError', {
+                    error: new Error(message), stage: 'compile', source: 'plugin',
+                    code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context
+                });
+            }
+            throw new RichWindError(500, 'INTERNAL', message);
+        }
+        return hookStore.run(
+            { inHook: meta.skipHooks, compileChainDepth: currentDepth + 1, slot },
+            compilePage
+        );
     };
 
     const runCompile = async (input, meta) => {
@@ -1680,6 +1709,21 @@ function createCoreFunctions({
             throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
         }
 
+        // One slot per compile, no wait queue. A compile made from a hook its parent
+        // compile awaits runs inside the parent's slot; any other compile (host,
+        // HTTP, deferred hook, plugin route) needs a free slot or is shed.
+        const parentStore = hookStore.getStore();
+        const parentSlot = parentStore?.slot;
+        let slot = null;
+        if (!parentSlot?.held) {
+            if (activeCompiles >= config.maxConcurrentCompiles) {
+                throw new RichWindError(503, 'SERVER_BUSY', 'All compile slots are in use. Retry shortly.');
+            }
+            activeCompiles++;
+            slot = { held: true };
+        }
+        const ownSlot = slot ?? parentSlot;
+
         const compilePage = () => compileAndCachePage({
             state, config, projectId, pageId, html, classes, bundle,
             pluginRunner, cacheStoreRunner, queueStoreWrite,
@@ -1687,25 +1731,13 @@ function createCoreFunctions({
         });
 
         let result;
-        if (meta.source === 'plugin') {
-            const store = hookStore.getStore();
-            const currentDepth = store?.compileChainDepth ?? 0;
-            if (currentDepth >= chainDepthLimit) {
-                const message = 'Plugin compile chain depth exceeded.';
-                if (!meta.skipHooks) {
-                    await pluginRunner.runHook('onError', {
-                        error: new Error(message), stage: 'compile', source: 'plugin',
-                        code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context: { projectId, pageId, bundle }
-                    });
-                }
-                throw new RichWindError(500, 'INTERNAL', message);
+        try {
+            result = await runCompilePage(compilePage, meta, parentStore, ownSlot, { projectId, pageId, bundle });
+        } finally {
+            if (slot) {
+                slot.held = false;
+                activeCompiles--;
             }
-            result = await hookStore.run(
-                { inHook: meta.skipHooks, compileChainDepth: currentDepth + 1 },
-                compilePage
-            );
-        } else {
-            result = await compilePage();
         }
         if (result.error) {
             throw new RichWindError(result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
@@ -1983,7 +2015,9 @@ function jsonResponse(status, body, headers = {}) {
 }
 
 function errorResponse(status, code, error, headers) {
-    return jsonResponse(status, { error, code }, headers);
+    // A shed compile is safe to retry once a slot frees up.
+    const extra = code === 'SERVER_BUSY' ? { 'Retry-After': '1' } : {};
+    return jsonResponse(status, { error, code }, { ...extra, ...headers });
 }
 
 function isJsonContentType(value) {

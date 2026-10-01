@@ -26,9 +26,6 @@ for (let i = 0; i < plugins.length; i++) {
 const { handler, close } = await createCore({
   plugins,
   maxPluginCompileChainDepth: 3,
-  config: {
-    rateLimitDisabled: true,
-  },
 });
 
 // Express hosts the static demo build; core is mounted as a plain handler.

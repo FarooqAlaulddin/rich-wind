@@ -26,7 +26,7 @@ This works well for local tooling, internal services, or single-node deployments
 
 Rich Wind doesn't do authentication — it compiles whatever you send it. In a multi-tenant system, you need a wrapper that authenticates the caller and maps their identity to a scoped `projectId` so tenants can't see each other's cache.
 
-The gateway below is an Express host that owns authentication and rate limiting. It calls the core functions in-process, so no second HTTP hop is needed. `RichWindError` carries the status and code for validation failures.
+The gateway below is an Express host that owns authentication and rate limiting. It calls the core functions in-process, so no second HTTP hop is needed. `RichWindError` carries the status and code for validation failures. For mounting, Next.js, Fastify and proxy patterns see [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
 
 ```js
 import express from "express";

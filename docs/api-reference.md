@@ -16,7 +16,6 @@ const core = await createCore({
   config: {
     cacheTtlMs: 10 * 60 * 1000,
     cacheMaxPages: 500,
-    rateLimitMax: 120,
   },
   plugins: [myPlugin],
   pluginTimeoutMs: 200,
@@ -27,7 +26,7 @@ const core = await createCore({
 http.createServer(core.handler).listen(3001);
 ```
 
-The `config` object controls cache sizes, timeouts, and rate limits. `plugins`, `cacheStore`, and their timeout options are top-level. See [Configuration](#configuration) for the full table.
+The `config` object controls cache sizes, timeouts, and limits on request and output size. `plugins`, `cacheStore`, and their timeout options are top-level. See [Configuration](#configuration) for the full table.
 
 ### core.handler(req, res)
 
@@ -143,8 +142,15 @@ Every non-success response is JSON in the form `{ "error": string, "code": strin
 | `400` | Missing `projectId`, invalid ID format, or no valid classes found |
 | `409` | Replica is configured as `nodeRole: "reader"` (`READ_ONLY_REPLICA`) |
 | `413` | HTML too large, class string too large, class count exceeds limit, or JSON body too large |
-| `429` | Rate limit exceeded (includes `Retry-After` header) |
+| `429` | Returned only when a plugin guard blocks the request (`RATE_LIMITED`); core has no built-in limiter. A guard may set a `Retry-After` header |
 | `500` | Unexpected internal error |
+| `503` | Every compile slot is in use (`SERVER_BUSY`). Sent with `Retry-After: 1`. See [Compile concurrency](#compile-concurrency) |
+
+---
+
+### Compile concurrency
+
+Core runs at most `maxConcurrentCompiles` compiles at once (default `8`). There is no wait queue: when every slot is in use, the compile is shed immediately with `503` and `{ "error": "All compile slots are in use. Retry shortly.", "code": "SERVER_BUSY" }`, plus `Retry-After: 1`. Input validation errors (`400`, `413`, `409`) are returned before a slot is taken. The cap lives in `core.compile`, so direct library calls are bounded too and throw a `RichWindError` with status `503` and code `SERVER_BUSY`. Only compiles are capped; CSS `GET`s, `invalidate`, and `suggest` are not. See [Runtime Spec](runtime-spec.html#threat-model-and-enforcement-boundary) for how plugin compiles share slots.
 
 ---
 
@@ -315,7 +321,7 @@ Supported attributes:
 
 ## GET /health
 
-Returns `{ "status": "ok" }`. No rate limiting.
+Returns `{ "status": "ok" }`. Not subject to plugin guards or core limits; apply any request limiting at your host or proxy.
 
 ---
 
@@ -329,6 +335,7 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `maxHtmlChars` | `RW_MAX_HTML_CHARS` | `50000` | Max length of the `html` field |
 | `maxClassChars` | `RW_MAX_CLASS_CHARS` | `10000` | Max length of the `classes` field (when string) |
 | `maxClassCount` | `RW_MAX_CLASS_COUNT` | `1500` | Max number of resolved classes per compile |
+| `maxConcurrentCompiles` | `RW_MAX_CONCURRENT_COMPILES` | `8` | Max compiles running at once (minimum `1`). Extra compiles are shed with `503 SERVER_BUSY`; there is no wait queue |
 | `maxIdLength` | `RW_MAX_ID_LENGTH` | `64` | Max length of `projectId` and `pageId` |
 | `maxCssChars` | `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts, transforms, and resolve hooks |
 | `cacheMaxPages` | `RW_CACHE_MAX_PAGES` | `200` | Max total pages held in memory across all projects |
@@ -336,9 +343,6 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `projectCacheTtlMs` | `RW_PROJECT_CACHE_TTL_MS` | `600000` | Project aggregate cache TTL in ms |
 | `suggestLimit` | `RW_SUGGEST_LIMIT` | `100` | Max number of suggestions returned |
 | `suggestFallback` | `RW_SUGGEST_FALLBACK` | `true` | Whether to include Tailwind's static class list in suggestions |
-| `rateLimitWindowMs` | `RW_RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in ms |
-| `rateLimitMax` | `RW_RATE_LIMIT_MAX` | `60` | Max requests per IP per window |
-| `rateLimitDisabled` | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting entirely |
 | `trustProxy` | `RW_TRUST_PROXY` | unset | Express `trust proxy` semantics: `true`/`false`, a hop count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (`loopback`, `uniquelocal` also accepted). Unset uses the socket address and ignores `X-Forwarded-For`. `RW_TRUST_PROXY=1` is hop count 1, not "trust all". See [Runtime Spec](runtime-spec.html#threat-model-and-enforcement-boundary) |
 | `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
 | `corsOrigin` | `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
@@ -360,3 +364,41 @@ For single-writer deployments, use this split:
 - `writer` nodes: accept compile and other writes
 - `reader` nodes: serve CSS/suggestions only
 - both point to the same `cacheStore`
+
+---
+
+## Compatibility Policy (1.x)
+
+From 1.0, the HTTP API and the embedding API follow these rules until the next major version.
+
+**HTTP responses**
+
+- Response fields do not change type or meaning.
+- Successful status codes and their side effects stay stable.
+- Error codes keep their meaning.
+- Response objects may gain new optional fields, so clients must ignore unknown fields.
+
+**Embedding contract**
+
+These are stable in 1.x:
+
+- The members `createCore()` returns: `handler`, `fetch`, `compile`, `getCss`, `getProjectCss`, `invalidate`, `suggest`, and `close`. The object may gain members.
+- `core.handler` and `core.fetch` work under any prefix: `basePath` for `fetch`, a mount or prefix strip for `handler`.
+- Each function returns what its route returns and throws `RichWindError` with the route's status, code, and message.
+- `ctx.compile` behaves like `core.compile`.
+- The plugin `addRoute` contract: a neutral request in, `{ status, headers, body }` out.
+- The HTTP surface rules: exact case-sensitive paths, `HEAD` on `GET` routes, and the `{ error, code }` error envelope.
+- The standalone server stays in 1.x.
+
+**Error codes**
+
+The error code enum is frozen for 1.x: `INVALID_ID`, `MISSING_INPUT`, `INVALID_BODY`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `READ_ONLY_REPLICA`, `RATE_LIMITED`, `SERVER_BUSY`, `UNAUTHORIZED`, `FORBIDDEN`, `REQUEST_BLOCKED`, `NOT_FOUND`, `INTERNAL`. New error codes are reserved for the next major version; new failure cases map to an existing code.
+
+**Tailwind**
+
+- Generated CSS and the `rejected` list track the installed Tailwind 4.x release. A Tailwind minor or patch can change CSS output and which classes are rejected. That is not a Rich Wind breaking change.
+- Rich Wind depends on Tailwind's `__unstable__loadDesignSystem` and `candidatesToCss`. If a Tailwind release breaks them, Rich Wind answers by narrowing its `tailwindcss` dependency range in a patch release until support lands.
+
+**Configuration**
+
+Environment variables and option names are stable within 1.x. Defaults may change only in a minor release and are noted in the changelog (`CHANGELOG.md`).

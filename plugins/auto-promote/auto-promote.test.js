@@ -16,7 +16,6 @@ async function compileViaHttp(port, projectId, pageId, classes) {
 // Helper: start a server, return { port, server, close }
 async function startServer(coreOptions) {
   const { handler, close } = await createCore({
-    config: { rateLimitDisabled: true },
     ...coreOptions
   });
   const server = http.createServer(handler).listen(0);
@@ -438,7 +437,6 @@ describe('Auto-Promote Plugin', () => {
       };
       const { handler, close: close1 } = await createCore({
         plugins: [seedPlugin],
-        config: { rateLimitDisabled: true }
       });
       const server1 = http.createServer(handler).listen(0);
       await new Promise(r => server1.once('listening', r));

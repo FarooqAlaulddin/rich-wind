@@ -334,6 +334,18 @@ mapping, authorization, rate limiting, request logging, TLS, and WAF policy. Cor
 no API key or rate limiter. A plugin guard can block an HTTP request, but direct library
 calls intentionally bypass guards because their host has already authorized the call.
 
+Core enforces a compile concurrency cap (`maxConcurrentCompiles`, default `8`). When every
+slot is in use, a compile is shed immediately with `503 SERVER_BUSY` and `Retry-After: 1`;
+there is no wait queue. The cap lives in `core.compile`, so direct library calls are bounded
+too. Core has no per-client fairness: one client can hold every slot, and per-client limits
+belong to the host or proxy.
+
+Plugin compiles follow these slot rules. A `ctx.compile` from a hook that its parent compile
+awaits runs inside the parent's slot and never takes a second one. A `ctx.compile` from a
+deferred hook (`deferHooks`) or from a plugin route takes its own slot and can be shed with
+`SERVER_BUSY`. Auto-promote defers `onCompileResult`, so under full load its promotion
+compile is shed and treated as a skipped promotion.
+
 When deploying behind a trusted reverse proxy, set `trustProxy` so plugin request hooks
 receive the forwarded client address (`request.ip`). Never enable it for untrusted direct clients.
 
@@ -356,6 +368,125 @@ nginx appends cloudflared's loopback address with `$proxy_add_x_forwarded_for`, 
 nginx's loopback socket. The trusted hops are nginx and cloudflared, so use hop count `2`
 (or `loopback`). The next entry is then the address Cloudflare saw, which is the client.
 Confirm the exact count against the real chain by logging `request.ip` from a known client.
+
+## Including Rich Wind in an App
+
+Core has no limiter and no authentication, so the host puts them in front. These are the
+supported ways to embed it. In every pattern the host's middleware runs before core, and a
+request the host rejects never reaches a plugin hook or the compiler.
+
+### Express host (mounted handler)
+
+`core.handler` resolves paths from `req.url`. Express rewrites `req.url` under a mount path,
+so the handler works under any prefix:
+
+```js
+import express from "express";
+import expressRateLimit from "express-rate-limit";
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const limiter = expressRateLimit({ windowMs: 60_000, limit: 120 });
+const auth = (req, res, next) =>
+  req.header("authorization") ? next() : res.status(401).json({ error: "Unauthorized" });
+
+const app = express();
+app.use("/rw", limiter, auth, core.handler);
+```
+
+`POST /rw/api/compile` reaches `/api/compile`. Do not put `express.json()` before the mount;
+core reads and bounds the body itself.
+
+### Plain node:http host
+
+A host that routes a prefix to core strips it from `req.url` first, keeping any query string:
+
+```js
+import http from "node:http";
+
+http.createServer((req, res) => {
+  if (req.url === "/rw" || req.url.startsWith("/rw/") || req.url.startsWith("/rw?")) {
+    req.url = req.url.slice(3) || "/";
+    if (req.url[0] === "?") req.url = "/" + req.url;
+    return core.handler(req, res);
+  }
+  res.statusCode = 404;
+  res.end();
+}).listen(3000);
+```
+
+### Next.js App Router
+
+Serve `core.fetch` from a route handler and set `basePath` to the route's prefix. This needs
+the Node.js runtime.
+
+```js
+// app/rw/[...path]/route.js
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const handle = (req) => core.fetch(req, { basePath: "/rw" });
+
+export const runtime = "nodejs";
+export const GET = handle;
+export const POST = handle;
+export const HEAD = handle;
+export const OPTIONS = handle;
+```
+
+### Fastify (library calls)
+
+Call the functions directly and map `RichWindError` to a reply. Direct calls bypass plugin
+guards, because the host has already authorized them:
+
+```js
+import Fastify from "fastify";
+import { createCore, RichWindError } from "rich-wind";
+
+const core = await createCore();
+const app = Fastify();
+
+app.post("/css/compile", async (request, reply) => {
+  try {
+    return await core.compile(request.body);
+  } catch (err) {
+    if (err instanceof RichWindError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+});
+```
+
+### Standalone server behind a proxy
+
+Run `npm start` and let the proxy own limiting, TLS and authentication. These nginx zones are
+field-tested: 120 requests per minute for compile and 600 per minute for everything else.
+An editor integration makes about 4 requests per keystroke, so lower limits flood the client
+with `429` responses.
+
+```nginx
+limit_req_zone $binary_remote_addr zone=richwind_compile:10m rate=120r/m;
+limit_req_zone $binary_remote_addr zone=richwind_api:10m     rate=600r/m;
+
+location = /api/compile {
+  limit_req zone=richwind_compile burst=30 nodelay;
+  proxy_pass http://127.0.0.1:3000;
+}
+location / {
+  limit_req zone=richwind_api burst=100 nodelay;
+  proxy_pass http://127.0.0.1:3000;
+}
+```
+
+Set `RW_TRUST_PROXY` to the number of proxy hops so plugin hooks see the real client address.
+
+### Plugin routes and access policy
+
+Routes a plugin registers under `/plugins/<name>/...` are reachable by anyone who can reach
+core. A plugin whose routes expose sensitive data or perform mutations must enforce its own
+access policy, for example in a `guard` hook or inside the route. Host middleware on the
+mount prefix covers them only when every request passes through that host.
 
 ## Security Headers
 

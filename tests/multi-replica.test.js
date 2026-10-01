@@ -228,7 +228,6 @@ async function startReplica({ cacheStore, plugins = [], config = {}, ...rest } =
     cacheStore,
     plugins,
     config: {
-      rateLimitDisabled: true,
       ...config
     },
     ...rest
