@@ -19,9 +19,13 @@ concurrency:
 
 jobs:
   test:
-    name: Run Tests (Node 20)
+    name: Run Tests (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    strategy:
+      matrix:
+        node: [22, 24]
 
     env:
       CI: true
@@ -33,7 +37,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - name: Install dependencies
@@ -47,3 +51,22 @@ jobs:
 
       - name: Build lexical demo production bundle
         run: npm run build:lexical-demo
+
+  lockfile-free-install:
+    name: Verify lockfile-free install (Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 22
+
+      - name: Install without a lockfile
+        run: npm install --package-lock=false --ignore-scripts
+
+      - name: Verify package import
+        run: node --input-type=module -e "import('rich-wind')"

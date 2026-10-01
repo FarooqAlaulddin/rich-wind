@@ -29,7 +29,7 @@
     "lexical-demo"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node ./services/index.js",

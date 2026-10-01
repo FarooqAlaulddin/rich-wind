@@ -73,7 +73,7 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 3.3 pack-smoke imports exported plugin subpaths from tarball — DONE 2026-09-30 (#60)
 - [ ] 3.4 index.d.ts aligned with post-Phase-1/2 reality (#61)
 - [ ] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile (#75)
-- [ ] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job (#76)
+- [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#76)
 - [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge (#77)
 
 ## Phase 4 — Docs repositioning
