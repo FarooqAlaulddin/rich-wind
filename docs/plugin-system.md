@@ -201,8 +201,8 @@ These fire at specific moments. Return values are ignored.
 
 | Hook | When it fires | Key context fields |
 | --- | --- | --- |
-| `onRequestStart` | Every incoming request | `action`, `source`, `request` |
-| `onResponseSent` | After the response finishes | `action`, `source`, `request`, `status`, `durationMs` |
+| `onRequestStart` | A built-in route handler begins | `action`, `request` |
+| `onResponseSent` | A built-in route handler finishes | `action`, `request`, `status`, `durationMs` |
 | `onCompileStart` | Before compilation begins | `projectId`, `pageId`, `bundle`, `html`, `classes`, `source`, `request` |
 | `onCompileResult` | After compilation finishes | `projectId`, `pageId`, `bundle`, `css`, `classes`, `hash`, `cached`, `source`, `request` |
 | `onCacheHit` | Cached CSS found | `projectId`, `pageId`, `bundle`, `source`, `request` |
@@ -212,6 +212,15 @@ These fire at specific moments. Return values are ignored.
 | `onError` | When something fails | `error`, `hook`, `plugin`, `timedOut`, `stage`, `source` |
 
 ### Enrichment Hooks (Pipeline)
+
+### HTTP Guard
+
+`guard` runs before a request reaches any built-in route handler. It receives the
+plugin context plus `{ ip, method, path }` and applies only to HTTP requests, never
+direct `ctx.compile()` calls. Return `null`/`undefined` to allow the request, or
+`{ blocked: true, status, error, retryAfter }` to stop it. Status `401`, `403`, and
+`429` map to `UNAUTHORIZED`, `FORBIDDEN`, and `RATE_LIMITED`; other blocking statuses
+map to `REQUEST_BLOCKED`.
 
 These run sequentially — each plugin receives the previous plugin's output as `value` and can return a modified version. Return `undefined` to skip (pass through unchanged). Errors/timeouts skip that plugin.
 

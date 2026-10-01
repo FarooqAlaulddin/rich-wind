@@ -69,6 +69,15 @@ export interface PluginRequestMeta {
   path: string;
 }
 
+export interface PluginGuardResult {
+  blocked: boolean;
+  error?: string;
+  status?: number;
+  retryAfter?: number | string;
+}
+
+export interface PluginGuardContext extends PluginContext, PluginRequestMeta {}
+
 export type PluginSource =
   | 'http'
   | 'plugin'
@@ -410,6 +419,7 @@ export interface OnErrorContext extends PluginContext {
 }
 
 export type PluginHookName =
+  | 'guard'
   | 'onRequestStart'
   | 'onResponseSent'
   | 'onCompileStart'
@@ -433,6 +443,8 @@ export interface RichWindPlugin {
   setupTimeoutMs?: number;
   setup?(context: PluginSetupContext): MaybePromise<void>;
   teardown?(): MaybePromise<void>;
+  /** Runs for HTTP requests only. Return `{ blocked: true }` to stop the request. */
+  guard?(context: PluginGuardContext): MaybePromise<PluginGuardResult | null | undefined>;
   onRequestStart?(context: OnRequestStartContext): MaybePromise<void>;
   onResponseSent?(context: OnResponseSentContext): MaybePromise<void>;
   onCompileStart?(context: OnCompileStartContext): MaybePromise<void>;
