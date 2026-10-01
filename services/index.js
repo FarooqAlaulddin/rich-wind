@@ -861,21 +861,32 @@ async function generateBaseCss() {
 // Standalone export (no cache, no plugins, no project state)
 // =============================================================================
 const CLASS_ATTR_RE = /\sclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+const HTML_ENTITY_RE = /&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi;
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+// Attribute values arrive entity-encoded ("[.dark_&amp;]:p-4"); classes are matched decoded.
+function decodeHtmlEntities(text) {
+    return text.replace(HTML_ENTITY_RE, (match, dec, hex, name) => {
+        if (name) return NAMED_ENTITIES[name.toLowerCase()];
+        const code = dec ? Number(dec) : parseInt(hex, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    });
+}
 
 /**
- * Classes in HTML. `classes` are the scanner's valid candidates (sorted);
- * `rejected` are tokens written in class attributes that compile to nothing.
- * Other scanner words (prose, attribute values) are never reported.
+ * Classes in HTML. `classes` are the scanner's valid candidates plus valid
+ * class-attribute tokens (sorted); `rejected` are class-attribute tokens that
+ * compile to nothing. Other scanner words (prose, attribute values) are never reported.
  */
 export async function scanHtml(html) {
     if (typeof html !== 'string' || html.length === 0) return { classes: [], rejected: [] };
     const written = [];
     for (const match of html.matchAll(CLASS_ATTR_RE)) {
-        written.push(...normalizeClassList(match[1] ?? match[2]));
+        written.push(...normalizeClassList(decodeHtmlEntities(match[1] ?? match[2])));
     }
     const [classes, checked] = await Promise.all([extractClasses(html), validateExplicitClasses(written)]);
     return {
-        classes: Array.from(new Set(classes)).sort(),
+        classes: Array.from(new Set([...classes, ...checked.valid])).sort(),
         rejected: checked.rejected
     };
 }

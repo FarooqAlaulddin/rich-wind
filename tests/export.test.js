@@ -21,6 +21,23 @@ describe('scanHtml', () => {
     expect(rejected).not.toContain('words');
   });
 
+  it('decodes entities in class attributes and compiles those classes', async () => {
+    const html = '<p class="[.theme-dark_&amp;]:text-slate-100 p-4 a&lt;b &#x70;-2">x</p>';
+    const { classes, rejected } = await scanHtml(html);
+    expect(classes).toEqual(expect.arrayContaining(['[.theme-dark_&]:text-slate-100', 'p-2', 'p-4']));
+    expect(rejected).toEqual(['a<b']);
+    const { css } = await exportCss({ html });
+    expect(css).toMatch(/\.theme-dark .*text-slate-100|text-slate-100[\s\S]*\.theme-dark/);
+    const core = await createCore();
+    try {
+      const result = await core.compile({ projectId: 'ent', pageId: 'p', html });
+      expect(result.classes).toContain('[.theme-dark_&]:text-slate-100');
+      expect(result.rejected).toEqual(['a<b']);
+    } finally {
+      await core.close();
+    }
+  });
+
   it('handles empty and non-string input', async () => {
     expect(await scanHtml('')).toEqual({ classes: [], rejected: [] });
     expect(await scanHtml(undefined)).toEqual({ classes: [], rejected: [] });
