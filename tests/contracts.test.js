@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import Ajv from 'ajv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,14 @@ const repoRoot = path.resolve(__dirname, '..');
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function responseValidator(schemaName) {
+  const doc = readJson(path.join(repoRoot, 'docs/openapi.json'));
+  doc.$id = 'https://richwind.dev/openapi.json';
+  const ajv = new Ajv({ strict: false });
+  ajv.addSchema(doc);
+  return ajv.getSchema(`${doc.$id}#/components/schemas/${schemaName}`);
 }
 
 describe('Package contracts', () => {
@@ -50,11 +59,44 @@ describe('Package contracts', () => {
         body: '{'
       });
       expect(malformed.status).toBe(400);
-      expect(await malformed.json()).toMatchObject({ code: 'INVALID_BODY', error: expect.any(String) });
+      const validateError = responseValidator('ErrorResponse');
+      const malformedBody = await malformed.json();
+      expect(validateError(malformedBody), JSON.stringify(validateError.errors)).toBe(true);
+      expect(malformedBody).toMatchObject({ code: 'INVALID_BODY', error: expect.any(String) });
 
       const missing = await fetch(`${baseUrl}/not-a-route`);
       expect(missing.status).toBe(404);
-      expect(await missing.json()).toMatchObject({ code: 'NOT_FOUND', error: expect.any(String) });
+      const missingBody = await missing.json();
+      expect(validateError(missingBody), JSON.stringify(validateError.errors)).toBe(true);
+      expect(missingBody).toMatchObject({ code: 'NOT_FOUND', error: expect.any(String) });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      await close();
+    }
+  });
+
+  it('validates live compile success and payload errors against OpenAPI schemas', async () => {
+    const { createCore } = await import('../services/index.js');
+    const { app, close } = await createCore();
+    const server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const baseUrl = `http://localhost:${server.address().port}`;
+    try {
+      const success = await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'contract', classes: 'p-4' })
+      });
+      const validateSuccess = responseValidator('CompileSuccessResponse');
+      const successBody = await success.json();
+      expect(validateSuccess(successBody), JSON.stringify(validateSuccess.errors)).toBe(true);
+
+      const oversized = await fetch(`${baseUrl}/api/compile`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ projectId: 'contract-too-large', html: 'x'.repeat(60000) })
+      });
+      expect(oversized.status).toBe(413);
+      const validateError = responseValidator('ErrorResponse');
+      expect(validateError(await oversized.json()), JSON.stringify(validateError.errors)).toBe(true);
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();

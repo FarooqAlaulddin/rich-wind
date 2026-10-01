@@ -44,8 +44,8 @@ details, 1.8 as two PRs, and the order around 1.8.
   shape with the first 1.8 PR, addRoute contract with the second) — IN PROGRESS
   2026-09-30: guard types and HTTP-only request-hook reality documented; ctx.compile
   and neutral addRoute contracts remain coupled to 1.8 (#49)
-- [ ] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
-  included; after 1.2 and 1.3, before 1.8 (#50)
+- [x] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
+  included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy (#51)
 - [ ] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
