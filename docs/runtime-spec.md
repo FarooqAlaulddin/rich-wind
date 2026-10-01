@@ -335,7 +335,27 @@ no API key or rate limiter. A plugin guard can block an HTTP request, but direct
 calls intentionally bypass guards because their host has already authorized the call.
 
 When deploying behind a trusted reverse proxy, set `trustProxy` so plugin request hooks
-receive the forwarded client address. Never enable it for untrusted direct clients.
+receive the forwarded client address (`request.ip`). Never enable it for untrusted direct clients.
+
+`trustProxy` follows Express `trust proxy` semantics. It accepts `true` or `false`, a hop
+count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (names
+such as `loopback` and `uniquelocal` also work). With `RW_TRUST_PROXY`, `1` is a hop count
+of 1, not "trust all". When unset, core uses the socket address and ignores
+`X-Forwarded-For`, except when core is mounted in a host that already resolved `req.ip`
+(Express with `trust proxy` set); then core uses the host's `req.ip`. For `core.fetch`,
+`trustProxy` applies to the `ip` you pass, as if it were the socket address. The resolved
+address reaches plugin hooks only.
+
+`true` trusts the leftmost `X-Forwarded-For` entry, which the client controls, so it is
+unsafe on the open internet. Use a hop count equal to the number of proxies you run in front
+of core that each append to `X-Forwarded-For`, or a subnet list.
+
+Example, a Cloudflare Tunnel in front of nginx in front of core. Cloudflare's edge sets
+`X-Forwarded-For` to the client address and cloudflared forwards it to nginx on loopback.
+nginx appends cloudflared's loopback address with `$proxy_add_x_forwarded_for`, and core sees
+nginx's loopback socket. The trusted hops are nginx and cloudflared, so use hop count `2`
+(or `loopback`). The next entry is then the address Cloudflare saw, which is the client.
+Confirm the exact count against the real chain by logging `request.ip` from a known client.
 
 ## Security Headers
 

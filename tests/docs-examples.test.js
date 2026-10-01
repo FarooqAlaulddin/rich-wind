@@ -1,10 +1,11 @@
+import http from "node:http";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import express from "express";
 import crypto from "node:crypto";
-import { createCore } from "../services/index.js";
+import { createCore, RichWindError } from "../services/index.js";
 
-async function startServer(app) {
-  const server = app.listen(0);
+async function startServer(handler) {
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   const { port } = server.address();
   return {
@@ -21,8 +22,8 @@ describe("Docs examples", () => {
   let baseUrl;
 
   beforeAll(async () => {
-    const { app } = await createCore({ config: { rateLimitDisabled: true } });
-    core = await startServer(app);
+    const { handler } = await createCore({ config: { rateLimitDisabled: true } });
+    core = await startServer(handler);
     baseUrl = core.baseUrl;
   });
 
@@ -177,12 +178,12 @@ describe("Docs examples", () => {
   });
 
   it("api-reference library snippet works", async () => {
-    const { app } = await createCore({
+    const { handler } = await createCore({
       config: { cacheTtlMs: 600000, rateLimitDisabled: true },
       pluginTimeoutMs: 200,
       plugins: [],
     });
-    const server = await startServer(app);
+    const server = await startServer(handler);
     try {
       const response = await fetch(`${server.baseUrl}/health`);
       expect(response.status).toBe(200);
@@ -192,7 +193,7 @@ describe("Docs examples", () => {
   });
 
   it("integration cookbook minimal embedded core snippet works", async () => {
-    const { app } = await createCore({
+    const { handler } = await createCore({
       config: {
         cacheMaxPages: 500,
         cacheTtlMs: 10 * 60 * 1000,
@@ -201,7 +202,7 @@ describe("Docs examples", () => {
       },
     });
 
-    const server = await startServer(app);
+    const server = await startServer(handler);
     try {
       const response = await fetch(`${server.baseUrl}/api/compile`, {
         method: "POST",
@@ -221,8 +222,7 @@ describe("Docs examples", () => {
   });
 
   it("integration cookbook wrapper snippet works", async () => {
-    const { app: coreApp } = await createCore({ config: { rateLimitDisabled: true } });
-    const coreServer = await startServer(coreApp);
+    const core = await createCore({ config: { rateLimitDisabled: true } });
 
     const wrapper = express();
     wrapper.use(express.json({ limit: "100kb" }));
@@ -255,17 +255,14 @@ describe("Docs examples", () => {
         bundle: req.body.bundle || "full",
       };
 
-      const upstream = await fetch(`${coreServer.baseUrl}/api/compile`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const body = await upstream.text();
-      res
-        .status(upstream.status)
-        .type(upstream.headers.get("content-type") || "application/json")
-        .send(body);
+      try {
+        res.json(await core.compile(payload));
+      } catch (err) {
+        if (err instanceof RichWindError) {
+          return res.status(err.status).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
     });
 
     const wrapperServer = await startServer(wrapper);
@@ -302,7 +299,50 @@ describe("Docs examples", () => {
       expect(body.pageId).toBe("hero");
     } finally {
       await wrapperServer.close();
-      await coreServer.close();
+      await core.close();
+    }
+  });
+
+  it("api-reference core.fetch basePath and plugin-system addRoute examples work", async () => {
+    const plugin = {
+      name: "docs-routes",
+      setup({ addRoute }) {
+        addRoute("get", "/stats", () => ({ body: { ok: true } }));
+        addRoute("post", "/echo", async (req) => ({ status: 201, body: await req.json() }));
+      },
+    };
+    const fetchCore = await createCore({ plugins: [plugin], config: { rateLimitDisabled: true } });
+    try {
+      const res = await fetchCore.fetch(
+        new Request("http://x/rw/api/compile", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId: "fetch-doc", classes: "p-4" }),
+        }),
+        { basePath: "/rw" }
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+
+      const outside = await fetchCore.fetch(new Request("http://x/other/api/compile"), {
+        basePath: "/rw",
+      });
+      expect(outside.status).toBe(404);
+
+      const stats = await fetchCore.fetch(new Request("http://x/plugins/docs-routes/stats"));
+      expect(await stats.json()).toEqual({ ok: true });
+
+      const echo = await fetchCore.fetch(
+        new Request("http://x/plugins/docs-routes/echo", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ a: 1 }),
+        })
+      );
+      expect(echo.status).toBe(201);
+      expect(await echo.json()).toEqual({ a: 1 });
+    } finally {
+      await fetchCore.close();
     }
   });
 
@@ -354,13 +394,13 @@ describe("Docs examples", () => {
       },
     };
 
-    const { app } = await createCore({
+    const { handler } = await createCore({
       config: { rateLimitDisabled: true },
       plugins: [plugin],
       pluginTimeoutMs: 200,
     });
 
-    const server = await startServer(app);
+    const server = await startServer(handler);
     try {
       const compile = await fetch(`${server.baseUrl}/api/compile`, {
         method: "POST",

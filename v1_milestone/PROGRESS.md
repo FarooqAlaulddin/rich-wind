@@ -39,24 +39,39 @@ details, 1.8 as two PRs, and the order around 1.8.
   openapi error schema — DONE 2026-09-30 (#46)
 - [x] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) — DONE 2026-09-30 (#47)
 - [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#48)
-- [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
-  shape with the first 1.8 PR, addRoute contract with the second) — IN PROGRESS
+- [x] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
+  shape with the first 1.8 PR, addRoute contract with the second) — DONE 2026-10-01
   2026-09-30: guard types and HTTP-only request-hook reality documented. 2026-10-01:
   ctx.compile contract documented with 1.8a (result shape, RichWindError, chain depth
-  500 INTERNAL); the neutral addRoute contract remains, with 1.8b (#49)
+  500 INTERNAL); neutral addRoute contract (request in, { status, headers, body } out)
+  documented and typed with 1.8b (#49)
 - [x] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
   included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy (#51)
-- [ ] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
+- [x] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
   shares core.compile; (b) drop Express, core.handler, core.fetch with basePath,
-  neutral plugin routes, client identity via proxy-addr (absorbs 2.7) — IN PROGRESS
+  neutral plugin routes, client identity via proxy-addr (absorbs 2.7) — DONE 2026-10-01
   2026-10-01: (a) DONE: core.compile/getCss/getProjectCss/invalidate/suggest own input
   validation and throw RichWindError; the Express routes call them; ctx.compile shares
   core.compile (chain depth is 500 INTERNAL); auto-promote uses try/catch; GET /api/css,
   GET /api/projects/:projectId/css, /api/invalidate and /api/suggest 400s now carry
   MISSING_INPUT/INVALID_ID instead of the INVALID_BODY fallback; tests in
-  core-functions.test.js. (b) transport not started (#81)
+  core-functions.test.js. (b) DONE: createCore returns { handler, fetch, ... } (no
+  `app`); one internal router behind core.handler (node:http, Express mount via
+  req.url) and core.fetch (Web Request/Response, basePath, ip option); exact
+  case-sensitive paths, HEAD on GET routes, envelope 404 for unknown paths/methods,
+  INVALID_ID on bad percent-encoding, explicit loader ETags, no weak JSON ETags; guard
+  before body read, 415/413 (Connection: close)/400 body rules incl. chunked cap,
+  length mismatch and fatal UTF-8; 500 INTERNAL + onError for unexpected errors (fixes
+  plugin route exceptions surfacing as 400 INVALID_BODY); neutral plugin routes, both
+  auto-promote routes ported; trustProxy via proxy-addr (boolean, hop count, subnet
+  list; RW_TRUST_PROXY=1 is now hop count 1), host-resolved req.ip used when unset;
+  express moved to devDependencies, proxy-addr added; index.d.ts no longer imports
+  express; tests migrated to http.createServer(core.handler), new
+  tests/transport.test.js; lexical-demo dev server mounts core.handler in an Express
+  host. Deploy note for 6.0: an out-of-repo startup script that uses `core.app` breaks
+  on the first post-1.8 release, and the VM's RW_TRUST_PROXY=1 now means one hop (#81)
 
 ## Phase 2 — Core hardening
 

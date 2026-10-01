@@ -1,3 +1,4 @@
+import http from 'node:http';
 import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { createCore } from '../services/index.js';
@@ -85,8 +86,8 @@ function createSharedStore() {
 }
 
 async function startCore(options = {}) {
-  const { app, close } = await createCore(options);
-  const server = app.listen(0);
+  const { handler, close } = await createCore(options);
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   return {
@@ -341,12 +342,12 @@ describe('Node role behavior (single writer, many readers)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       cacheStore,
       config: { nodeRole: 'reader', rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
     const baseUrl = `http://localhost:${port}`;
@@ -384,12 +385,12 @@ describe('Node role behavior (single writer, many readers)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       cacheStore,
       config: { nodeRole: 'reader', rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
     const baseUrl = `http://localhost:${port}`;
@@ -418,8 +419,9 @@ describe('Node role behavior (single writer, many readers)', () => {
     const mutationProbePlugin = {
       name: 'mutation-probe',
       setup(ctx) {
-        ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req, res) => {
+        ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req) => {
           const { projectId, pageId } = req.params;
+          const reqBody = await req.json().catch(() => ({}));
           const writeOk = await ctx.storage.set('probe', { enabled: true });
           let compileStatus = 200;
           let compileCode = null;
@@ -427,14 +429,14 @@ describe('Node role behavior (single writer, many readers)', () => {
             await ctx.compile({
               projectId,
               pageId,
-              classes: req.body?.classes || 'text-red-500'
+              classes: reqBody?.classes || 'text-red-500'
             });
           } catch (err) {
             compileStatus = err.status;
             compileCode = err.code;
           }
           const purgeOk = await ctx.purgePage(projectId, pageId);
-          return res.json({ writeOk, purgeOk, compileStatus, compileCode });
+          return { body: { writeOk, purgeOk, compileStatus, compileCode } };
         });
       },
       onError(info) {

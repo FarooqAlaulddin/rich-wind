@@ -6,12 +6,13 @@ Machine-readable contract: [`openapi.json`](openapi.json)
 
 ## createCore()
 
-Everything starts here. `createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function.
+Everything starts here. `createCore()` is async and returns `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`. Express is not a runtime dependency.
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 
-const { app, close } = await createCore({
+const core = await createCore({
   config: {
     cacheTtlMs: 10 * 60 * 1000,
     cacheMaxPages: 500,
@@ -23,10 +24,66 @@ const { app, close } = await createCore({
   cacheStoreTimeoutMs: 150,
 });
 
-app.listen(3001);
+http.createServer(core.handler).listen(3001);
 ```
 
 The `config` object controls cache sizes, timeouts, and rate limits. `plugins`, `cacheStore`, and their timeout options are top-level. See [Configuration](#configuration) for the full table.
+
+### core.handler(req, res)
+
+A Node request listener. Use it standalone or mount it in a Node host.
+
+```js
+import http from "node:http";
+
+const server = http.createServer(core.handler);
+server.listen(3001);
+```
+
+```js
+// Express host: Express rewrites req.url under the mount, and core routes relative to it
+app.use("/rw", core.handler);
+```
+
+If the host already ran `express.json()`, core uses the parsed `req.body`. A Node-style host that does not rewrite `req.url` must strip its prefix from `req.url` before calling `core.handler`.
+
+### core.fetch(request, { ip, basePath })
+
+Takes a Web `Request` and returns a `Promise<Response>`. Use it from Next.js App Router, Hono, and other Fetch-style hosts. The same routes, validation, and error contract apply as with `core.handler`.
+
+| Option | Description |
+| --- | --- |
+| `ip` | Client address. A `Request` carries none, so pass it yourself. Without it, plugin hooks see `request.ip` as `"unknown"`. `trustProxy` applies to this value as if it were the socket address. |
+| `basePath` | Prefix stripped before routing. A path outside it answers `404 NOT_FOUND`. |
+
+```js
+// Next.js: app/rw/[...path]/route.js
+import { core } from "@/lib/rich-wind";
+
+export const GET = (req) => core.fetch(req, { basePath: "/rw" });
+export const POST = GET;
+export const HEAD = GET;
+export const OPTIONS = GET;
+```
+
+Next.js does not provide a portable client IP. If you run behind a trusted proxy, derive the address from the header it sets and pass it as `ip`. Bun and Deno are not supported targets. Edge runtimes cannot load `@tailwindcss/oxide`, which is a native addon, so run these handlers on the Node.js runtime.
+
+### Other functions
+
+`core.compile`, `core.getCss`, `core.getProjectCss`, `core.invalidate`, and `core.suggest` call the core without HTTP. They take the same fields as the matching endpoints and bypass plugin guards, because the caller has already authorized the call. `core.close()` tears down plugins and is idempotent.
+
+### HTTP surface
+
+- Paths are exact and case-sensitive, with no trailing slash.
+- `HEAD` is answered on every `GET` route.
+- Every non-2xx response is `{ "error": "...", "code": "..." }`. Unknown paths and unknown methods answer `404 NOT_FOUND`.
+- A bad percent-encoding in `:projectId` answers `400 INVALID_ID`.
+- `/richwind-loader.js` and `/richwind-reload.js` carry an `ETag` and `Cache-Control: public, max-age=3600`, and answer `304` to a matching `If-None-Match`. JSON responses carry no `ETag`.
+- The plugin guard runs before the body is read.
+- `POST /api/*` must be `application/json` without a `Content-Encoding`, otherwise `415`.
+- A `Content-Length` over `maxBodyBytes` is refused before reading. Chunked bodies are capped while reading. A `413` response sends `Connection: close`.
+- A length mismatch, invalid UTF-8, malformed JSON, or a body that is not a JSON object answers `400 INVALID_BODY`.
+- An unexpected handler error answers `500 INTERNAL`, reaches the `onError` hook, and never includes a stack trace.
 
 ---
 
@@ -282,7 +339,7 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `rateLimitWindowMs` | `RW_RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in ms |
 | `rateLimitMax` | `RW_RATE_LIMIT_MAX` | `60` | Max requests per IP per window |
 | `rateLimitDisabled` | `RW_RATE_LIMIT_DISABLED` | `false` | Disable rate limiting entirely |
-| `trustProxy` | `RW_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for IP detection |
+| `trustProxy` | `RW_TRUST_PROXY` | unset | Express `trust proxy` semantics: `true`/`false`, a hop count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (`loopback`, `uniquelocal` also accepted). Unset uses the socket address and ignores `X-Forwarded-For`. `RW_TRUST_PROXY=1` is hop count 1, not "trust all". See [Runtime Spec](runtime-spec.html#threat-model-and-enforcement-boundary) |
 | `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
 | `corsOrigin` | `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
 
@@ -297,7 +354,7 @@ These options live outside `config` — they're top-level arguments to `createCo
 | `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](runtime-spec.html#cachestore), including optional `deletePageArtifact`/`deleteProjectArtifact`/`deleteProjectPageArtifacts` for purge mutations) |
 | `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation |
 
-`PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you call `app.listen()` yourself.
+`PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you create the server yourself, for example `http.createServer(core.handler)`.
 
 For single-writer deployments, use this split:
 - `writer` nodes: accept compile and other writes

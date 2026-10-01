@@ -1,9 +1,10 @@
+import http from 'node:http';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore, RichWindError } from '../services/index.js';
 
 async function startCore(options = {}) {
   const core = await createCore({ config: { rateLimitDisabled: true }, ...options });
-  const server = core.app.listen(0);
+  const server = http.createServer(core.handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const baseUrl = `http://localhost:${server.address().port}`;
   const stop = async () => {

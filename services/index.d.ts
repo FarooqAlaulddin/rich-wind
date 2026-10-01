@@ -1,4 +1,4 @@
-import type { Express, RequestHandler } from 'express';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -40,7 +40,8 @@ export interface CoreConfig {
   rateLimitWindowMs: number;
   rateLimitMax: number;
   rateLimitDisabled: boolean;
-  trustProxy: boolean;
+  /** null when unset; a boolean, a hop count, or trusted addresses/subnets. */
+  trustProxy: TrustProxySetting | null;
   cacheMaxPages: number;
   cacheTtlMs: number;
   projectCacheTtlMs: number;
@@ -60,7 +61,7 @@ export interface CoreConfigInput {
   rateLimitWindowMs?: number | string;
   rateLimitMax?: number | string;
   rateLimitDisabled?: boolean | string;
-  trustProxy?: boolean | string;
+  trustProxy?: TrustProxySetting | string;
   cacheMaxPages?: number | string;
   cacheTtlMs?: number | string;
   projectCacheTtlMs?: number | string;
@@ -335,11 +336,45 @@ export interface PluginStorage {
   list(prefix?: string): Promise<string[]>;
 }
 
+export type TrustProxySetting = boolean | number | string[];
+
+/** The request a plugin route handler receives, under either adapter. */
+export interface PluginRouteRequest {
+  method: string;
+  path: string;
+  params: Record<string, string>;
+  query: URLSearchParams;
+  headers: { get(name: string): string | null };
+  ip: string;
+  /** Body parsed as JSON, capped at maxBodyBytes; throws RichWindError 400/413. */
+  json(): Promise<unknown>;
+  /** Body as UTF-8 text, capped at maxBodyBytes; throws RichWindError 400/413. */
+  text(): Promise<string>;
+}
+
+/** A plain object or array body is sent as JSON. */
+export interface PluginRouteResponse {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | object | null;
+}
+
+export type PluginRouteHandler = (
+  request: PluginRouteRequest
+) => MaybePromise<PluginRouteResponse | null | undefined>;
+
+export interface FetchOptions {
+  /** Client address; the Fetch API carries none. trustProxy applies to it. */
+  ip?: string;
+  /** Prefix stripped before routing; paths outside it answer 404 NOT_FOUND. */
+  basePath?: string;
+}
+
 export interface PluginSetupContext extends PluginContext {
   addRoute(
     method: PluginRouteMethod,
     routePath: string,
-    handler: RequestHandler
+    handler: PluginRouteHandler
   ): void;
   storage: PluginStorage;
 }
@@ -527,7 +562,10 @@ export interface CreateCoreOptions {
 }
 
 export interface RichWindCore {
-  app: Express;
+  /** Node-style handler: http.createServer(core.handler) or app.use('/rw', core.handler). */
+  handler(req: IncomingMessage, res: ServerResponse, next?: (err?: unknown) => void): void;
+  /** Fetch-style handler for Next.js App Router, Hono and similar hosts. */
+  fetch(request: Request, options?: FetchOptions): Promise<Response>;
   /** Each function returns its route's 200 body and throws `RichWindError` on failure. */
   compile(input: CompileInput): Promise<CompileSuccessResult>;
   getCss(input: GetCssInput): Promise<CssResult>;

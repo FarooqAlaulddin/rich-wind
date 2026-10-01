@@ -35,10 +35,12 @@ npm install rich-wind
 Create an HTTP service in your app:
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 
-const { app, close } = await createCore();
-const server = app.listen(3001, () => {
+const core = await createCore();
+const server = http.createServer(core.handler);
+server.listen(3001, () => {
   console.log("Rich Wind running on http://localhost:3001");
 });
 ```
@@ -89,7 +91,7 @@ Key environment variables:
 | `RW_CACHE_TTL_MS` | `600000` | Page cache TTL (ms) |
 | `RW_NODE_ROLE` | `hybrid` | Replica role |
 | `RW_CORS_ORIGIN` | unset | CORS allowlist |
-| `RW_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` |
+| `RW_TRUST_PROXY` | unset | Trusted proxy hops or addresses for client IP detection (`1` is a hop count) |
 
 ## Docs
 

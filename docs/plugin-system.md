@@ -3,9 +3,10 @@
 Plugins extend Rich Wind with custom behavior — log requests, transform CSS, enforce class allowlists, serve CSS from Redis, register admin endpoints. A plugin is an object with hook methods and an optional `setup()` lifecycle function. You pass plugins to `createCore()` and they're called automatically at the right moments.
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 
-const { app, close } = await createCore({
+const core = await createCore({
   plugins: [{
     name: "logger",
     onCompileResult({ projectId, pageId, classes, cached }) {
@@ -14,7 +15,7 @@ const { app, close } = await createCore({
   }]
 });
 
-app.listen(3001);
+http.createServer(core.handler).listen(3001);
 ```
 
 You only implement the hooks you care about. If a plugin doesn't have a method for a particular hook, it's skipped.
@@ -32,9 +33,7 @@ const dashboard = {
   name: "dashboard",
   async setup({ addRoute, getCacheStats, compile }) {
     // Register a custom endpoint
-    addRoute("get", "/stats", (req, res) => {
-      res.json(getCacheStats());
-    });
+    addRoute("get", "/stats", () => ({ body: getCacheStats() }));
 
     // Warm the cache on startup
     await compile({ projectId: "main", pageId: "home", classes: "text-red-500 p-4" });
@@ -53,15 +52,16 @@ Called when `close()` is invoked. Plugins are torn down in reverse order (last r
 
 ### Shutdown
 
-`createCore()` returns `{ app, close }`. The correct shutdown sequence:
+`createCore()` returns `{ handler, fetch, ..., close }`. The correct shutdown sequence:
 
 ```js
-const { app, close } = await createCore({ plugins: [myPlugin] });
-const server = app.listen(3001);
+const core = await createCore({ plugins: [myPlugin] });
+const server = http.createServer(core.handler);
+server.listen(3001);
 
 // On shutdown:
 await new Promise(resolve => server.close(resolve));  // 1. stop accepting requests
-await close();                                         // 2. teardown plugins
+await core.close();                                    // 2. teardown plugins
 ```
 
 `close()` is idempotent — calling it multiple times is safe.
@@ -169,19 +169,46 @@ function createAnalyticsPlugin() {
 
 ### Route Registration
 
-`addRoute(method, path, handler)` registers an Express route under `/plugins/<plugin-name>/`. Only available during `setup()`.
+`addRoute(method, path, handler)` registers a route under `/plugins/<plugin-name>/`. Only available during `setup()`. Route `"/"` is served at `/plugins/<plugin-name>`.
 
 ```js
-setup({ addRoute }) {
-  addRoute("get", "/stats", (req, res) => res.json({ ok: true }));
+setup({ addRoute, getCacheStats }) {
+  addRoute("get", "/stats", () => ({ body: getCacheStats() }));
   // Accessible at: GET /plugins/my-plugin/stats
+
+  addRoute("post", "/echo", async (req) => ({ status: 201, body: await req.json() }));
 }
 ```
 
 - `method` must be `get`, `post`, `put`, `delete`, or `patch`
-- `path` must start with `/`
+- `path` must start with `/` and may use `:param` segments
 - Calling `addRoute` after `setup()` returns throws an error
-- Plugin routes go through the same rate limiter as core routes
+- The same handler runs under `core.handler` and `core.fetch`
+
+The handler receives a neutral request object, not Express `req`/`res`:
+
+| Field | Description |
+| --- | --- |
+| `method` | HTTP method |
+| `path` | Request path |
+| `params` | Values for `:param` segments |
+| `query` | A `URLSearchParams` |
+| `headers.get(name)` | Header lookup, or `null` |
+| `ip` | Client address (see `trustProxy`) |
+| `json()` | Async. Parses the body as JSON. |
+| `text()` | Async. Reads the body as UTF-8 text. |
+
+`json()` and `text()` are capped at `maxBodyBytes` and throw a `RichWindError` with status 400 or 413.
+
+The handler returns `{ status, headers, body }`:
+
+- `status` defaults to `200`
+- an object or array `body` is sent as JSON
+- a string `body` is sent as `text/plain` unless you set `Content-Type` in `headers`
+- returning nothing answers `204`
+- an error body `{ error }` at status 400 or above without a `code` gets the default code for that status
+
+A thrown `RichWindError` keeps its status and code. Any other thrown error answers `500 INTERNAL` and reaches `onError` with `stage: "plugin-route"`.
 
 ## Request Lifecycle
 
@@ -406,15 +433,16 @@ The repository includes an auto-promote reference plugin used by tests and examp
 For the first pre-release, built-in plugin exports are not part of the public package contract. Treat this as reference code to copy or adapt until plugin exports are stabilized.
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote";
 
-const { app, close } = await createCore({
+const core = await createCore({
   plugins: [createAutoPromotePlugin({ threshold: 5 })],
   maxPluginCompileChainDepth: 3
 });
 
-app.listen(3001);
+http.createServer(core.handler).listen(3001);
 // GET /plugins/auto-promote/css/:projectId  → promoted CSS bundle
 // GET /plugins/auto-promote/stats            → usage statistics
 ```

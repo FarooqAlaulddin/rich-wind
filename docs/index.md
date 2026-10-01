@@ -59,10 +59,12 @@ npm install rich-wind
 Create an HTTP service in your app:
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 
-const { app, close } = await createCore();
-const server = app.listen(3001, () => {
+const core = await createCore();
+const server = http.createServer(core.handler);
+server.listen(3001, () => {
   console.log("Rich Wind running on http://localhost:3001");
 });
 ```
@@ -81,7 +83,7 @@ curl -X POST http://localhost:3001/api/compile \
 
 The response includes the compiled CSS, the list of classes found, and a content hash you can use for cache invalidation on your end.
 
-`createCore()` is async and returns `{ app, close }` — a standard Express app and a shutdown function. You can mount it, add middleware, or pass configuration to control cache sizes, rate limits, and timeouts.
+`createCore()` is async and returns `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`. `handler` is a plain Node request listener: pass it to `http.createServer()` or mount it in Express with `app.use("/rw", core.handler)`. `fetch` takes a Web `Request` and returns a `Response`, for Next.js App Router, Hono, and other Fetch-style hosts. The remaining functions call the core directly without HTTP. Express is not a dependency of Rich Wind.
 
 ## Bundles
 

@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { createCore } from '../services/index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,8 +128,8 @@ function randomClasses(classPool, min = 2, max = 5) {
 }
 
 async function startCoreInstance(options = {}) {
-  const { app, close } = await createCore(options);
-  const server = app.listen(0);
+  const { handler, close } = await createCore(options);
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   return {

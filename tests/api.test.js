@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 import { createTestServer } from './helpers/createTestServer.js';
@@ -6,8 +7,8 @@ let server;
 let baseUrl;
 
 beforeAll(async () => {
-  const { app } = await createCore();
-  server = app.listen(0);
+  const { handler } = await createCore();
+  server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   baseUrl = `http://localhost:${port}`;

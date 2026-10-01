@@ -1,3 +1,4 @@
+import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,8 +48,8 @@ describe('Package contracts', () => {
 
   it('uses the closed error envelope for malformed requests and missing routes', async () => {
     const { createCore } = await import('../services/index.js');
-    const { app, close } = await createCore();
-    const server = app.listen(0);
+    const { handler, close } = await createCore();
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const baseUrl = `http://localhost:${server.address().port}`;
 
@@ -77,8 +78,8 @@ describe('Package contracts', () => {
 
   it('validates live compile success and payload errors against OpenAPI schemas', async () => {
     const { createCore } = await import('../services/index.js');
-    const { app, close } = await createCore();
-    const server = app.listen(0);
+    const { handler, close } = await createCore();
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const baseUrl = `http://localhost:${server.address().port}`;
     try {

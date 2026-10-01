@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs';
 import os from 'node:os';
@@ -42,8 +43,8 @@ if (typeof createAutoPromotePlugin !== 'function' || typeof createFsCacheStore !
   throw new Error('Plugin subpath exports are unavailable.');
 }
 
-const { app, close } = await createCore({ config: { rateLimitDisabled: true } });
-const server = app.listen(0);
+const { handler, close } = await createCore({ config: { rateLimitDisabled: true } });
+const server = http.createServer(handler).listen(0);
 await new Promise((resolve) => server.once('listening', resolve));
 const { port } = server.address();
 

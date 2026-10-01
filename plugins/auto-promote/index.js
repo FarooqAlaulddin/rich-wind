@@ -264,23 +264,26 @@ export function createAutoPromotePlugin(options = {}) {
       }
 
       // Custom routes
-      context.addRoute('get', '/css/:projectId', (req, res) => {
+      context.addRoute('get', '/css/:projectId', (req) => {
         const { projectId } = req.params;
         const css = promotedCssCache.get(projectId);
-        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+        const headers = {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cross-Origin-Resource-Policy': 'cross-origin',
+          'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400'
+        };
         if (!css) {
-          return res.type('text/css').send('');
+          return { status: 200, headers, body: '' };
         }
         const etag = `"${crypto.createHash('sha1').update(css).digest('hex').slice(0, 16)}"`;
-        res.setHeader('ETag', etag);
-        if (req.headers['if-none-match'] === etag) {
-          return res.status(304).end();
+        headers.ETag = etag;
+        if (req.headers.get('if-none-match') === etag) {
+          return { status: 304, headers, body: null };
         }
-        res.type('text/css').send(css);
+        return { status: 200, headers, body: css };
       });
 
-      context.addRoute('get', '/stats', (_req, res) => {
+      context.addRoute('get', '/stats', () => {
         const stats = {};
         for (const [projectId, map] of classPageMap) {
           const promotedSet = promoted.get(projectId) || new Set();
@@ -291,7 +294,7 @@ export function createAutoPromotePlugin(options = {}) {
             threshold
           };
         }
-        res.json(stats);
+        return { status: 200, body: stats };
       });
     },
 

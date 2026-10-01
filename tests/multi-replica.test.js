@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect } from 'vitest';
 import { createCore } from '../services/index.js';
 
@@ -137,15 +138,15 @@ function createSharedCounterPlugin() {
   return {
     name: 'shared-counter',
     setup(ctx) {
-      ctx.addRoute('post', '/increment', async (_req, res) => {
+      ctx.addRoute('post', '/increment', async (_req) => {
         const current = Number(await ctx.storage.get('count')) || 0;
         const next = current + 1;
         await ctx.storage.set('count', next);
-        return res.json({ count: next });
+        return { body: { count: next } };
       });
-      ctx.addRoute('get', '/value', async (_req, res) => {
+      ctx.addRoute('get', '/value', async (_req) => {
         const current = Number(await ctx.storage.get('count')) || 0;
-        return res.json({ count: current });
+        return { body: { count: current } };
       });
     }
   };
@@ -155,24 +156,25 @@ function createSharedKvPlugin() {
   return {
     name: 'shared-kv',
     setup(ctx) {
-      ctx.addRoute('post', '/kv/:key', async (req, res) => {
+      ctx.addRoute('post', '/kv/:key', async (req) => {
         const { key } = req.params;
-        const hasValue = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'value');
-        const value = hasValue ? req.body.value : true;
+        const reqBody = await req.json();
+        const hasValue = Object.prototype.hasOwnProperty.call(reqBody ?? {}, 'value');
+        const value = hasValue ? reqBody.value : true;
         const ok = await ctx.storage.set(key, value);
-        return res.json({ ok, value });
+        return { body: { ok, value } };
       });
 
-      ctx.addRoute('get', '/kv/:key', async (req, res) => {
+      ctx.addRoute('get', '/kv/:key', async (req) => {
         const { key } = req.params;
         const value = await ctx.storage.get(key);
-        return res.json({ exists: value !== null, value });
+        return { body: { exists: value !== null, value } };
       });
 
-      ctx.addRoute('delete', '/kv/:key', async (req, res) => {
+      ctx.addRoute('delete', '/kv/:key', async (req) => {
         const { key } = req.params;
         const ok = await ctx.storage.delete(key);
-        return res.json({ ok });
+        return { body: { ok } };
       });
     }
   };
@@ -189,14 +191,14 @@ function createRestoreProbePlugin() {
         localCount = snapshot.count;
       }
 
-      ctx.addRoute('post', '/bump', async (_req, res) => {
+      ctx.addRoute('post', '/bump', async (_req) => {
         localCount += 1;
         await ctx.storage.set('snapshot_v1', { count: localCount });
-        return res.json({ count: localCount });
+        return { body: { count: localCount } };
       });
 
-      ctx.addRoute('get', '/state', (_req, res) => {
-        return res.json({ count: localCount });
+      ctx.addRoute('get', '/state', (_req) => {
+        return { body: { count: localCount } };
       });
     }
   };
@@ -206,23 +208,23 @@ function createPurgeBridgePlugin() {
   return {
     name: 'purge-bridge',
     setup(ctx) {
-      ctx.addRoute('post', '/page/:projectId/:pageId/purge', async (req, res) => {
+      ctx.addRoute('post', '/page/:projectId/:pageId/purge', async (req) => {
         const { projectId, pageId } = req.params;
         const ok = await ctx.purgePage(projectId, pageId);
-        return res.json({ ok });
+        return { body: { ok } };
       });
 
-      ctx.addRoute('post', '/project/:projectId/purge', async (req, res) => {
+      ctx.addRoute('post', '/project/:projectId/purge', async (req) => {
         const { projectId } = req.params;
         const ok = await ctx.purgeProject(projectId);
-        return res.json({ ok });
+        return { body: { ok } };
       });
     }
   };
 }
 
 async function startReplica({ cacheStore, plugins = [], config = {}, ...rest } = {}) {
-  const { app, close } = await createCore({
+  const { handler, close } = await createCore({
     cacheStore,
     plugins,
     config: {
@@ -232,7 +234,7 @@ async function startReplica({ cacheStore, plugins = [], config = {}, ...rest } =
     ...rest
   });
 
-  const server = app.listen(0);
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
 
