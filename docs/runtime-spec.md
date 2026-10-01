@@ -14,7 +14,7 @@ When a request hits `/api/compile`, Rich Wind goes through these steps:
 
 **Hashing.** The sorted class list is joined with `|` and hashed with SHA-256. This hash is the cache key — two requests with the same set of classes will always produce the same hash, regardless of the order they were sent in.
 
-**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system is loaded once at startup and reused for all requests.
+**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system loads lazily on first use and is then reused for all requests.
 
 ## Cache
 

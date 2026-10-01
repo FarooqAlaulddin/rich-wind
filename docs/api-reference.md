@@ -104,6 +104,8 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 This endpoint only reads from cache — it doesn't compile anything. If the page hasn't
 been compiled yet (or its cache has expired), it returns `404 NOT_FOUND` with the JSON
 error envelope. A browser stylesheet link may log that 404; no stylesheet is applied.
+When the page is cached but the requested `theme` or `utilities` bundle has not yet
+been materialized, Rich Wind derives that bundle from the cached class set and stores it.
 
 Responses include an `ETag` (derived from the page's class hash) and `Cache-Control: no-cache`. Send `If-None-Match` with the ETag to receive a `304 Not Modified` when the CSS hasn't changed.
 
@@ -271,7 +273,7 @@ Every config option can be set in JavaScript (via `createCore({ config: { ... } 
 | `maxClassChars` | `RW_MAX_CLASS_CHARS` | `10000` | Max length of the `classes` field (when string) |
 | `maxClassCount` | `RW_MAX_CLASS_COUNT` | `1500` | Max number of resolved classes per compile |
 | `maxIdLength` | `RW_MAX_ID_LENGTH` | `64` | Max length of `projectId` and `pageId` |
-| `maxCssChars` | `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts |
+| `maxCssChars` | `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts, transforms, and resolve hooks |
 | `cacheMaxPages` | `RW_CACHE_MAX_PAGES` | `200` | Max total pages held in memory across all projects |
 | `cacheTtlMs` | `RW_CACHE_TTL_MS` | `600000` | Page cache TTL in ms (sliding — resets on access) |
 | `projectCacheTtlMs` | `RW_PROJECT_CACHE_TTL_MS` | `600000` | Project aggregate cache TTL in ms |

@@ -394,7 +394,7 @@ For the first pre-release, built-in plugin exports are not part of the public pa
 
 ```js
 import { createCore } from "rich-wind";
-import { createAutoPromotePlugin } from "./plugins/auto-promote/index.js";
+import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote";
 
 const { app, close } = await createCore({
   plugins: [createAutoPromotePlugin({ threshold: 5 })],
@@ -409,9 +409,9 @@ app.listen(3001);
 **How it works:**
 
 1. **`setup()`** seeds tracking state from any pages already in cache, and registers two custom routes (promoted CSS bundle, usage stats).
-2. **`transformClasses`** runs on every compile. It records which classes appear on which pages (before stripping), then removes promoted classes from the output so per-page CSS only contains unique utilities. If *all* classes would be stripped, it returns `undefined` to keep the original list (avoiding a 400 error).
+2. **`transformClasses`** runs on every compile. It records which classes appear on which pages (before stripping), then removes promoted classes from the output so per-page CSS only contains unique utilities. If all classes would be stripped, it returns `[]` and the core keeps the original list, avoiding a 400 error.
 3. **`onCompileResult`** (deferred) recalculates the promoted set after each compile. When the set changes, it calls `ctx.compile()` to pre-generate CSS for a synthetic `__auto_promote__` page, caching the result for the custom route.
 
 The plugin uses `deferHooks: ["onCompileResult"]` so the promoted-CSS regeneration happens asynchronously and doesn't slow down the HTTP response. The synthetic `__auto_promote__` page ID is excluded from stripping logic, so the promoted CSS compile always receives the full class list.
 
-See `plugins/auto-promote/index.js` for the full implementation and `tests/auto-promote.test.js` for test coverage.
+See `plugins/auto-promote/index.js` for the full implementation and `plugins/auto-promote/auto-promote.test.js` for test coverage.

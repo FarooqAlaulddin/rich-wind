@@ -86,7 +86,7 @@ details, 1.8 as two PRs, and the order around 1.8.
   package description (#62)
 - [ ] 4.2 Agent quickstart (explicit classes + rejected feedback loop) +
   docs-examples test (#63)
-- [ ] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) (#64)
+- [x] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) — DONE 2026-09-30 (#64)
 - [ ] 4.4 api-reference: error enum, rejected, core vs host enforcement; Pages render
   check (#65)
 
