@@ -67,9 +67,30 @@ export const OPTIONS = GET;
 
 Next.js does not provide a portable client IP. If you run behind a trusted proxy, derive the address from the header it sets and pass it as `ip`. Bun and Deno are not supported targets. Edge runtimes cannot load `@tailwindcss/oxide`, which is a native addon, so run these handlers on the Node.js runtime.
 
-### Other functions
+### Functions
 
-`core.compile`, `core.getCss`, `core.getProjectCss`, `core.invalidate`, and `core.suggest` call the core without HTTP. They take the same fields as the matching endpoints and bypass plugin guards, because the caller has already authorized the call. `core.close()` tears down plugins and is idempotent.
+Each function takes the same fields as its route and returns the route's 200 body. They throw `RichWindError` with the status, code and message the route would send. The plugin guard runs on HTTP requests only, not on direct calls.
+
+| Function | Route | Returns |
+| --- | --- | --- |
+| `core.compile(input)` | `POST /api/compile` | the compile response body, including `rejected` |
+| `core.getCss({ projectId, pageId?, bundle? })` | `GET /api/css` | `{ css, etag }` (`etag` unquoted, or `null`) |
+| `core.getProjectCss({ projectId, bundle? })` | `GET /api/projects/:projectId/css` | `{ css, etag }` |
+| `core.invalidate({ projectId, pageId? })` | `POST /api/invalidate` | `{ invalidated, projectId, pageId? }` |
+| `core.suggest(input)` | `POST /api/suggest` | the suggest response body |
+| `core.close()` | none | `Promise<void>`; tears down plugins, idempotent |
+
+`RichWindError extends Error` and has `status` (HTTP status), `code` (one of the [error codes](#errors)), and `message`.
+
+```js
+import { RichWindError } from "rich-wind";
+
+try {
+  await core.compile({ projectId: "my-app" });
+} catch (err) {
+  if (err instanceof RichWindError) console.log(err.status, err.code); // 400 MISSING_INPUT
+}
+```
 
 ### HTTP surface
 
@@ -125,26 +146,9 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 - `hash` — SHA-256 of the sorted class list. Same classes always produce the same hash.
 - `cached` — `true` if this result came from cache without recompilation.
 - `classes` — the validated, sorted list of classes that were actually compiled.
-- `rejected` — normalized tokens supplied through `classes` that Tailwind rejected or
-  that Rich Wind did not pass to the compiler because they are unsafe. HTML scanner
-  candidates are intentionally not included.
+- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input that Tailwind could not compile or that Rich Wind withheld as unsafe. Tokens found by scanning `html` are never listed. Always an array: `[]` when nothing was rejected, for `html`-only input, and for the `base` bundle.
 
-**Errors:**
-
-Every non-success response is JSON in the form `{ "error": string, "code": string }`.
-`code` is one of `INVALID_ID`, `MISSING_INPUT`, `INVALID_BODY`,
-`UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `READ_ONLY_REPLICA`,
-`RATE_LIMITED`, `SERVER_BUSY`, `UNAUTHORIZED`, `FORBIDDEN`, `REQUEST_BLOCKED`,
-`NOT_FOUND`, or `INTERNAL`.
-
-| Status | Cause |
-| --- | --- |
-| `400` | Missing `projectId`, invalid ID format, or no valid classes found |
-| `409` | Replica is configured as `nodeRole: "reader"` (`READ_ONLY_REPLICA`) |
-| `413` | HTML too large, class string too large, class count exceeds limit, or JSON body too large |
-| `429` | Returned only when a plugin guard blocks the request (`RATE_LIMITED`); core has no built-in limiter. A guard may set a `Retry-After` header |
-| `500` | Unexpected internal error |
-| `503` | Every compile slot is in use (`SERVER_BUSY`). Sent with `Retry-After: 1`. See [Compile concurrency](#compile-concurrency) |
+Errors: see [Errors](#errors).
 
 ---
 
@@ -164,7 +168,7 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 | `pageId` | no | Defaults to `"default"` |
 | `bundle` | no | Same normalization as compile |
 
-This endpoint only reads from cache — it doesn't compile anything. If the page hasn't
+This endpoint serves cached CSS and never compiles new classes. If the page hasn't
 been compiled yet (or its cache has expired), it returns `404 NOT_FOUND` with the JSON
 error envelope. A browser stylesheet link may log that 404; no stylesheet is applied.
 When the page is cached but the requested `theme` or `utilities` bundle has not yet
@@ -322,6 +326,41 @@ Supported attributes:
 ## GET /health
 
 Returns `{ "status": "ok" }`. Not subject to plugin guards or core limits; apply any request limiting at your host or proxy.
+
+---
+
+## Errors
+
+Every non-2xx HTTP response is `{ "error": string, "code": string }`. Direct calls throw `RichWindError` with the same `status`, `code` and `message`. The enum is frozen for 1.x.
+
+| Code | Status | When |
+| --- | --- | --- |
+| `INVALID_ID` | 400 | `projectId` or `pageId` does not match `[a-zA-Z0-9._-]+` or exceeds `maxIdLength`; bad percent-encoding in a path parameter |
+| `MISSING_INPUT` | 400 | no `projectId`, or neither `html` nor `classes` (except for the `base` bundle) |
+| `INVALID_BODY` | 400 | body is malformed JSON, invalid UTF-8, not a JSON object, or its length does not match; compile input yielded no valid classes |
+| `UNAUTHORIZED` | 401 | a plugin guard blocked the request |
+| `FORBIDDEN` | 403 | a plugin guard blocked the request |
+| `NOT_FOUND` | 404 | unknown path or method; no cached CSS for the page or project; path outside `basePath` |
+| `READ_ONLY_REPLICA` | 409 | compile or invalidate on a `nodeRole: "reader"` node |
+| `PAYLOAD_TOO_LARGE` | 413 | body over `maxBodyBytes`; `html`, `classes` or class count over its limit |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST /api/*` without `application/json`, or with a `Content-Encoding` |
+| `RATE_LIMITED` | 429 | a plugin guard blocked the request (core has no limiter); the guard may set `Retry-After` |
+| `REQUEST_BLOCKED` | guard status | a plugin guard blocked the request with another status |
+| `INTERNAL` | 500 | unexpected error; no stack trace is sent |
+| `SERVER_BUSY` | 503 | every compile slot is in use; sent with `Retry-After: 1` |
+
+## What core enforces vs what the host enforces
+
+| Core enforces | The host or proxy enforces |
+| --- | --- |
+| Body size (`maxBodyBytes`), `html` and `classes` size, class count | Who may call, and authentication |
+| `projectId` and `pageId` validation | Tenant isolation: which `projectId` a caller may use |
+| Content type and body rules (`415`, `400`, `413`) | Request rate limits |
+| CSS output cap (`maxCssChars`) | Access control on plugin routes that expose data or mutations |
+| LRU cache caps (`cacheMaxPages`, TTLs) | Which clients may reach the standalone server |
+| Compile concurrency cap (`maxConcurrentCompiles`) | |
+
+See the [Threat Model and Enforcement Boundary](runtime-spec.html#threat-model-and-enforcement-boundary) and [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
 
 ---
 

@@ -129,13 +129,25 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 ## Phase 4 — Docs repositioning
 
-- [ ] 4.1 README + docs/index.md: library first, AI-driven UI as the vision;
-  package description (#62)
-- [ ] 4.2 Agent quickstart (explicit classes + rejected feedback loop) +
-  docs-examples test (#63)
+- [x] 4.1 README + docs/index.md: library first, AI-driven UI as the vision;
+  package description — DONE 2026-10-01
+  2026-10-01: owner direction: docs are minimal (how to use, why, API reference; the
+  code documents the internals). README and docs/index.md cut down to a short why,
+  default design system note, core/wrapper boundary, one usage snippet and links;
+  ai-runtime-styling.md trimmed to the AI-driven UI story; package.json description and
+  keywords describe a library (#62)
+- [x] 4.2 Agent quickstart (explicit classes + rejected feedback loop) +
+  docs-examples test — DONE 2026-10-01
+  2026-10-01: docs/agent-quickstart.md (loop, Node example, curl transcript captured
+  from a real local core); docs-examples.test.js runs the loop via core calls and HTTP
+  and asserts `rejected` (#63)
 - [x] 4.3 Remaining divergence doc fixes (Appendix A items 9-12, 6) — DONE 2026-09-30 (#64)
-- [ ] 4.4 api-reference: error enum, rejected, core vs host enforcement; Pages render
-  check (#65)
+- [x] 4.4 api-reference: error enum, rejected, core vs host enforcement; Pages render
+  check — DONE 2026-10-01
+  2026-10-01: Errors table (13 codes, status, when), Functions table with RichWindError,
+  `rejected` defined in one sentence, core vs host enforcement table linking the threat
+  model; GET /api/css wording fixed (serves cached CSS, never compiles new classes).
+  docs/_config.yml parses (ruby yaml); no Jekyll build run; Pages stays off (#65)
 
 ## Phase 5 — Go-public gate
 

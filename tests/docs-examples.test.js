@@ -432,4 +432,51 @@ describe("Docs examples", () => {
       await server.close();
     }
   });
+
+  it("agent-quickstart loop works through core calls and HTTP", async () => {
+    const quickCore = await createCore();
+    try {
+      const projectId = "agent-demo";
+      const pageId = "card";
+      let html = '<div class="p-4 bg-brand-500 rounded-lg">Hi</div>';
+      let classes = ["p-4", "bg-brand-500", "rounded-lg"];
+
+      let result = await quickCore.compile({ projectId, pageId, html, classes });
+      expect(result.rejected).toEqual(["bg-brand-500"]);
+      expect(result.classes).toEqual(["p-4", "rounded-lg"]);
+
+      html = '<div class="p-4 bg-blue-500 rounded-lg">Hi</div>';
+      classes = ["p-4", "bg-blue-500", "rounded-lg"];
+      result = await quickCore.compile({ projectId, pageId, html, classes });
+      expect(result.rejected).toEqual([]);
+      expect(result.classes).toEqual(["bg-blue-500", "p-4", "rounded-lg"]);
+
+      const { css } = await quickCore.getCss({ projectId, pageId });
+      expect(css).toContain("bg-blue-500");
+    } finally {
+      await quickCore.close();
+    }
+
+    const res = await fetch(`${baseUrl}/api/compile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: "agent-demo",
+        pageId: "card",
+        html: '<div class="p-4 bg-brand-500 rounded-lg">Hi</div>',
+        classes: "p-4 bg-brand-500 rounded-lg",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Object.keys(body)).toEqual([
+      "success", "projectId", "pageId", "bundle", "hash",
+      "classes", "rejected", "cached", "css",
+    ]);
+    expect(body.classes).toEqual(["p-4", "rounded-lg"]);
+    expect(body.rejected).toEqual(["bg-brand-500"]);
+
+    const cssRes = await fetch(`${baseUrl}/api/css?projectId=agent-demo&pageId=card`);
+    expect(cssRes.status).toBe(200);
+  });
 });

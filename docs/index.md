@@ -1,44 +1,32 @@
 # Rich Wind
 
-Rich Wind is runtime Tailwind CSS infrastructure for dynamic and AI-generated UI. You send it HTML or a list of Tailwind classes, and it sends back the compiled CSS. There's no per-page build step, no file watching, no CLI in every host app - just an HTTP API that compiles on demand.
+Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step. It is for markup that did not exist when your app was built. The main use is AI-driven UI, where a model writes the HTML after deploy ([AI Runtime Styling](ai-runtime-styling.html)). CMS pages, editors and previews use it the same way.
 
-It's designed for applications that generate or edit HTML dynamically: CMS platforms, visual editors, code playgrounds, email builders, rich text editors, tenant-authored pages, and agent-generated previews. Anywhere you don't know the final set of Tailwind classes until runtime.
+V1 compiles against Tailwind's default design system. Core compiles explicit classes or HTML and serves CSS. Authentication, tenant isolation, rate limiting, and HTML-parsing workflows belong to the host app or a wrapper.
 
-Rich Wind core is intentionally auth-agnostic. Host applications own authentication, tenant isolation, source content, publishing, and long-term artifact storage.
+## Include it in an app
 
-## Why It Helps
+```bash
+npm install rich-wind
+```
 
-- Handles dynamic pages where class names are not known during CI/build.
-- Lets editors and AI agents preview Tailwind-styled HTML without rebuilding the host app.
-- Centralizes CSS generation so every product does not need its own Tailwind build pipeline for dynamic surfaces.
-- Improves response time on repeated requests using per-page/per-project cache.
-- Scales to multi-replica deployments with a shared `cacheStore`.
+```js
+import http from "node:http";
+import { createCore } from "rich-wind";
 
-## When to Use It
+const core = await createCore();
+http.createServer(core.handler).listen(3001);
+```
 
-- You are building a CMS, site/page editor, email/template builder, or preview environment.
-- You generate HTML/classes at runtime and need correct CSS immediately.
-- You let AI agents create or revise HTML/classes after deployment.
-- You want one core service for runtime CSS across multiple teams or apps.
+`createCore()` returns `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`. Mount `handler` (Node-style hosts such as Express) or `fetch` (Next.js, Hono), call the functions directly, or run the bundled server behind a proxy. See [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
 
-## When Not to Use It
+```bash
+curl -X POST http://localhost:3001/api/compile \
+  -H "Content-Type: application/json" \
+  -d '{"projectId":"my-app","pageId":"hero","html":"<div class=\"text-red-500 p-4\">Hello</div>"}'
+```
 
-- Your app is mostly static and build-time Tailwind gives you simpler operations.
-- Your AI-generated UI lands in source control and can use the normal Tailwind build.
-- You need zero runtime compilation cost and can precompile everything.
-- You require request-time custom Tailwind config uploads (not a Rich Wind goal).
-
-## AI-Era Positioning
-
-AI tools make it faster to create UI, but they do not remove the need to compile, cache, scope, and govern the resulting CSS. Tailwind's standard production path is still static CSS generated from classes that exist in source files. Rich Wind is useful when the class list is produced later by an editor, tenant, plugin, CMS workflow, or coding agent.
-
-The short version:
-
-- Use normal Tailwind for committed application code.
-- Use Rich Wind for runtime-authored pages and previews.
-- Use plugins and wrapper services for tenant isolation, policy, analytics, and publishing.
-
-See [AI Runtime Styling](ai-runtime-styling.html) for the research notes, tested hypotheses, and product implications behind this positioning.
+The response has the compiled CSS, the classes compiled, `rejected` explicit classes, and a content hash.
 
 ## Mental Model
 
@@ -98,13 +86,14 @@ By default, Rich Wind compiles everything into one stylesheet (`full` bundle). B
 
 Splitting makes sense when many pages share the same design tokens but have different utility classes. You load `base` and `theme` once, then swap `utilities` per page. If you split, always load `theme` before `utilities` — the utility rules reference the CSS custom properties that `theme` defines.
 
-## What's in the Docs
+## Docs
 
-- **[API Reference](api-reference.html)** — every endpoint, every parameter, every config option
-- **[AI Runtime Styling](ai-runtime-styling.html)** — 2026 positioning for dynamic and AI-generated UI
-- **[OpenAPI Contract](openapi.json)** — machine-readable API schema for tooling and client generation
-- **[Runtime Spec](runtime-spec.html)** — how caching works, the cacheStore adapter interface, bundle splitting internals, and including Rich Wind in an app
-- **[Plugin System](plugin-system.html)** — lifecycle hooks, setup context, plugin storage, and custom behavior
-- **[Integration Cookbook](integration-cookbook.html)** — production patterns: multi-tenant wrappers, editor integration, CMS pipelines, and a reference cacheStore adapter
-- **[Compatibility Policy (1.x)](api-reference.html#compatibility-policy-1x)** — what stays stable within 1.x
-- **[FAQ](faq.html)** — common implementation and architecture questions
+- **[Agent Quickstart](agent-quickstart.html)** - the compile, `rejected`, recompile loop for models
+- **[AI Runtime Styling](ai-runtime-styling.html)** - why runtime styling for AI-generated UI
+- **[API Reference](api-reference.html)** - endpoints, functions, errors, config
+- **[OpenAPI Contract](openapi.json)** - machine-readable API schema
+- **[Runtime Spec](runtime-spec.html)** - caching, `cacheStore`, embedding, threat model
+- **[Plugin System](plugin-system.html)** - hooks, setup context, custom routes
+- **[Integration Cookbook](integration-cookbook.html)** - multi-tenant wrappers, editors, CMS pipelines
+- **[Compatibility Policy (1.x)](api-reference.html#compatibility-policy-1x)** - what stays stable within 1.x
+- **[FAQ](faq.html)**
