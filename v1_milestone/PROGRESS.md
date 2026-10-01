@@ -125,7 +125,11 @@ details, 1.8 as two PRs, and the order around 1.8.
   with npm 10 installs it cleanly; npm audit and npm audit --omit=dev both report 0
   (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#75)
 - [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#76)
-- [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge (#77)
+- [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge — IN PROGRESS
+  2026-10-01: release-npm.yml takes an explicit semver `version` input (prerelease never
+  to `latest`, dist_tag default `next`), inputs passed via env, final step merges main
+  back into dev without --force; npm name still unclaimed. Open: NPM_TOKEN (owner: "no
+  npm yet") (#77)
 
 ## Phase 4 — Docs repositioning
 
@@ -158,6 +162,9 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
   pushed; `parked-demos` branch deleted (remote and local)
 - [ ] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot (#68)
+  - 2026-10-01: SECURITY.md, CONTRIBUTING.md, issue forms, PR template and
+    dependabot.yml (npm + github-actions, weekly, target dev) added; branch protection
+    follows 5.5
   - Note 2026-09-26: branch protection and rulesets return HTTP 403 while the repo is
     private on GitHub Free, so protection can only be applied after 5.5 (or on a paid
     plan). `release-npm.yml` pushes the version commit and tag straight to `main`

@@ -3,25 +3,14 @@ name: Release to npm
 on:
   workflow_dispatch:
     inputs:
-      release_type:
-        description: Version bump type
+      version:
+        description: Exact version to release (semver, e.g. 1.0.0-rc.1 or 1.0.0)
         required: true
-        default: patch
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-          - prerelease
-      prerelease_id:
-        description: Prerelease identifier (used only when release_type=prerelease)
-        required: false
-        default: beta
         type: string
       dist_tag:
         description: npm dist-tag used for publish
         required: true
-        default: latest
+        default: next
         type: choice
         options:
           - latest
@@ -81,37 +70,41 @@ jobs:
       - name: Bump package version and create tag
         id: version
         shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ inputs.dist_tag }}
         run: |
           set -euo pipefail
 
-          release_type="${{ inputs.release_type }}"
-          dist_tag="${{ inputs.dist_tag }}"
-          prerelease="false"
-
-          if [ "$release_type" = "prerelease" ] && [ "$dist_tag" = "latest" ]; then
-            echo "Prerelease builds must not publish to the latest dist-tag."
-            echo "Use dist_tag=alpha, beta, rc, or next."
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          if ! [[ "$VERSION" =~ $semver ]]; then
+            echo "Not a valid semver version: $VERSION"
             exit 1
           fi
 
-          if [ "$release_type" = "prerelease" ]; then
-            npm version prerelease --preid "${{ inputs.prerelease_id }}" -m "release: %s"
+          prerelease="false"
+          if [[ "$VERSION" == *-* ]]; then
             prerelease="true"
-          else
-            npm version "$release_type" -m "release: %s"
+            if [ "$DIST_TAG" = "latest" ]; then
+              echo "Prerelease versions must not publish to the latest dist-tag."
+              exit 1
+            fi
           fi
 
-          version="$(node -e "console.log(JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version)")"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          npm version "$VERSION" -m "release: %s"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Push release commit and tag
         run: git push origin HEAD:main --follow-tags
 
       - name: Publish to npm
+        # Reads the NPM_TOKEN repository secret (owner creates it; not in the repo).
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public --tag "${{ inputs.dist_tag }}"
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
 
       - name: Create GitHub release
         env:
@@ -128,3 +121,12 @@ jobs:
           fi
 
           gh "${args[@]}"
+
+      - name: Merge main back into dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main dev
+          git checkout -b dev origin/dev
+          git merge --no-ff origin/main -m "Merge main into dev after release v${{ steps.version.outputs.version }}"
+          git push origin dev
