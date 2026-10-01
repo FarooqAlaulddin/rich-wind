@@ -322,13 +322,20 @@ Both are generated from a single Tailwind compile and split by pattern-matching 
 
 The `base` bundle (preflight) is compiled separately since it doesn't depend on any classes.
 
-## Rate Limiting
+## Threat Model and Enforcement Boundary
 
-Rich Wind includes a per-IP rate limiter using a fixed-window algorithm. Each IP address gets `rateLimitMax` requests (default 60) per `rateLimitWindowMs` (default 60 seconds). When the limit is hit, the response is `429` with a `Retry-After` header indicating how many seconds until the window resets.
+Rich Wind protects resources it owns: deterministic input validation, body and input
+caps, cache caps, CSS-output caps, and safe construction of Tailwind inline sources.
+It validates explicit classes before constructing `@source inline(...)`, including
+rejecting brace-expansion syntax. These controls apply equally to every caller.
 
-The rate limiter runs per-process. If you're running multiple replicas behind a load balancer, each replica tracks its own counters — so the effective limit per IP is `rateLimitMax * replicaCount`.
+The host app or proxy owns the network edge: authentication, tenant-to-`projectId`
+mapping, authorization, rate limiting, request logging, TLS, and WAF policy. Core has
+no API key or rate limiter. A plugin guard can block an HTTP request, but direct library
+calls intentionally bypass guards because their host has already authorized the call.
 
-Set `rateLimitDisabled: true` if you handle rate limiting at the gateway level. If Rich Wind is behind a reverse proxy, set `trustProxy: true` so it reads the real client IP from `X-Forwarded-For` instead of seeing the proxy's IP.
+When deploying behind a trusted reverse proxy, set `trustProxy` so plugin request hooks
+receive the forwarded client address. Never enable it for untrusted direct clients.
 
 ## Security Headers
 
@@ -342,6 +349,10 @@ Every response includes these headers:
 | `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
 
 CSS responses, `GET /richwind-loader.js`, and `GET /richwind-reload.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources by optional HTML preview surfaces. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
+
+The core intentionally does not set CSP, HSTS, cookie attributes, or cache policy for a
+host application. Those headers depend on the host's authentication and deployment
+topology and belong at the application or reverse-proxy layer.
 
 ## What the Core Doesn't Do
 

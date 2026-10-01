@@ -61,8 +61,8 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [ ] 2.4 RW_MAX_CONCURRENT_COMPILES + immediate 503 SERVER_BUSY shed; after 1.8
   (#55)
 - [x] 2.5 UNSAFE_CLASS_CHAR_RE `{ }` + brace-bomb and prose-noise regression tests — DONE 2026-09-30 (#56)
-- [ ] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
-  security-headers audit (#57)
+- [x] 2.6 Threat model in runtime-spec (core-enforced vs host-enforced);
+  security-headers audit — DONE 2026-09-30 (#57)
 - [x] 2.7 Client identity behind proxies — MOVED 2026-09-27 into 1.8 (native
   transport) (#74)
 
