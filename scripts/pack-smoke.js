@@ -35,6 +35,12 @@ try {
 
   const smokeCode = `
 import { createCore } from 'rich-wind';
+import { createAutoPromotePlugin } from 'rich-wind/plugins/auto-promote';
+import { createFsCacheStore } from 'rich-wind/plugins/cache-store-fs';
+
+if (typeof createAutoPromotePlugin !== 'function' || typeof createFsCacheStore !== 'function') {
+  throw new Error('Plugin subpath exports are unavailable.');
+}
 
 const { app, close } = await createCore({ config: { rateLimitDisabled: true } });
 const server = app.listen(0);

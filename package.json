@@ -10,10 +10,20 @@
       "types": "./services/index.d.ts",
       "import": "./services/index.js",
       "default": "./services/index.js"
+    },
+    "./plugins/auto-promote": {
+      "import": "./plugins/auto-promote/index.js",
+      "default": "./plugins/auto-promote/index.js"
+    },
+    "./plugins/cache-store-fs": {
+      "import": "./plugins/cache-store-fs/index.js",
+      "default": "./plugins/cache-store-fs/index.js"
     }
   },
   "files": [
-    "services/"
+    "services/",
+    "plugins/auto-promote/",
+    "plugins/cache-store-fs/"
   ],
   "workspaces": [
     "lexical-demo"
