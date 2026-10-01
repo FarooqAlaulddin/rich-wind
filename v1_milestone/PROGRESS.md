@@ -69,7 +69,7 @@ details, 1.8 as two PRs, and the order around 1.8.
 ## Phase 3 — Packaging
 
 - [ ] 3.1 files + explicit exports for auto-promote and cache-store-fs (#58)
-- [ ] 3.2 Remove Dockerfile (#59)
+- [x] 3.2 Remove Dockerfile — DONE 2026-09-30 (#59)
 - [ ] 3.3 pack-smoke imports exported plugin subpaths from tarball (#60)
 - [ ] 3.4 index.d.ts aligned with post-Phase-1/2 reality (#61)
 - [ ] 3.5 Dependency hygiene: npm audit fix, delete stale lexical-demo lockfile (#75)
