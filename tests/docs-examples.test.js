@@ -306,6 +306,27 @@ describe("Docs examples", () => {
     }
   });
 
+  it("plugin-system ctx.compile result and RichWindError example works", async () => {
+    const { RichWindError, createCore: createPackageCore } = await import("rich-wind");
+    let ctx;
+    const warnings = [];
+    const plugin = { name: "docs-compile", setup(c) { ctx = c; } };
+    const pluginCore = await createPackageCore({ plugins: [plugin] });
+    try {
+      const { css } = await ctx.compile({ projectId: "main", pageId: "promo", classes: "p-4" });
+      expect(css).toContain(".p-4");
+
+      try {
+        await ctx.compile({ projectId: "main", pageId: "promo" });
+      } catch (err) {
+        if (err instanceof RichWindError) warnings.push([err.status, err.code, err.message]);
+      }
+      expect(warnings).toEqual([[400, "MISSING_INPUT", "Either html or classes is required."]]);
+    } finally {
+      await pluginCore.close();
+    }
+  });
+
   it("persistence layer idea plugin write-behind example works", async () => {
     const writes = [];
     const plugin = {

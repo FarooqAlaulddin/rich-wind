@@ -95,7 +95,7 @@ All query functions return copies or frozen snapshots — never live references.
 | `evictProject(projectId)` | Remove an entire project and all its pages |
 | `purgePage(projectId, pageId)` | Evict a page from memory and delete persisted page artifacts (`full`/`utilities`/`theme`) via `cacheStore` |
 | `purgeProject(projectId)` | Evict a project from memory and delete persisted project artifacts plus page artifacts via `cacheStore` |
-| `compile({ projectId, pageId, html?, classes?, bundle? })` | Compile and cache a page programmatically |
+| `compile({ projectId, pageId?, html?, classes?, bundle? })` | Compile and cache a page programmatically |
 | `hydratePageArtifact({ projectId, pageId, bundle, css, classes?, ... })` | Inject a pre-built artifact into cache without compilation |
 | `hydrateProjectArtifact({ projectId, bundle, css, hash?, ... })` | Inject a pre-built project aggregate into cache |
 
@@ -103,10 +103,22 @@ All query functions return copies or frozen snapshots — never live references.
 
 **`purgePage()` / `purgeProject()` remove from memory and then try to remove from `cacheStore`.** For full shared cleanup, implement `deletePageArtifact` and `deleteProjectArtifact`. For project purges on cold replicas (no local page list), also implement `deleteProjectPageArtifacts`.
 
-**`compile()`** validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It returns the same shape as the HTTP compile response. When called from inside a hook, it skips hook execution to avoid recursive loops.
+**`compile()`** is the same function as `core.compile()`: it validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It takes the same input as `POST /api/compile` (`pageId` defaults to `"default"`) and resolves to the same body as its 200 response (`success`, `projectId`, `pageId`, `bundle`, `hash`, `classes`, `rejected`, `cached`, `css`). On failure it throws a `RichWindError` (exported by the package) whose `status`, `code` and `message` match the HTTP error envelope for the same input:
+
+```js
+import { RichWindError } from "rich-wind";
+
+try {
+  const { css } = await ctx.compile({ projectId: "main", pageId: "promo", classes: "p-4" });
+} catch (err) {
+  if (err instanceof RichWindError) console.warn(err.status, err.code, err.message);
+}
+```
+
+When called from inside a hook, it skips hook execution to avoid recursive loops. Hook events it fires carry `source: "plugin"` and `request: null`.
 
 When `nodeRole` is `reader`, mutation helpers are blocked:
-- `compile()` returns `{ error, status: 409, code: "READ_ONLY_REPLICA" }`
+- `compile()` throws a `RichWindError` with status `409` and code `READ_ONLY_REPLICA`
 - `purge*` and `hydrate*` return `false`
 - `evict*` are no-ops
 
@@ -217,7 +229,8 @@ These fire at specific moments. Return values are ignored.
 
 `guard` runs before a request reaches any built-in route handler. It receives the
 plugin context plus `{ ip, method, path }` and applies only to HTTP requests, never
-direct `ctx.compile()` calls. Return `null`/`undefined` to allow the request, or
+direct calls to the core functions (`core.compile()` and the others) or `ctx.compile()`:
+a direct caller is the host, which has already decided who may call. Return `null`/`undefined` to allow the request, or
 `{ blocked: true, status, error, retryAfter }` to stop it. Status `401`, `403`, and
 `429` map to `UNAUTHORIZED`, `FORBIDDEN`, and `RATE_LIMITED`; other blocking statuses
 map to `REQUEST_BLOCKED`.
@@ -267,7 +280,7 @@ const redisResolver = {
 
 All hooks include `source` and `request` fields so plugins know where the action originated:
 
-- **`source`**: `"http"` for HTTP requests, `"plugin"` for `compile()` calls from plugin code, `"cache-store"` for cacheStore errors
+- **`source`**: `"http"` for HTTP requests, `"core"` for direct calls to the core functions (`core.compile()` and the others), `"plugin"` for `compile()` calls from plugin code, `"cache-store"` for cacheStore errors
 - **`request`**: `{ ip, method, path }` for HTTP requests, `null` for plugin-initiated actions
 
 ## Plugin Options
@@ -317,7 +330,7 @@ The `stage` field in `onError` tells you where the error originated:
 
 When a plugin calls `compile()` from inside a hook (e.g., `onCompileResult` triggers a related page recompile), the inner compile skips all hooks to prevent infinite recursion. The inner compile still caches the result and writes to cacheStore — only hook execution is skipped.
 
-Plugin compile chains are bounded by `maxPluginCompileChainDepth` (default `2`). If exceeded, `compile()` returns `{ error: "Plugin compile chain depth exceeded.", status: 429 }`.
+Plugin compile chains are bounded by `maxPluginCompileChainDepth` (default `2`). If exceeded, `compile()` throws a `RichWindError` with status `500` and code `INTERNAL` (message `"Plugin compile chain depth exceeded."`), since it signals a plugin recursion bug; `onError` receives `code: "PLUGIN_COMPILE_CHAIN_LIMIT"` with the `projectId`, `pageId` and `bundle` in its `context`.
 
 ## createCore Options
 

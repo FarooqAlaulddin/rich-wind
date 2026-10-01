@@ -14,6 +14,35 @@ describe('Library import tests', () => {
     expect(typeof result.close).toBe('function');
   });
 
+  it('exposes the five core functions', async () => {
+    const core = await createCore();
+    try {
+      for (const fn of ['compile', 'getCss', 'getProjectCss', 'invalidate', 'suggest']) {
+        expect(typeof core[fn]).toBe('function');
+      }
+    } finally {
+      await core.close();
+    }
+  });
+
+  it('exports RichWindError', async () => {
+    const { RichWindError } = await import('../services/index.js');
+    const err = new RichWindError(404, 'NOT_FOUND', 'Missing.');
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({ name: 'RichWindError', status: 404, code: 'NOT_FOUND', message: 'Missing.' });
+  });
+
+  it('exposes compile with the HTTP success shape', async () => {
+    const { compile, close } = await createCore();
+    try {
+      const result = await compile({ projectId: 'direct-compile', classes: 'p-4' });
+      expect(result).toMatchObject({ success: true, projectId: 'direct-compile', pageId: 'default' });
+      expect(result.css).toContain('.p-4');
+    } finally {
+      await close();
+    }
+  });
+
   it('app has .get, .post, .listen, .use methods', async () => {
     const { app } = await createCore();
     expect(typeof app.get).toBe('function');

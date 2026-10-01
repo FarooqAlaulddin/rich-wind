@@ -864,7 +864,7 @@ describe('Plugin mutation functions', () => {
     await close();
   });
 
-  it('compile() validates inputs and returns error', async () => {
+  it('compile() validates inputs and throws RichWindError', async () => {
     let ctxRef;
     const plugin = {
       name: 'validate-compile',
@@ -873,13 +873,12 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({ plugins: [plugin] });
 
-    const r1 = await ctxRef.compile({});
-    expect(r1.error).toBeTruthy();
-    expect(r1.status).toBe(400);
-
-    const r2 = await ctxRef.compile({ projectId: 'ok', pageId: 'p!!!' });
-    expect(r2.error).toBeTruthy();
-    expect(r2.status).toBe(400);
+    await expect(ctxRef.compile({})).rejects.toMatchObject({
+      name: 'RichWindError', status: 400, code: 'MISSING_INPUT'
+    });
+    await expect(ctxRef.compile({ projectId: 'ok', pageId: 'p!!!' })).rejects.toMatchObject({
+      name: 'RichWindError', status: 400, code: 'INVALID_ID'
+    });
 
     await close();
   });

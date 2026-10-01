@@ -263,13 +263,11 @@ describe('Node role behavior (single writer, many readers)', () => {
       config: { nodeRole: 'reader', rateLimitDisabled: true }
     });
 
-    const compileResult = await ctxRef.compile({
+    await expect(ctxRef.compile({
       projectId: 'reader-plugin',
       pageId: 'p1',
       classes: 'text-red-500'
-    });
-    expect(compileResult.status).toBe(409);
-    expect(compileResult.code).toBe('READ_ONLY_REPLICA');
+    })).rejects.toMatchObject({ name: 'RichWindError', status: 409, code: 'READ_ONLY_REPLICA' });
 
     expect(await ctxRef.purgePage('reader-plugin', 'p1')).toBe(false);
     expect(await ctxRef.purgeProject('reader-plugin')).toBe(false);
@@ -423,18 +421,20 @@ describe('Node role behavior (single writer, many readers)', () => {
         ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req, res) => {
           const { projectId, pageId } = req.params;
           const writeOk = await ctx.storage.set('probe', { enabled: true });
-          const compileResult = await ctx.compile({
-            projectId,
-            pageId,
-            classes: req.body?.classes || 'text-red-500'
-          });
+          let compileStatus = 200;
+          let compileCode = null;
+          try {
+            await ctx.compile({
+              projectId,
+              pageId,
+              classes: req.body?.classes || 'text-red-500'
+            });
+          } catch (err) {
+            compileStatus = err.status;
+            compileCode = err.code;
+          }
           const purgeOk = await ctx.purgePage(projectId, pageId);
-          return res.json({
-            writeOk,
-            purgeOk,
-            compileStatus: compileResult?.status ?? 200,
-            compileCode: compileResult?.code ?? null
-          });
+          return res.json({ writeOk, purgeOk, compileStatus, compileCode });
         });
       },
       onError(info) {

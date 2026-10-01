@@ -41,15 +41,22 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#48)
 - [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
   shape with the first 1.8 PR, addRoute contract with the second) — IN PROGRESS
-  2026-09-30: guard types and HTTP-only request-hook reality documented; ctx.compile
-  and neutral addRoute contracts remain coupled to 1.8 (#49)
+  2026-09-30: guard types and HTTP-only request-hook reality documented. 2026-10-01:
+  ctx.compile contract documented with 1.8a (result shape, RichWindError, chain depth
+  500 INTERNAL); the neutral addRoute contract remains, with 1.8b (#49)
 - [x] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
   included; after 1.2 and 1.3, before 1.8 — DONE 2026-09-30 (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
   policy (#51)
 - [ ] 1.8 Native transport, two PRs: (a) functions + RichWindError, ctx.compile
   shares core.compile; (b) drop Express, core.handler, core.fetch with basePath,
-  neutral plugin routes, client identity via proxy-addr (absorbs 2.7) (#81)
+  neutral plugin routes, client identity via proxy-addr (absorbs 2.7) — IN PROGRESS
+  2026-10-01: (a) DONE: core.compile/getCss/getProjectCss/invalidate/suggest own input
+  validation and throw RichWindError; the Express routes call them; ctx.compile shares
+  core.compile (chain depth is 500 INTERNAL); auto-promote uses try/catch; GET /api/css,
+  GET /api/projects/:projectId/css, /api/invalidate and /api/suggest 400s now carry
+  MISSING_INPUT/INVALID_ID instead of the INVALID_BODY fallback; tests in
+  core-functions.test.js. (b) transport not started (#81)
 
 ## Phase 2 — Core hardening
 

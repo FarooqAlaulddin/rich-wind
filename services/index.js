@@ -72,8 +72,8 @@ export const ERROR_CODES = Object.freeze([
 ]);
 
 export class RichWindError extends Error {
-    constructor(status, code, message) {
-        super(message);
+    constructor(status, code, message, options) {
+        super(message, options);
         this.name = 'RichWindError';
         this.status = status;
         this.code = code;
@@ -1633,9 +1633,334 @@ function createPluginRunner(plugins = [], options = {}) {
 }
 
 // =============================================================================
+// Core functions (shared by the HTTP routes, direct callers and ctx.compile)
+// =============================================================================
+const INTERNAL_ERROR_MESSAGE = 'Internal server error.';
+
+function invalidIdMessage(name, config) {
+    return `${name} must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`;
+}
+
+function readInput(input) {
+    if (input == null) return {};
+    if (typeof input !== 'object' || Array.isArray(input)) {
+        throw new RichWindError(400, 'INVALID_BODY', 'Input must be an object.');
+    }
+    return input;
+}
+
+function createCoreFunctions({
+    state, config, pluginRunner, cacheStoreRunner, queueStoreWrite,
+    isWriteAllowed, reportWriteBlocked, chainDepthLimit
+}) {
+    // Runs one operation; anything that is not a RichWindError reaches onError and
+    // becomes 500 INTERNAL, so callers only ever see the public error contract.
+    const guarded = async (stage, meta, fn) => {
+        try {
+            return await fn();
+        } catch (err) {
+            if (err instanceof RichWindError) throw err;
+            if (!meta.skipHooks) {
+                await pluginRunner.runHook('onError', { error: err, stage, source: meta.source, request: meta.request });
+            }
+            throw new RichWindError(500, 'INTERNAL', INTERNAL_ERROR_MESSAGE, { cause: err });
+        }
+    };
+
+    const runCompile = async (input, meta) => {
+        const body = readInput(input);
+        const { projectId, html, classes } = body;
+        const pageId = body.pageId ?? 'default';
+        const bundle = normalizeBundle(body.bundle);
+
+        if (!isWriteAllowed()) {
+            await reportWriteBlocked(`${meta.source}-compile`, {
+                source: meta.source, request: meta.request, projectId, pageId, bundle
+            });
+            throw new RichWindError(409, READ_ONLY_ERROR_CODE, 'This replica is read-only. Route compile writes to a writer replica.');
+        }
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (!isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
+        if (!html && !classes && bundle !== 'base') throw new RichWindError(400, 'MISSING_INPUT', 'Either html or classes is required.');
+        if (typeof html === 'string' && html.length > config.maxHtmlChars) {
+            throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `html is too large. Limit is ${config.maxHtmlChars} chars.`);
+        }
+        if (typeof classes === 'string' && classes.length > config.maxClassChars) {
+            throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
+        }
+
+        const compilePage = () => compileAndCachePage({
+            state, config, projectId, pageId, html, classes, bundle,
+            pluginRunner, cacheStoreRunner, queueStoreWrite,
+            skipHooks: meta.skipHooks, source: meta.source, request: meta.request
+        });
+
+        let result;
+        if (meta.source === 'plugin') {
+            const store = hookStore.getStore();
+            const currentDepth = store?.compileChainDepth ?? 0;
+            if (currentDepth >= chainDepthLimit) {
+                const message = 'Plugin compile chain depth exceeded.';
+                if (!meta.skipHooks) {
+                    await pluginRunner.runHook('onError', {
+                        error: new Error(message), stage: 'compile', source: 'plugin',
+                        code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context: { projectId, pageId, bundle }
+                    });
+                }
+                throw new RichWindError(500, 'INTERNAL', message);
+            }
+            result = await hookStore.run(
+                { inHook: meta.skipHooks, compileChainDepth: currentDepth + 1 },
+                compilePage
+            );
+        } else {
+            result = await compilePage();
+        }
+        if (result.error) {
+            throw new RichWindError(result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
+        }
+
+        return {
+            success: true,
+            projectId,
+            pageId,
+            bundle: result.bundle ?? bundle,
+            hash: result.hash,
+            classes: result.classes,
+            rejected: result.rejected ?? [],
+            cached: result.cached,
+            css: result.css
+        };
+    };
+
+    const runGetCss = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId;
+        const pageId = body.pageId ?? 'default';
+        const bundle = normalizeBundle(body.bundle);
+
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (!isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
+
+        const hit = (source) => pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle, source, request: meta.request });
+        const miss = (source) => pluginRunner.runHook('onCacheMiss', { projectId, pageId, bundle, source, request: meta.request });
+        const fromStore = async () => {
+            const storeArtifact = await readPageArtifactFromStore(cacheStoreRunner, config, projectId, pageId, bundle);
+            if (!storeArtifact) return null;
+            hydratePageFromArtifact(state, config, projectId, pageId, bundle, storeArtifact);
+            await hit('page-store');
+            return { css: storeArtifact.css, etag: storeArtifact.hash ?? null };
+        };
+
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+
+        if (readerStoreFirst) {
+            const stored = await fromStore();
+            if (stored) return stored;
+            await miss('page-store');
+        } else {
+            const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
+            if (cached) {
+                await hit('page');
+                const pageHash = state.projects.get(projectId)?.pages.get(pageId)?.hash;
+                return { css: cached.css, etag: pageHash ?? null };
+            }
+            const stored = await fromStore();
+            if (stored) return stored;
+            await miss('page');
+        }
+
+        // Resolve hook: let plugins provide CSS on cache miss
+        const resolved = await pluginRunner.runResolve('resolvePageCss', {
+            projectId, pageId, bundle, source: meta.source, request: meta.request
+        }, config);
+        if (resolved) return { css: resolved.css, etag: null };
+
+        throw new RichWindError(404, 'NOT_FOUND', 'Cached CSS was not found.');
+    };
+
+    const runGetProjectCss = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId;
+        const bundle = normalizeBundle(body.bundle);
+
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+
+        const fromStore = async () => {
+            const storeArtifact = await readProjectArtifactFromStore(cacheStoreRunner, config, projectId, bundle);
+            if (!storeArtifact) return null;
+            return { css: storeArtifact.css, hash: storeArtifact.hash ?? null, cached: true, source: 'store' };
+        };
+
+        const readerStoreFirst =
+            config.nodeRole === 'reader' &&
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base';
+        let result = null;
+        if (readerStoreFirst) {
+            result = await fromStore();
+        } else {
+            result = await getProjectCss(state, config, projectId, bundle);
+            if (!result && bundle !== 'base') result = await fromStore();
+        }
+
+        if (!result) {
+            // Resolve hook: let plugins provide project CSS on cache miss
+            const resolved = await pluginRunner.runResolve('resolveProjectCss', {
+                projectId, bundle, source: meta.source, request: meta.request
+            }, config);
+            if (resolved) return { css: resolved.css, etag: null };
+            throw new RichWindError(404, 'NOT_FOUND', 'Project CSS was not found.');
+        }
+
+        if (
+            cacheStoreRunner?.enabled &&
+            bundle !== 'base' &&
+            result.source !== 'store' &&
+            isWriteAllowed()
+        ) {
+            const now = Date.now();
+            queueStoreWrite(() =>
+                cacheStoreRunner.upsertProjectArtifact({
+                    projectId,
+                    bundle,
+                    css: result.css,
+                    hash: result.hash ?? null,
+                    cached: result.cached,
+                    updatedAt: now,
+                    expiresAt: now + config.projectCacheTtlMs
+                })
+            );
+        }
+
+        await pluginRunner.runHook('onProjectCss', {
+            projectId,
+            bundle,
+            css: result.css ?? '',
+            hash: result.hash ?? null,
+            cached: result.cached ?? false,
+            source: meta.source,
+            request: meta.request
+        });
+        return { css: result.css ?? '', etag: result.hash ?? null };
+    };
+
+    const runInvalidate = async (input) => {
+        const body = readInput(input);
+        const projectId = body.projectId ?? null;
+        const pageId = body.pageId ?? null;
+
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (pageId !== null && !isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
+        if (!isWriteAllowed()) {
+            throw new RichWindError(409, READ_ONLY_ERROR_CODE, 'This replica is read-only. Route invalidation writes to a writer replica.');
+        }
+
+        const bundles = ['full', 'utilities', 'theme'];
+
+        if (pageId !== null) {
+            evictPageByKey(state, makePageKey(projectId, pageId));
+            if (cacheStoreRunner?.enabled) {
+                await Promise.all(
+                    bundles.map(b => cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle: b }))
+                );
+            }
+            return { invalidated: true, projectId, pageId };
+        }
+
+        // Purge entire project from memory
+        const project = state.projects.get(projectId);
+        if (project) {
+            for (const pid of Array.from(project.pages.keys())) {
+                evictPageByKey(state, makePageKey(projectId, pid));
+            }
+            state.projects.delete(projectId);
+        }
+        // Purge from store
+        if (cacheStoreRunner?.enabled) {
+            if (cacheStoreRunner.hasMethod?.('deleteProjectPageArtifacts')) {
+                await cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
+            }
+            await Promise.all(
+                bundles.map(b => cacheStoreRunner.deleteProjectArtifact({ projectId, bundle: b }))
+            );
+        }
+        return { invalidated: true, projectId };
+    };
+
+    const runSuggest = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId ?? null;
+        const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
+        const limit = Math.min(parseIntWithDefault(body.limit, config.suggestLimit, 1), config.suggestLimit);
+        const includeInput = normalizeClassList(body.classes);
+
+        if (projectId && !isValidId(projectId, config)) {
+            throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        }
+
+        // Phase 1: Collect ALL candidates (no limit enforcement yet)
+        const seen = new Set();
+        const allSuggestions = [];
+        const push = (list) => {
+            for (const item of list) {
+                if (!item) continue;
+                if (prefix && !item.startsWith(prefix)) continue;
+                if (!seen.has(item)) { seen.add(item); allSuggestions.push(item); }
+            }
+        };
+
+        if (includeInput.length) push(includeInput);
+        if (projectId) push(getProjectSuggestionList(state, projectId));
+        if (config.suggestFallback && prefix) {
+            const staticList = await getStaticClassSuggestions(prefix);
+            push(staticList.length ? staticList : getFallbackSuggestions(prefix));
+        }
+
+        // Phase 2: Run transform pipeline
+        let suggestions = await pluginRunner.runPipeline('transformSuggestions',
+            { projectId, prefix, limit, source: meta.source, request: meta.request },
+            allSuggestions
+        );
+
+        // Phase 3: Post-validation
+        if (!Array.isArray(suggestions)) suggestions = allSuggestions;
+        suggestions = suggestions.filter(s => typeof s === 'string');
+        suggestions = [...new Set(suggestions)];
+        suggestions = suggestions.slice(0, limit);
+
+        await pluginRunner.runHook('onSuggest', {
+            projectId, prefix, limit, request: meta.request, suggestions, source: meta.source
+        });
+        return { success: true, projectId, prefix, count: suggestions.length, suggestions };
+    };
+
+    // meta: { source: 'core' | 'http' | 'plugin', request, skipHooks }
+    const withMeta = (stage, run) => (input, meta = {}) => {
+        const resolved = { source: 'core', request: null, skipHooks: false, ...meta };
+        return guarded(stage, resolved, () => run(input, resolved));
+    };
+
+    return {
+        compile: withMeta('compile', runCompile),
+        getCss: withMeta('cache', runGetCss),
+        getProjectCss: withMeta('project-css', runGetProjectCss),
+        invalidate: withMeta('invalidate', runInvalidate),
+        suggest: withMeta('suggest', runSuggest)
+    };
+}
+
+// =============================================================================
 // HTTP routes
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}, runtimeHelpers = {}) {
+function registerRoutes(app, pluginRunner, config, fns) {
     const withRequestHooks = (req, res, context) => {
         const start = Date.now();
         pluginRunner.runHook('onRequestStart', context);
@@ -1647,19 +1972,6 @@ function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, role
             });
         });
     };
-    const queueStoreWrite = typeof runtimeHelpers.queueStoreWrite === 'function'
-        ? runtimeHelpers.queueStoreWrite
-        : (fn) => {
-            queueMicrotask(() => {
-                Promise.resolve(fn()).catch(() => {});
-            });
-        };
-    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
-        ? roleHelpers.isWriteAllowed
-        : (() => true);
-    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
-        ? roleHelpers.reportWriteBlocked
-        : (async () => {});
 // API Routes
 
 function sendCss(req, res, css, etag) {
@@ -1696,451 +2008,108 @@ app.get('/richwind-reload.js', (req, res) => {
     res.type('application/javascript').send(RICH_WIND_RELOAD_JS);
 });
 
+// Core functions throw RichWindError; anything else (a failure in this HTTP layer
+// itself) reaches onError and is answered as 500 INTERNAL.
+const sendFailure = async (res, err, stage, request) => {
+    if (err instanceof RichWindError) return sendError(res, err.status, err.code, err.message);
+    await pluginRunner.runHook('onError', { error: err, stage, source: 'http', request });
+    return sendError(res, 500, 'INTERNAL', 'Internal server error.');
+};
+const requestInfo = (req) => ({ ip: getClientIp(req), method: req.method, path: req.path });
+
 // Compile CSS for a project/page (in-memory cache)
 app.post('/api/compile', async (req, res) => {
+    const request = requestInfo(req);
     try {
         const body = req.body || {};
-        const projectId = body.projectId;
-        const pageId = body.pageId ?? 'default';
         const { html, classes } = body;
-        const bundle = normalizeBundle(body.bundle);
-        const hookContext = {
-            projectId,
-            pageId,
-            bundle,
+        withRequestHooks(req, res, {
+            projectId: body.projectId,
+            pageId: body.pageId ?? 'default',
+            bundle: normalizeBundle(body.bundle),
             html,
             classes,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'compile' });
-
-        if (!isWriteAllowed()) {
-            await reportWriteBlocked('http-compile', {
-                source: 'http',
-                request: hookContext.request,
-                projectId,
-                pageId,
-                bundle
-            });
-            return res.status(409).json({
-                error: 'This replica is read-only. Route compile writes to a writer replica.',
-                code: READ_ONLY_ERROR_CODE
-            });
-        }
-
-        if (!projectId) {
-            return sendError(res, 400, 'MISSING_INPUT', 'projectId is required.');
-        }
-        if (!isValidId(projectId, config)) {
-            return sendError(res, 400, 'INVALID_ID', `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`);
-        }
-        if (!isValidId(pageId, config)) {
-            return sendError(res, 400, 'INVALID_ID', `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`);
-        }
-        if (!html && !classes && bundle !== 'base') {
-            return sendError(res, 400, 'MISSING_INPUT', 'Either html or classes is required.');
-        }
-        if (typeof html === 'string' && html.length > config.maxHtmlChars) {
-            return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `html is too large. Limit is ${config.maxHtmlChars} chars.`);
-        }
-        if (typeof classes === 'string' && classes.length > config.maxClassChars) {
-            return sendError(res, 413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
-        }
-
-        const result = await compileAndCachePage({
-            state, config, projectId, pageId, html, classes, bundle,
-            pluginRunner, cacheStoreRunner,
-            queueStoreWrite,
-            skipHooks: false, source: 'http', request: hookContext.request
+            request,
+            action: 'compile'
         });
-        if (result.error) {
-            return sendError(res, result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
-        }
-
-        res.json({
-            success: true,
-            projectId,
-            pageId,
-            bundle: result.bundle ?? bundle,
-            hash: result.hash,
-            classes: result.classes,
-            rejected: result.rejected ?? [],
-            cached: result.cached,
-            css: result.css
-        });
+        res.json(await fns.compile(body, { source: 'http', request }));
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'compile', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        sendError(res, 500, 'INTERNAL', 'Internal server error.');
+        await sendFailure(res, err, 'compile', request);
     }
 });
 
 // Get cached CSS for a project/page
 app.get('/api/css', async (req, res) => {
+    const request = requestInfo(req);
     try {
-        const projectId = req.query.projectId;
-        const pageId = req.query.pageId ?? 'default';
-        const bundle = normalizeBundle(req.query.bundle);
+        const { projectId, pageId, bundle } = req.query;
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        const hookContext = {
+        withRequestHooks(req, res, {
             projectId,
-            pageId,
-            bundle,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'cache' });
-
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
-        }
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (!isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-
-        const readerStoreFirst =
-            config.nodeRole === 'reader' &&
-            cacheStoreRunner?.enabled &&
-            bundle !== 'base';
-
-        if (readerStoreFirst) {
-            const storeArtifact = await readPageArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                pageId,
-                bundle
-            );
-            if (storeArtifact) {
-                hydratePageFromArtifact(
-                    state,
-                    config,
-                    projectId,
-                    pageId,
-                    bundle,
-                    storeArtifact
-                );
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page-store',
-                    request: hookContext.request
-                });
-                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
-            }
-            await pluginRunner.runHook('onCacheMiss', {
-                projectId,
-                pageId,
-                bundle,
-                source: 'page-store',
-                request: hookContext.request
-            });
-        } else {
-            const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
-            if (cached) {
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page',
-                    request: hookContext.request
-                });
-                const pageHash = state.projects.get(projectId)?.pages.get(pageId)?.hash;
-                return sendCss(req, res, cached.css, pageHash);
-            }
-
-            const storeArtifact = await readPageArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                pageId,
-                bundle
-            );
-            if (storeArtifact) {
-                hydratePageFromArtifact(
-                    state,
-                    config,
-                    projectId,
-                    pageId,
-                    bundle,
-                    storeArtifact
-                );
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page-store',
-                    request: hookContext.request
-                });
-                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
-            }
-            await pluginRunner.runHook('onCacheMiss', {
-                projectId,
-                pageId,
-                bundle,
-                source: 'page',
-                request: hookContext.request
-            });
-        }
-
-        // Resolve hook: let plugins provide CSS on cache miss
-        const resolved = await pluginRunner.runResolve('resolvePageCss', {
-            projectId, pageId, bundle, source: 'http', request: hookContext.request
-        }, config);
-        if (resolved) {
-            return res.type('text/css').send(resolved.css);
-        }
-
-        return sendError(res, 404, 'NOT_FOUND', 'Cached CSS was not found.');
+            pageId: pageId ?? 'default',
+            bundle: normalizeBundle(bundle),
+            request,
+            action: 'cache'
+        });
+        const { css, etag } = await fns.getCss({ projectId, pageId, bundle }, { source: 'http', request });
+        return sendCss(req, res, css, etag);
     } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
+        await sendFailure(res, err, 'cache', request);
     }
 });
 
 // Get aggregated CSS for a project (union of cached pages)
 app.get('/api/projects/:projectId/css', async (req, res) => {
+    const request = requestInfo(req);
     try {
         const { projectId } = req.params;
-        const bundle = normalizeBundle(req.query.bundle);
+        const { bundle } = req.query;
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        const hookContext = {
+        withRequestHooks(req, res, {
             projectId,
-            bundle,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'project-css' });
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        const readerStoreFirst =
-            config.nodeRole === 'reader' &&
-            cacheStoreRunner?.enabled &&
-            bundle !== 'base';
-        let result = null;
-
-        if (readerStoreFirst) {
-            const storeArtifact = await readProjectArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                bundle
-            );
-            if (storeArtifact) {
-                result = {
-                    css: storeArtifact.css,
-                    hash: storeArtifact.hash ?? null,
-                    cached: true,
-                    source: 'store'
-                };
-            }
-        } else {
-            result = await getProjectCss(state, config, projectId, bundle);
-            if (!result && bundle !== 'base') {
-                const storeArtifact = await readProjectArtifactFromStore(
-                    cacheStoreRunner,
-                    config,
-                    projectId,
-                    bundle
-                );
-                if (storeArtifact) {
-                    result = {
-                        css: storeArtifact.css,
-                        hash: storeArtifact.hash ?? null,
-                        cached: true,
-                        source: 'store'
-                    };
-                }
-            }
-        }
-        if (!result) {
-            // Resolve hook: let plugins provide project CSS on cache miss
-            const resolved = await pluginRunner.runResolve('resolveProjectCss', {
-                projectId, bundle, source: 'http', request: hookContext.request
-            }, config);
-            if (resolved) {
-                return res.type('text/css').send(resolved.css);
-            }
-            return sendError(res, 404, 'NOT_FOUND', 'Project CSS was not found.');
-        }
-
-        if (
-            cacheStoreRunner?.enabled &&
-            bundle !== 'base' &&
-            result.source !== 'store' &&
-            isWriteAllowed()
-        ) {
-            const now = Date.now();
-            queueStoreWrite(() =>
-                cacheStoreRunner.upsertProjectArtifact({
-                    projectId,
-                    bundle,
-                    css: result.css,
-                    hash: result.hash ?? null,
-                    cached: result.cached,
-                    updatedAt: now,
-                    expiresAt: now + config.projectCacheTtlMs
-                })
-            );
-        }
-
-        await pluginRunner.runHook('onProjectCss', {
-            projectId,
-            bundle,
-            css: result?.css ?? '',
-            hash: result?.hash ?? null,
-            cached: result?.cached ?? false,
-            source: 'http',
-            request: hookContext.request
+            bundle: normalizeBundle(bundle),
+            request,
+            action: 'project-css'
         });
-        return sendCss(req, res, result?.css ?? '', result?.hash ?? null);
+        const { css, etag } = await fns.getProjectCss({ projectId, bundle }, { source: 'http', request });
+        return sendCss(req, res, css, etag);
     } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
+        await sendFailure(res, err, 'project-css', request);
     }
 });
 
 // Invalidate (purge) a page or an entire project from the in-memory cache and cache store
 app.post('/api/invalidate', async (req, res) => {
+    const request = requestInfo(req);
     try {
         const body = req.body || {};
-        const projectId = body.projectId ?? null;
-        const pageId = body.pageId ?? null;
-
         withRequestHooks(req, res, {
             action: 'invalidate',
-            projectId,
-            pageId,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
+            projectId: body.projectId ?? null,
+            pageId: body.pageId ?? null,
+            request
         });
-
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
-        }
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (pageId !== null && !isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (!isWriteAllowed()) {
-            return res.status(409).json({
-                error: 'This replica is read-only. Route invalidation writes to a writer replica.',
-                code: READ_ONLY_ERROR_CODE
-            });
-        }
-
-        const bundles = ['full', 'utilities', 'theme'];
-
-        if (pageId !== null) {
-            evictPageByKey(state, makePageKey(projectId, pageId));
-            if (cacheStoreRunner?.enabled) {
-                await Promise.all(
-                    bundles.map(b => cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle: b }))
-                );
-            }
-            return res.json({ invalidated: true, projectId, pageId });
-        }
-
-        // Purge entire project from memory
-        const project = state.projects.get(projectId);
-        if (project) {
-            for (const pid of Array.from(project.pages.keys())) {
-                evictPageByKey(state, makePageKey(projectId, pid));
-            }
-            state.projects.delete(projectId);
-        }
-        // Purge from store
-        if (cacheStoreRunner?.enabled) {
-            if (cacheStoreRunner.hasMethod?.('deleteProjectPageArtifacts')) {
-                await cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
-            }
-            await Promise.all(
-                bundles.map(b => cacheStoreRunner.deleteProjectArtifact({ projectId, bundle: b }))
-            );
-        }
-        return res.json({ invalidated: true, projectId });
+        res.json(await fns.invalidate(body, { source: 'http', request }));
     } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'invalidate', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
+        await sendFailure(res, err, 'invalidate', request);
     }
 });
 
 // Suggest Tailwind classes based on cached project data and/or input
 app.post('/api/suggest', async (req, res) => {
+    const request = requestInfo(req);
     try {
         const body = req.body || {};
-        const projectId = body.projectId ?? null;
-        const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
-        const limitRaw = body.limit;
-        const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
-        const includeInput = normalizeClassList(body.classes);
-        const hookContext = {
-            projectId,
-            prefix,
-            limit,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'suggest' });
-
-        if (projectId && !isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-
-        // Phase 1: Collect ALL candidates (no limit enforcement yet)
-        const seen = new Set();
-        const allSuggestions = [];
-        const push = (list) => {
-            for (const item of list) {
-                if (!item) continue;
-                if (prefix && !item.startsWith(prefix)) continue;
-                if (!seen.has(item)) { seen.add(item); allSuggestions.push(item); }
-            }
-        };
-
-        if (includeInput.length) push(includeInput);
-        if (projectId) push(getProjectSuggestionList(state, projectId));
-        if (config.suggestFallback && prefix) {
-            const staticList = await getStaticClassSuggestions(prefix);
-            push(staticList.length ? staticList : getFallbackSuggestions(prefix));
-        }
-
-        // Phase 2: Run transform pipeline
-        let suggestions = await pluginRunner.runPipeline('transformSuggestions',
-            { projectId, prefix, limit, source: 'http', request: hookContext.request },
-            allSuggestions
-        );
-
-        // Phase 3: Post-validation
-        if (!Array.isArray(suggestions)) suggestions = allSuggestions;
-        suggestions = suggestions.filter(s => typeof s === 'string');
-        suggestions = [...new Set(suggestions)];
-        const effectiveLimit = Math.min(limit, config.suggestLimit);
-        suggestions = suggestions.slice(0, effectiveLimit);
-
-        // Phase 4: Respond
-        await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions, source: 'http' });
-        return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
+        withRequestHooks(req, res, {
+            projectId: body.projectId ?? null,
+            prefix: typeof body.prefix === 'string' ? body.prefix.trim() : '',
+            limit: Math.min(parseIntWithDefault(body.limit, config.suggestLimit, 1), config.suggestLimit),
+            request,
+            action: 'suggest'
+        });
+        res.json(await fns.suggest(body, { source: 'http', request }));
     } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: 'Internal server error.' });
+        await sendFailure(res, err, 'suggest', request);
     }
 });
 
@@ -2490,7 +2459,6 @@ export async function createCore({
         onError: (context) => pluginRunner.runHook('onError', context)
     });
     const persistedBundles = ['full', 'utilities', 'theme'];
-    const readOnlyWriteMessage = 'This replica is read-only. Route writes to a writer replica.';
     const isWriteAllowed = () => config.nodeRole !== 'reader';
     const reportWriteBlocked = async (action, context = {}) => {
         await pluginRunner.runHook('onError', {
@@ -2511,6 +2479,11 @@ export async function createCore({
             reportWriteBlocked(action, context).catch(() => {});
         });
     };
+
+    const fns = createCoreFunctions({
+        state, config, pluginRunner, cacheStoreRunner, queueStoreWrite,
+        isWriteAllowed, reportWriteBlocked, chainDepthLimit
+    });
 
     // Wire mutation functions onto pluginContext
     const evictProjectLocal = (projectId) => {
@@ -2600,52 +2573,13 @@ export async function createCore({
         return pageResult && projectResult;
     };
 
-    pluginContext.compile = async (input) => {
-        const blockedProjectId = input?.projectId ?? null;
-        const blockedPageId = input?.pageId ?? null;
-        const blockedBundle = normalizeBundle(input?.bundle);
-        if (!isWriteAllowed()) {
-            await reportWriteBlocked('plugin-compile', {
-                source: 'plugin',
-                projectId: blockedProjectId,
-                pageId: blockedPageId,
-                bundle: blockedBundle
-            });
-            return { error: readOnlyWriteMessage, status: 409, code: READ_ONLY_ERROR_CODE };
-        }
-        const { projectId, pageId, html, classes, bundle } = input || {};
-        if (!projectId || !isValidId(projectId, config)) return { error: 'Invalid projectId.', status: 400 };
-        if (!pageId || !isValidId(pageId, config)) return { error: 'Invalid pageId.', status: 400 };
-        if (html && typeof html === 'string' && html.length > config.maxHtmlChars) return { error: 'html too large.', status: 413 };
-        if (classes && typeof classes === 'string' && classes.length > config.maxClassChars) return { error: 'classes too large.', status: 413 };
-
-        const store = hookStore.getStore();
-        const skipHooks = store?.inHook ?? false;
-        const currentDepth = store?.compileChainDepth ?? 0;
-
-        if (currentDepth >= chainDepthLimit) {
-            const err = { error: 'Plugin compile chain depth exceeded.', status: 429 };
-            if (!skipHooks) {
-                await pluginRunner.runHook('onError', {
-                    error: new Error(err.error), stage: 'compile', source: 'plugin',
-                    code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context: { projectId, pageId, bundle }
-                });
-            }
-            return err;
-        }
-
-        return hookStore.run(
-            { inHook: skipHooks, compileChainDepth: currentDepth + 1 },
-            () => compileAndCachePage({
-                state, config, projectId, pageId, html, classes, bundle,
-                pluginRunner, cacheStoreRunner,
-                queueStoreWrite,
-                skipHooks,
-                source: 'plugin',
-                request: null
-            })
-        );
-    };
+    // Same input, return value and RichWindError as core.compile; inside a hook the
+    // compile skips hooks, and plugin compile chains are bounded by chainDepthLimit.
+    pluginContext.compile = (input) => fns.compile(input, {
+        source: 'plugin',
+        request: null,
+        skipHooks: hookStore.getStore()?.inHook ?? false
+    });
 
     pluginContext.hydratePageArtifact = (input) => {
         if (!isWriteAllowed()) {
@@ -2705,15 +2639,7 @@ export async function createCore({
         { isWriteAllowed, reportWriteBlocked }
     );
 
-    registerRoutes(
-        app,
-        pluginRunner,
-        config,
-        state,
-        cacheStoreRunner,
-        { isWriteAllowed, reportWriteBlocked },
-        { queueStoreWrite }
-    );
+    registerRoutes(app, pluginRunner, config, fns);
 
     app.use((req, res) => sendError(res, 404, 'NOT_FOUND', 'Not found.'));
 
@@ -2738,7 +2664,15 @@ export async function createCore({
         return closePromise;
     };
 
-    return { app, close };
+    return {
+        app,
+        compile: (input) => fns.compile(input),
+        getCss: (input) => fns.getCss(input),
+        getProjectCss: (input) => fns.getProjectCss(input),
+        invalidate: (input) => fns.invalidate(input),
+        suggest: (input) => fns.suggest(input),
+        close
+    };
 }
 
 // =============================================================================

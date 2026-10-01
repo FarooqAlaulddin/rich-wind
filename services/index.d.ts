@@ -20,7 +20,7 @@ export type RichWindErrorCode =
 export declare class RichWindError extends Error {
   status: number;
   code: RichWindErrorCode;
-  constructor(status: number, code: RichWindErrorCode, message: string);
+  constructor(status: number, code: RichWindErrorCode, message: string, options?: ErrorOptions);
 }
 
 export type NormalizedBundle = 'full' | 'base' | 'theme' | 'utilities';
@@ -86,6 +86,7 @@ export interface PluginGuardContext extends PluginContext, PluginRequestMeta {}
 
 export type PluginSource =
   | 'http'
+  | 'core'
   | 'plugin'
   | 'cache-store'
   | 'page'
@@ -99,13 +100,17 @@ export interface PluginResolveResult {
 
 export interface CompileInput {
   projectId: string;
-  pageId: string;
+  /** Defaults to `"default"`. */
+  pageId?: string;
   html?: string;
   classes?: string | string[];
   bundle?: Bundle;
 }
 
 export interface CompileSuccessResult {
+  success: true;
+  projectId: string;
+  pageId: string;
   css: string;
   classes: string[];
   /** Invalid or unsafe normalized tokens supplied through `classes`, never HTML scanner candidates. */
@@ -115,15 +120,50 @@ export interface CompileSuccessResult {
   bundle: NormalizedBundle;
 }
 
-export interface CompileErrorResult {
-  error: string;
-  status: number;
-  code?: string;
-  classes?: string[];
-  css?: string;
+export interface GetCssInput {
+  projectId: string;
+  /** Defaults to `"default"`. */
+  pageId?: string;
+  bundle?: Bundle;
 }
 
-export type CompileResult = CompileSuccessResult | CompileErrorResult;
+export interface GetProjectCssInput {
+  projectId: string;
+  bundle?: Bundle;
+}
+
+/** What the CSS routes send on success; `etag` is unquoted, or null when there is none. */
+export interface CssResult {
+  css: string;
+  etag: string | null;
+}
+
+export interface InvalidateInput {
+  projectId: string;
+  /** Omit to invalidate the whole project. */
+  pageId?: string;
+}
+
+export interface InvalidateResult {
+  invalidated: true;
+  projectId: string;
+  pageId?: string;
+}
+
+export interface SuggestInput {
+  projectId?: string;
+  prefix?: string;
+  limit?: number;
+  classes?: string | string[];
+}
+
+export interface SuggestResult {
+  success: true;
+  projectId: string | null;
+  prefix: string;
+  count: number;
+  suggestions: string[];
+}
 
 export interface PageArtifact {
   css: string;
@@ -280,7 +320,8 @@ export interface PluginContext {
   evictProject(projectId: string): void;
   purgePage(projectId: string, pageId: string): Promise<boolean>;
   purgeProject(projectId: string): Promise<boolean>;
-  compile(input: CompileInput): Promise<CompileResult>;
+  /** Same input, result and RichWindError as `RichWindCore.compile`. */
+  compile(input: CompileInput): Promise<CompileSuccessResult>;
   hydratePageArtifact(input: HydratePageArtifactInput): boolean;
   hydrateProjectArtifact(input: HydrateProjectArtifactInput): boolean;
 }
@@ -487,6 +528,12 @@ export interface CreateCoreOptions {
 
 export interface RichWindCore {
   app: Express;
+  /** Each function returns its route's 200 body and throws `RichWindError` on failure. */
+  compile(input: CompileInput): Promise<CompileSuccessResult>;
+  getCss(input: GetCssInput): Promise<CssResult>;
+  getProjectCss(input: GetProjectCssInput): Promise<CssResult>;
+  invalidate(input: InvalidateInput): Promise<InvalidateResult>;
+  suggest(input: SuggestInput): Promise<SuggestResult>;
   close(): Promise<void>;
 }
 

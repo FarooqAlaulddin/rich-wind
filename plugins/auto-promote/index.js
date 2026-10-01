@@ -350,15 +350,19 @@ export function createAutoPromotePlugin(options = {}) {
       if (changed && newPromoted.size > 0) {
         // Pre-generate promoted CSS via ctx.compile on synthetic page
         const classes = Array.from(newPromoted).sort().join(' ');
-        const result = await ctx.compile({
-          projectId,
-          pageId: SYNTHETIC_PAGE,
-          classes,
-          bundle: 'utilities'
-        });
-        if (result && !result.error && result.css) {
-          promotedCssCache.set(projectId, result.css);
-          shouldPersist = true;
+        try {
+          const result = await ctx.compile({
+            projectId,
+            pageId: SYNTHETIC_PAGE,
+            classes,
+            bundle: 'utilities'
+          });
+          if (result.css) {
+            promotedCssCache.set(projectId, result.css);
+            shouldPersist = true;
+          }
+        } catch {
+          // Compile failed (RichWindError); the trackers are still persisted below.
         }
       } else if (changed && newPromoted.size === 0) {
         promotedCssCache.delete(projectId);
