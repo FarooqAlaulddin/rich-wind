@@ -41,7 +41,9 @@ details, 1.8 as two PRs, and the order around 1.8.
 - [x] 1.3 Alias removal PR (project_id/page_id/mode/max/count + bundle value aliases) — DONE 2026-09-30 (#47)
 - [x] 1.4 CSS GET miss -> 404 NOT_FOUND — DONE 2026-09-30 (#48)
 - [ ] 1.5 Plugin contract truth-up (guard hook, request hooks docs; ctx.compile
-  shape with the first 1.8 PR, addRoute contract with the second) (#49)
+  shape with the first 1.8 PR, addRoute contract with the second) — IN PROGRESS
+  2026-09-30: guard types and HTTP-only request-hook reality documented; ctx.compile
+  and neutral addRoute contracts remain coupled to 1.8 (#49)
 - [ ] 1.6 ajv contract validation in tests/contracts.test.js, envelope cases
   included; after 1.2 and 1.3, before 1.8 (#50)
 - [ ] 1.7 Contract freeze PR (last of Phases 1+2) + full 1.x compatibility
