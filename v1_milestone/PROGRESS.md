@@ -33,7 +33,7 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 ## Phase 1 — Machine-readable API contract
 
-- [ ] 1.1 `rejected` field on compile (explicit classes input only) (#45)
+- [x] 1.1 `rejected` field on compile (explicit classes input only) — DONE 2026-09-30 (#45)
 - [ ] 1.2 Central error helper + closed code enum (INVALID_BODY and
   UNSUPPORTED_MEDIA_TYPE added; no HTML error pages) + plugin guard mappings +
   openapi error schema (#46)

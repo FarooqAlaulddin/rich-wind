@@ -620,6 +620,7 @@
           "bundle",
           "hash",
           "classes",
+          "rejected",
           "cached",
           "css"
         ],
@@ -642,6 +643,13 @@
           },
           "classes": {
             "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rejected": {
+            "type": "array",
+            "description": "Invalid or unsafe normalized tokens from explicit classes input only.",
             "items": {
               "type": "string"
             }

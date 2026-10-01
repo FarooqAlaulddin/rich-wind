@@ -60,6 +60,7 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
   "bundle": "full",
   "hash": "a1b2c3...",
   "classes": ["p-4", "text-red-500"],
+  "rejected": [],
   "cached": false,
   "css": "/* compiled output */"
 }
@@ -68,6 +69,9 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 - `hash` — SHA-256 of the sorted class list. Same classes always produce the same hash.
 - `cached` — `true` if this result came from cache without recompilation.
 - `classes` — the validated, sorted list of classes that were actually compiled.
+- `rejected` — normalized tokens supplied through `classes` that Tailwind rejected or
+  that Rich Wind did not pass to the compiler because they are unsafe. HTML scanner
+  candidates are intentionally not included.
 
 **Errors:**
 

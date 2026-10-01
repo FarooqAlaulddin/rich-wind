@@ -87,6 +87,8 @@ export interface CompileInput {
 export interface CompileSuccessResult {
   css: string;
   classes: string[];
+  /** Invalid or unsafe normalized tokens supplied through `classes`, never HTML scanner candidates. */
+  rejected: string[];
   hash: string;
   cached: boolean;
   bundle: NormalizedBundle;

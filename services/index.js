@@ -726,6 +726,25 @@ async function filterValidClasses(classes) {
     return classes.filter((_, i) => cssResults[i] !== null);
 }
 
+async function validateExplicitClasses(classes) {
+    const tokens = normalizeClassList(classes);
+    if (tokens.length === 0) return { valid: [], rejected: [] };
+
+    const designSystem = await getDesignSystem();
+    const cssResults = designSystem.candidatesToCss(tokens);
+    const valid = [];
+    const rejected = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (UNSAFE_CLASS_CHAR_RE.test(token) || cssResults[index] === null) rejected.push(token);
+        else valid.push(token);
+    }
+    return {
+        valid: Array.from(new Set(valid)),
+        rejected: Array.from(new Set(rejected)).sort()
+    };
+}
+
 function stampCss(css) {
     const stamp = '/*! managed by rich-wind */';
     return css.replace(/(\/\*! tailwindcss[^*]*\*\/)/, `$1\n${stamp}`);
@@ -1032,17 +1051,16 @@ const RICH_WIND_RELOAD_JS = `(function () {
 }());
 `;
 
-async function resolveClassesFromInput({ html, classes }) {
+async function resolveClassesFromInput({ html, validInput }) {
     // extractClasses already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
     const fromHtml = html ? await extractClasses(html) : [];
-    const fromInput = normalizeClassList(classes);
+    const fromInput = validInput;
 
     if (fromInput.length === 0) {
         return Array.from(new Set(fromHtml)).sort();
     }
-    const validInput = await filterValidClasses(fromInput);
-    const combined = new Set([...fromHtml, ...validInput]);
+    const combined = new Set([...fromHtml, ...fromInput]);
     return Array.from(combined).sort();
 }
 
@@ -1062,6 +1080,8 @@ async function compileAndCachePage({
     request = null
 }) {
     const normalizedBundle = normalizeBundle(bundle);
+    // HTML scanner candidates are intentionally excluded from rejection feedback.
+    const { valid: validInput, rejected } = await validateExplicitClasses(classes);
 
     // Base bundle handling
     if (normalizedBundle === 'base') {
@@ -1070,7 +1090,7 @@ async function compileAndCachePage({
             await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: 'base', source, request });
             await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: 'base', classes: [], css, hash: 'base', cached: true, source, request });
         }
-        return { css, classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
+        return { css, classes: [], rejected, hash: 'base', cached: true, bundle: normalizedBundle };
     }
 
     // Fire onCompileStart
@@ -1083,7 +1103,7 @@ async function compileAndCachePage({
         await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle);
     }
 
-    let resolvedClasses = await resolveClassesFromInput({ html, classes });
+    let resolvedClasses = await resolveClassesFromInput({ html, validInput });
 
     // transformClasses pipeline
     if (!skipHooks && pluginRunner) {
@@ -1139,7 +1159,7 @@ async function compileAndCachePage({
                 await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: normalizedBundle, source, request });
                 await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css: existing[bundleKey], hash: classHash, cached: true, source, request });
             }
-            return { css: existing[bundleKey], classes: resolvedClasses, hash: classHash, cached: true, bundle: normalizedBundle };
+            return { css: existing[bundleKey], classes: resolvedClasses, rejected, hash: classHash, cached: true, bundle: normalizedBundle };
         }
     }
 
@@ -1229,7 +1249,7 @@ async function compileAndCachePage({
         );
     }
 
-    return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
+    return { css, classes: resolvedClasses, rejected, hash: classHash, cached: false, bundle: normalizedBundle };
 }
 
 async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full') {
@@ -1711,6 +1731,7 @@ app.post('/api/compile', async (req, res) => {
             bundle: result.bundle ?? bundle,
             hash: result.hash,
             classes: result.classes,
+            rejected: result.rejected ?? [],
             cached: result.cached,
             css: result.css
         });

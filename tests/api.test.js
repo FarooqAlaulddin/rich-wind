@@ -41,8 +41,26 @@ describe('POST /api/compile', () => {
     expect(body.css).toBeTruthy();
     expect(body.css.length).toBeGreaterThan(0);
     expect(Array.isArray(body.classes)).toBe(true);
+    expect(body.rejected).toEqual([]);
     expect(body.classes).toContain('text-red-500');
     expect(body.classes).toContain('bg-blue-500');
+  });
+
+  it('reports invalid explicit class tokens without treating HTML scanner noise as rejects', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'rejected-tokens',
+        html: '<p>prose words should not become rejection feedback</p>',
+        classes: 'text-red-500 definitely-not-a-tailwind-class text-red-500',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.classes).toContain('text-red-500');
+    expect(body.rejected).toEqual(['definitely-not-a-tailwind-class']);
   });
 
   it('returns cached: true on identical second request (same html+classes)', async () => {
