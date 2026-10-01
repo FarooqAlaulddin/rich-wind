@@ -38,8 +38,8 @@ The primary endpoint. Accepts HTML and/or a class list, compiles them into CSS, 
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `projectId` | string | yes | Scopes the cache. Also accepts `project_id`. |
-| `pageId` | string | no | Defaults to `"default"`. Also accepts `page_id`. |
+| `projectId` | string | yes | Scopes the cache. |
+| `pageId` | string | no | Defaults to `"default"`. |
 | `html` | string | no | HTML to scan for Tailwind class candidates. |
 | `classes` | string or string[] | no | Explicit list of classes. Strings are split on whitespace. |
 | `bundle` | string | no | Which CSS layers to include. Defaults to `"full"`. |
@@ -48,7 +48,7 @@ You must provide at least one of `html` or `classes`, unless you're requesting t
 
 If you provide both `html` and `classes`, they're merged. Duplicates are removed, invalid classes are filtered out, and the final list is sorted before compilation.
 
-**Bundle aliases:** the `bundle` field is flexible. `"preflight"` maps to `base`, `"tokens"` or `"design"` map to `theme`, `"utils"`, `"util"`, `"utility"`, `"utilities-only"`, or `"utility-only"` map to `utilities`. Unrecognized values fall back to `full`. A `mode` field is also accepted as an alias for `bundle`.
+**Bundle values:** `bundle` accepts `full`, `base`, `theme`, or `utilities`. Omit it for `full`; unrecognized values also fall back to `full`.
 
 **Response (200):**
 
@@ -97,8 +97,8 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 
 | Param | Required | Notes |
 | --- | --- | --- |
-| `projectId` | yes | Also accepts `project_id` |
-| `pageId` | no | Defaults to `"default"`. Also accepts `page_id` |
+| `projectId` | yes | Project cache scope |
+| `pageId` | no | Defaults to `"default"` |
 | `bundle` | no | Same normalization as compile |
 
 This endpoint only reads from cache — it doesn't compile anything. If the page hasn't been compiled yet (or its cache has expired), it returns `200` with an empty stylesheet.

@@ -193,7 +193,7 @@ describe('Compile edge cases', () => {
     }
   });
 
-  it('accepts snake_case aliases (project_id, page_id)', async () => {
+  it('rejects removed snake_case aliases', async () => {
     const { baseUrl, close } = await createTestServer({}, {
       config: { rateLimitDisabled: true }
     });
@@ -208,11 +208,9 @@ describe('Compile edge cases', () => {
           classes: 'text-red-500'
         })
       });
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.success).toBe(true);
-      expect(body.projectId).toBe('edge-snake');
-      expect(body.pageId).toBe('home');
+      expect(body.code).toBe('MISSING_INPUT');
     } finally {
       await close();
     }
@@ -288,7 +286,7 @@ describe('Suggest edge cases', () => {
 });
 
 describe('Bundle normalization edge cases', () => {
-  it('treats "mode" alias the same as "bundle"', async () => {
+  it('ignores the removed mode alias', async () => {
     const { baseUrl, close } = await createTestServer({}, {
       config: { rateLimitDisabled: true }
     });
@@ -307,7 +305,7 @@ describe('Bundle normalization edge cases', () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.success).toBe(true);
-      expect(body.bundle).toBe('utilities');
+      expect(body.bundle).toBe('full');
     } finally {
       await close();
     }

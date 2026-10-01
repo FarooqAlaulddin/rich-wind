@@ -180,7 +180,7 @@ describe('POST /api/compile', () => {
     expect(body.error).toBeTruthy();
   });
 
-  it('supports project_id snake_case alias', async () => {
+  it('rejects the removed project_id alias', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -190,12 +190,12 @@ describe('POST /api/compile', () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.projectId).toBe('snake-case-proj');
+    expect(body.code).toBe('MISSING_INPUT');
   });
 
-  it('supports page_id snake_case alias', async () => {
+  it('ignores the removed page_id alias and uses the default page', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -208,7 +208,7 @@ describe('POST /api/compile', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.pageId).toBe('snake-page');
+    expect(body.pageId).toBe('default');
   });
 
   it('defaults pageId to "default" when omitted', async () => {
@@ -376,7 +376,7 @@ describe('POST /api/compile', () => {
     expect(body.css).toContain('--color-');
   });
 
-  it('accepts mode alias for bundle', async () => {
+  it('ignores the removed mode alias for bundle', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -390,10 +390,10 @@ describe('POST /api/compile', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.bundle).toBe('utilities');
+    expect(body.bundle).toBe('full');
     expect(body.css).toContain('bg-red-500');
-    expect(body.css).not.toMatch(/box-sizing:\s*border-box/);
-    expect(body.css).not.toContain(':root, :host');
+    expect(body.css).toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).toContain(':root, :host');
   });
 
   it('defaults invalid bundle values to full', async () => {
@@ -458,7 +458,7 @@ describe('GET /api/css', () => {
     expect(body.error).toBeTruthy();
   });
 
-  it('supports project_id and page_id query params', async () => {
+  it('does not accept project_id and page_id query aliases', async () => {
     // First compile
     await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
@@ -472,7 +472,7 @@ describe('GET /api/css', () => {
 
     // Get CSS with snake_case params
     const response = await fetch(`${baseUrl}/api/css?project_id=snake-query-test&page_id=page1`);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const css = await response.text();
     expect(css.length).toBeGreaterThan(0);
   });

@@ -859,9 +859,9 @@ async function generateBaseCss() {
 function normalizeBundle(value) {
     if (!value) return 'full';
     const normalized = String(value).trim().toLowerCase();
-    if (['base', 'preflight'].includes(normalized)) return 'base';
-    if (['theme', 'tokens', 'design'].includes(normalized)) return 'theme';
-    if (['utilities', 'utility', 'utils', 'util', 'utilities-only', 'utility-only'].includes(normalized)) return 'utilities';
+    if (normalized === 'base') return 'base';
+    if (normalized === 'theme') return 'theme';
+    if (normalized === 'utilities') return 'utilities';
     return 'full';
 }
 
@@ -1691,10 +1691,10 @@ app.get('/richwind-reload.js', (req, res) => {
 app.post('/api/compile', async (req, res) => {
     try {
         const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id;
-        const pageId = body.pageId ?? body.page_id ?? 'default';
+        const projectId = body.projectId;
+        const pageId = body.pageId ?? 'default';
         const { html, classes } = body;
-        const bundle = normalizeBundle(body.bundle ?? body.mode);
+        const bundle = normalizeBundle(body.bundle);
         const hookContext = {
             projectId,
             pageId,
@@ -1768,9 +1768,9 @@ app.post('/api/compile', async (req, res) => {
 // Get cached CSS for a project/page
 app.get('/api/css', async (req, res) => {
     try {
-        const projectId = req.query.projectId ?? req.query.project_id;
-        const pageId = req.query.pageId ?? req.query.page_id ?? 'default';
-        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        const projectId = req.query.projectId;
+        const pageId = req.query.pageId ?? 'default';
+        const bundle = normalizeBundle(req.query.bundle);
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const hookContext = {
             projectId,
@@ -1900,7 +1900,7 @@ app.get('/api/css', async (req, res) => {
 app.get('/api/projects/:projectId/css', async (req, res) => {
     try {
         const { projectId } = req.params;
-        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
+        const bundle = normalizeBundle(req.query.bundle);
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         const hookContext = {
             projectId,
@@ -2005,8 +2005,8 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
 app.post('/api/invalidate', async (req, res) => {
     try {
         const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id ?? null;
-        const pageId = body.pageId ?? body.page_id ?? null;
+        const projectId = body.projectId ?? null;
+        const pageId = body.pageId ?? null;
 
         withRequestHooks(req, res, {
             action: 'invalidate',
@@ -2076,9 +2076,9 @@ app.post('/api/invalidate', async (req, res) => {
 app.post('/api/suggest', async (req, res) => {
     try {
         const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id ?? null;
+        const projectId = body.projectId ?? null;
         const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
-        const limitRaw = body.limit ?? body.max ?? body.count;
+        const limitRaw = body.limit;
         const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
         const includeInput = normalizeClassList(body.classes);
         const hookContext = {

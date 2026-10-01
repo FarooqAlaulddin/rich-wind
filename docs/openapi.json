@@ -122,19 +122,10 @@
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/projectIdAlias"
-          },
-          {
             "$ref": "#/components/parameters/pageId"
           },
           {
-            "$ref": "#/components/parameters/pageIdAlias"
-          },
-          {
             "$ref": "#/components/parameters/bundle"
-          },
-          {
-            "$ref": "#/components/parameters/mode"
           }
         ],
         "responses": {
@@ -194,9 +185,6 @@
           },
           {
             "$ref": "#/components/parameters/bundle"
-          },
-          {
-            "$ref": "#/components/parameters/mode"
           }
         ],
         "responses": {
@@ -418,16 +406,7 @@
         "schema": {
           "$ref": "#/components/schemas/ProjectId"
         },
-        "description": "Project identifier. Required unless project_id is provided."
-      },
-      "projectIdAlias": {
-        "name": "project_id",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/ProjectId"
-        },
-        "description": "Snake-case alias for projectId."
+        "description": "Project identifier."
       },
       "pageId": {
         "name": "pageId",
@@ -437,15 +416,6 @@
           "$ref": "#/components/schemas/PageId"
         },
         "description": "Page identifier. Defaults to \"default\"."
-      },
-      "pageIdAlias": {
-        "name": "page_id",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/PageId"
-        },
-        "description": "Snake-case alias for pageId."
       },
       "projectIdPath": {
         "name": "projectId",
@@ -462,15 +432,6 @@
         "schema": {
           "$ref": "#/components/schemas/Bundle"
         }
-      },
-      "mode": {
-        "name": "mode",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/Bundle"
-        },
-        "description": "Alias for bundle."
       }
     },
     "schemas": {
@@ -490,15 +451,7 @@
           "full",
           "base",
           "theme",
-          "utilities",
-          "preflight",
-          "tokens",
-          "design",
-          "utility",
-          "utils",
-          "util",
-          "utilities-only",
-          "utility-only"
+          "utilities"
         ]
       },
       "NormalizedBundle": {
@@ -529,14 +482,7 @@
           "projectId": {
             "$ref": "#/components/schemas/ProjectId"
           },
-          "project_id": {
-            "$ref": "#/components/schemas/ProjectId"
-          },
           "pageId": {
-            "$ref": "#/components/schemas/PageId",
-            "default": "default"
-          },
-          "page_id": {
             "$ref": "#/components/schemas/PageId",
             "default": "default"
           },
@@ -548,10 +494,6 @@
           },
           "bundle": {
             "$ref": "#/components/schemas/Bundle"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/Bundle",
-            "description": "Alias for bundle."
           }
         },
         "allOf": [
@@ -560,11 +502,6 @@
               {
                 "required": [
                   "projectId"
-                ]
-              },
-              {
-                "required": [
-                  "project_id"
                 ]
               }
             ]
@@ -584,27 +521,11 @@
               {
                 "properties": {
                   "bundle": {
-                    "enum": [
-                      "base",
-                      "preflight"
-                    ]
+                    "enum": ["base"]
                   }
                 },
                 "required": [
                   "bundle"
-                ]
-              },
-              {
-                "properties": {
-                  "mode": {
-                    "enum": [
-                      "base",
-                      "preflight"
-                    ]
-                  }
-                },
-                "required": [
-                  "mode"
                 ]
               }
             ]
@@ -668,9 +589,6 @@
           "projectId": {
             "$ref": "#/components/schemas/ProjectId"
           },
-          "project_id": {
-            "$ref": "#/components/schemas/ProjectId"
-          },
           "prefix": {
             "type": "string"
           },
@@ -678,14 +596,6 @@
             "$ref": "#/components/schemas/ClassInput"
           },
           "limit": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "max": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "count": {
             "type": "integer",
             "minimum": 1
           }

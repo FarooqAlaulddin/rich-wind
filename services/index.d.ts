@@ -19,16 +19,7 @@ export type RichWindErrorCode =
 
 export type NormalizedBundle = 'full' | 'base' | 'theme' | 'utilities';
 
-export type Bundle =
-  | NormalizedBundle
-  | 'preflight'
-  | 'tokens'
-  | 'design'
-  | 'utility'
-  | 'utils'
-  | 'util'
-  | 'utilities-only'
-  | 'utility-only';
+export type Bundle = NormalizedBundle;
 
 export type NodeRole = 'hybrid' | 'writer' | 'reader' | 'write' | 'read';
 
