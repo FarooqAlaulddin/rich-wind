@@ -1,9 +1,18 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { $getSelection, $isRangeSelection } from 'lexical';
-import { $setBlocksType } from '@lexical/selection';
+import { $setBlocksType, $copyBlockFormatIndent } from '@lexical/selection';
 import { $createStyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { $createStyledHeadingNode, $isStyledHeadingNode } from '../nodes/StyledHeadingNode';
+
+// Changing the block type replaces the node; carry its Tailwind classes over
+// so a styled heading keeps its look when it becomes a paragraph, and back.
+function $keepClasses(from, to) {
+  $copyBlockFormatIndent(from, to);
+  if (typeof from.getTailwindClasses === 'function' && typeof to.setTailwindClasses === 'function') {
+    to.setTailwindClasses(from.getTailwindClasses());
+  }
+}
 
 const BLOCK_FORMATS = [
   { value: 'paragraph', label: 'Paragraph' },
@@ -41,9 +50,9 @@ export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSw
       const selection = $getSelection();
       if (!$isRangeSelection(selection)) return;
       if (value === 'paragraph') {
-        $setBlocksType(selection, () => $createStyledParagraphNode());
+        $setBlocksType(selection, () => $createStyledParagraphNode(), $keepClasses);
       } else {
-        $setBlocksType(selection, () => $createStyledHeadingNode(value));
+        $setBlocksType(selection, () => $createStyledHeadingNode(value), $keepClasses);
       }
     });
   }, [editor]);
@@ -61,6 +70,11 @@ export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSw
               <div key={id} className={`page-tab${id === activePage ? ' active' : ''}`}>
                 <button className="page-tab-label" onClick={() => onPageSwitch(id)}>
                   {page.label}
+                  {page.cssSize > 0 && (
+                    <span className="page-tab-kb" title={id === activePage ? 'Page CSS from the last compile' : 'Page CSS from this page\'s last compile'}>
+                      {(page.cssSize / 1024).toFixed(1)} KB
+                    </span>
+                  )}
                 </button>
                 {canDelete && (
                   <button
@@ -74,14 +88,23 @@ export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSw
               </div>
             );
           })}
-          <button className="page-tab-add" onClick={onAddPage} title="Add page">+</button>
+          <button type="button" className="page-tab-add" onClick={onAddPage} title="Add page" aria-label="Add page">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M8 3v10M3 8h10" />
+            </svg>
+          </button>
         </div>
       )}
-      <select value={blockType} onChange={handleBlockFormat}>
-        {BLOCK_FORMATS.map(f => (
-          <option key={f.value} value={f.value}>{f.label}</option>
-        ))}
-      </select>
+      <span className="block-select-wrap">
+        <select className="block-select" value={blockType} onChange={handleBlockFormat} aria-label="Block format">
+          {BLOCK_FORMATS.map(f => (
+            <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+        <svg className="block-select-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 6l4 4 4-4" />
+        </svg>
+      </span>
     </div>
   );
 }

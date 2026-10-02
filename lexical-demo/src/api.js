@@ -6,8 +6,8 @@ export async function compile({ projectId, pageId, html, classes, bundle }) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ projectId, pageId, html, classes, bundle }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || 'Compile failed');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || `Compile failed (HTTP ${res.status})`);
   return data;
 }
 
@@ -49,14 +49,4 @@ export async function fetchPromotedStats() {
   if (!res.ok) return {};
   const data = await res.json().catch(() => ({}));
   return data && typeof data === 'object' ? data : {};
-}
-
-export async function suggest({ projectId, prefix, classes, limit = 50 }) {
-  const res = await fetch(`${CORE_BASE}/api/suggest`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ projectId, prefix, classes, limit }),
-  });
-  const data = await res.json();
-  return data?.suggestions || [];
 }

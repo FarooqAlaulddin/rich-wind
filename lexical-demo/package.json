@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:catalog": "node scripts/gen-catalog.mjs"
   },
   "dependencies": {
     "@lexical/html": "^0.44.0",
