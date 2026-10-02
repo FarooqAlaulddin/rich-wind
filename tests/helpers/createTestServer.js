@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { vi } from 'vitest';
 
 export async function createTestServer(envOverrides = {}, options = {}) {
@@ -7,7 +8,7 @@ export async function createTestServer(envOverrides = {}, options = {}) {
   vi.resetModules();
   const moduleUrl = new URL('../../services/index.js', import.meta.url).href;
   const { createCore } = await import(moduleUrl);
-  const { app, close: closeCore } = await createCore({
+  const { handler, close: closeCore } = await createCore({
     plugins: options.plugins || [],
     config: options.config || {},
     pluginTimeoutMs: options.pluginTimeoutMs,
@@ -15,7 +16,7 @@ export async function createTestServer(envOverrides = {}, options = {}) {
     cacheStoreTimeoutMs: options.cacheStoreTimeoutMs,
   });
 
-  const server = app.listen(0);
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
 

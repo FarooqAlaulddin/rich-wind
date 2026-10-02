@@ -14,9 +14,13 @@ plan without guessing conventions or overstepping authority.
   triggered manually with: `gh workflow run test-before-merge.yml --ref dev`.
 - **Docs snippets are tested.** Any example added to `docs/` that shows request or
   response shapes gets wired into `tests/docs-examples.test.js`.
-- **Protect the core boundary.** V1 core owns deterministic validation, compilation,
-  caching, suggestions, and resource protection. Do not add MCP, prompts, agent
-  context, policy, draft/publish workflows, or other wrapper responsibilities.
+- **Protect the core boundary.** Rich Wind is a library that apps include. V1 core
+  owns deterministic validation, compilation, caching, suggestions, and protection of
+  its own resources. Do not add MCP, prompts, agent context, policy, draft/publish
+  workflows, or other wrapper responsibilities, and do not add rate limiting, access
+  keys or tenant auth: the host app or the proxy in front decides who may call core
+  and how often. Core depends on no web framework (1.8); do not add one as a runtime
+  dependency.
 - **Update `PROGRESS.md` in the same commit** that completes (or starts) an item.
   Use DONE with a date, IN PROGRESS, or BLOCKED with the reason.
 - **No AI attribution in commits or PRs.** No `Co-Authored-By` trailers naming an AI,
@@ -24,7 +28,10 @@ plan without guessing conventions or overstepping authority.
 - **No emojis** in any file, commit message, or PR text.
 - **This folder goes public with the repo at Phase 5.** Nothing under
   `v1_milestone/` — or any tracked file — may ever contain server IPs, hostnames,
-  SSH key names/paths, tokens, or other infrastructure details.
+  SSH key names/paths, tokens, or other infrastructure details. Exception (D3,
+  owner 2026-10-01): the public demo URL may appear, since it is public anyway; the
+  addresses, SSH details and keys behind it may not. Deploy templates under `deploy/` (6.0)
+  use placeholders only.
 
 ## Decision authority
 
@@ -39,6 +46,11 @@ STOP and get explicit owner approval before:
 - Flipping the repo public, enabling Pages, changing branch protection (Phase 5.4-5.5).
 - Running `release-npm.yml`, promoting dist-tags, or any npm publish (Phase 6.1, 6.4).
 - Deleting a branch or tag.
+- Creating, renaming or deleting a repository, or transferring issues (Phase 5.2
+  under decision D1).
+- Creating or changing npm credentials, trusted-publisher settings, or repository
+  secrets (Phase 3.7).
+- Accepting a changed SSH host key, or any change on the VM (Phase 6.0).
 - Any deviation from the plan's frozen contract decisions (the "Settled by evidence"
   section of README.md). New evidence may reopen a decision; present it first.
 - Moving a responsibility assigned to wrappers in the Positioning or Out of V1
@@ -48,10 +60,14 @@ STOP and get explicit owner approval before:
 
 Some steps cannot run from a fresh clone or a cloud environment:
 
-- **VM deployment (Phase 6.2-6.3):** the deploy runbook (rsync release script,
-  service restart) lives in the owner's untracked local notes (`.claude/CLAUDE.md`
-  on the owner's machine — untracked after Phase 0.1) and requires the owner's SSH
-  access. Prepare everything up to the deploy, then hand off.
+- **VM deployment (Phase 6.0 owner steps, 6.2-6.3):** the deploy runbook (rsync
+  release script, service restart) lives in the owner's untracked local notes
+  (`.claude/CLAUDE.md` on the owner's machine — untracked after Phase 0.1) until 6.0
+  moves a placeholder-only version into `deploy/`. Running it requires the owner's
+  SSH access and the host-key check in 6.0. Prepare everything up to the deploy,
+  then hand off.
+- **npm (Phase 3.7):** creating the npm credential and any trusted-publisher setting
+  needs the owner's npm account.
 - **GitHub settings (Phase 5.4-5.5):** repo visibility, Pages, branch protection,
   Dependabot need an admin-authenticated `gh` or the web UI — coordinate with the
   owner if not available.
@@ -59,10 +75,20 @@ Some steps cannot run from a fresh clone or a cloud environment:
 ## Hard sequencing constraints
 
 - Phase 0.1 (untrack `.claude/CLAUDE.md`) lands before any other milestone commits.
-- Within Phases 1+2: alias removal (1.3) and the limiter/auth error codes (2.1, 2.2)
-  land before the contract freeze (1.7). The freeze PR is the LAST PR of Phases 1+2.
-- Phases 1-4 are otherwise parallelizable; Phase 5 strictly precedes Phase 6.
-- Phase 5.1-5.2 (gitleaks + history purge) strictly precede 5.5 (flip public).
+- Within Phases 1+2: alias removal (1.3) and the error envelope (1.2) land first,
+  then contract validation (1.6), then the native transport (1.8) as two PRs: the
+  functions, then the transport. The `ctx.compile` part of 1.5 lands with the first
+  1.8 PR and the `addRoute` part with the second. The embedding contract (2.1) and
+  the concurrency shed (2.4) build on 1.8 and land after it. The contract freeze
+  (1.7) is the LAST PR of Phases 1+2.
+- Phases 1-4 are otherwise parallelizable, except that 4.1, 4.2 and 4.4 land after
+  1.8, so the docs are written once. Phase 5 strictly precedes Phase 6, except 6.0
+  (restore the deploy target), which may start any time.
+- The Phase 5.0 owner decisions come before 5.1; D1 decides whether 5.2 force-pushes
+  or pushes to a new repository.
+- Phase 5.1-5.2 (gitleaks + history purge) strictly precede 5.5 (flip public), and
+  the 5.2 verification must pass first.
+- 3.5 (dependency hygiene) and 3.7 (release pipeline) precede 6.1; 6.0 precedes 6.2.
 
 ## Evidence
 
@@ -76,3 +102,7 @@ Use its scenarios as the starting point for the Phase 2.5 regression tests. If y
 numbers differ by orders of magnitude from the recorded ones (~10ms worst case),
 stop and re-evaluate the "no compile timeout" decision with the owner instead of
 silently proceeding.
+
+Appendix B of `README.md` records the 2026-09-27 gap review and how each finding was
+checked; `evidence/npm-audit-2026-09-26.txt` is the audit snapshot behind Phase 3.5.
+Appendix C records the 2026-09-27 transport review behind item 1.8.

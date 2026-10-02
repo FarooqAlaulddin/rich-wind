@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 
@@ -44,20 +45,20 @@ describe('Plugin identity and name validation', () => {
   });
 
   it('accepts valid plugin names with hyphens and underscores', async () => {
-    const { app } = await createCore({
+    const { handler } = await createCore({
       plugins: [
         { name: 'my-plugin_v2' },
         { name: 'AnotherPlugin123' }
       ]
     });
-    expect(app).toBeTruthy();
+    expect(handler).toBeTruthy();
   });
 
   it('auto-assigns names (plugin-1, plugin-2) that do not collide', async () => {
-    const { app } = await createCore({
+    const { handler } = await createCore({
       plugins: [{}, {}]
     });
-    expect(app).toBeTruthy();
+    expect(handler).toBeTruthy();
   });
 
   it('auto-assigned name collides with explicit name', async () => {
@@ -70,10 +71,10 @@ describe('Plugin identity and name validation', () => {
   });
 
   it('accepts exactly 64 character name', async () => {
-    const { app } = await createCore({
+    const { handler } = await createCore({
       plugins: [{ name: 'a'.repeat(64) }]
     });
-    expect(app).toBeTruthy();
+    expect(handler).toBeTruthy();
   });
 });
 
@@ -103,12 +104,11 @@ describe('Plugin lifecycle (setup, teardown, close)', () => {
       onCompileStart() { events.push('good-fired'); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [failPlugin, goodPlugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -131,11 +131,11 @@ describe('Plugin lifecycle (setup, teardown, close)', () => {
       setup() { return new Promise(r => setTimeout(r, 2000)); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
       setupTimeoutMs: 50
     });
-    expect(app).toBeTruthy();
+    expect(handler).toBeTruthy();
     await close();
   });
 
@@ -174,19 +174,18 @@ describe('Plugin routes', () => {
     const plugin = {
       name: 'dashboard',
       setup({ addRoute }) {
-        addRoute('get', '/stats', (req, res) => {
-          res.json({ ok: true });
+        addRoute('get', '/stats', (req) => {
+          return { body: { ok: true } };
         });
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
     closeFn = close;
 
-    server = app.listen(0);
+    server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
     baseUrl = `http://localhost:${port}`;
@@ -240,17 +239,16 @@ describe('Plugin routes', () => {
     const plugin = {
       name: 'fail-routes',
       setup({ addRoute }) {
-        addRoute('get', '/before-fail', (req, res) => res.json({ ok: true }));
+        addRoute('get', '/before-fail', (req) => ({ body: { ok: true } }));
         throw new Error('setup failed');
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const srv = app.listen(0);
+    const srv = http.createServer(handler).listen(0);
     await new Promise(r => srv.once('listening', r));
     const { port } = srv.address();
 
@@ -295,12 +293,11 @@ describe('Plugin context query functions', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -333,12 +330,11 @@ describe('Plugin context query functions', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -390,12 +386,11 @@ describe('Plugin context query functions', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -492,7 +487,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [alpha, beta],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
     await alphaStorage.set('metrics', { count: 1 });
@@ -533,7 +527,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin, collector],
       cacheStore: {},
-      config: { rateLimitDisabled: true }
     });
 
     expect(await storage.get('metrics')).toBeNull();
@@ -599,7 +592,6 @@ describe('Plugin mutation functions', () => {
       plugins: [probe, collector],
       cacheStore,
       cacheStoreTimeoutMs: 20,
-      config: { rateLimitDisabled: true }
     });
 
     expect(await storage.get('metrics')).toBeNull();
@@ -637,7 +629,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await expect(storage.get('bad key')).rejects.toThrow(/Invalid storage key/);
@@ -655,12 +646,11 @@ describe('Plugin mutation functions', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -688,12 +678,11 @@ describe('Plugin mutation functions', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -742,7 +731,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'pp', pageId: 'home', classes: 'text-red-500', bundle: 'full' });
@@ -789,13 +777,12 @@ describe('Plugin mutation functions', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
       cacheStore,
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
     const baseUrl = `http://localhost:${port}`;
@@ -827,12 +814,12 @@ describe('Plugin mutation functions', () => {
     expect(projectArtifacts.size).toBe(0);
 
     const pageAfterPurge = await fetch(`${baseUrl}/api/css?projectId=purge-proj&pageId=p1`);
-    expect(pageAfterPurge.status).toBe(200);
-    expect(await pageAfterPurge.text()).toBe('');
+    expect(pageAfterPurge.status).toBe(404);
+    expect(await pageAfterPurge.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     const projectAfterPurge = await fetch(`${baseUrl}/api/projects/purge-proj/css`);
-    expect(projectAfterPurge.status).toBe(200);
-    expect(await projectAfterPurge.text()).toBe('');
+    expect(projectAfterPurge.status).toBe(404);
+    expect(await projectAfterPurge.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -847,7 +834,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     const result = await ctxRef.compile({
@@ -864,7 +850,7 @@ describe('Plugin mutation functions', () => {
     await close();
   });
 
-  it('compile() validates inputs and returns error', async () => {
+  it('compile() validates inputs and throws RichWindError', async () => {
     let ctxRef;
     const plugin = {
       name: 'validate-compile',
@@ -873,13 +859,12 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({ plugins: [plugin] });
 
-    const r1 = await ctxRef.compile({});
-    expect(r1.error).toBeTruthy();
-    expect(r1.status).toBe(400);
-
-    const r2 = await ctxRef.compile({ projectId: 'ok', pageId: 'p!!!' });
-    expect(r2.error).toBeTruthy();
-    expect(r2.status).toBe(400);
+    await expect(ctxRef.compile({})).rejects.toMatchObject({
+      name: 'RichWindError', status: 400, code: 'MISSING_INPUT'
+    });
+    await expect(ctxRef.compile({ projectId: 'ok', pageId: 'p!!!' })).rejects.toMatchObject({
+      name: 'RichWindError', status: 400, code: 'INVALID_ID'
+    });
 
     await close();
   });
@@ -896,7 +881,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'sp', pageId: 'p1', classes: 'text-red-500' });
@@ -919,12 +903,11 @@ describe('Plugin mutation functions', () => {
       onCompileResult(ctx) { hookPayloads.push({ hook: 'result', source: ctx.source, request: ctx.request }); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1022,7 +1005,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     // Must have a page first
@@ -1071,14 +1053,13 @@ describe('Plugin mutation functions', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     expect(setupComplete).toBe(true);
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1109,7 +1090,6 @@ describe('Plugin mutation functions', () => {
 
     const { close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'rp', pageId: 'trigger', classes: 'text-red-500' });
@@ -1138,7 +1118,6 @@ describe('Plugin mutation functions', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 1,
-      config: { rateLimitDisabled: true }
     });
 
     // Direct compile from plugin context (depth 0 -> should succeed)
@@ -1189,12 +1168,11 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1220,12 +1198,11 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1251,12 +1228,11 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1282,12 +1258,11 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1314,12 +1289,12 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       onError(info) { errors.push(info); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true, maxCssChars: 2000000 }
+      config: { maxCssChars: 2000000 }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1346,12 +1321,11 @@ describe('Pipeline hooks (transformClasses, transformCss)', () => {
       transformClasses() { throw new Error('transform boom'); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1379,12 +1353,11 @@ describe('Pipeline hooks (transformSuggestions)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1415,12 +1388,11 @@ describe('Pipeline hooks (transformSuggestions)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1450,12 +1422,11 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1479,12 +1450,11 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1497,7 +1467,7 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
     await close();
   });
 
-  it('resolve with invalid payload (missing css) falls through to empty CSS', async () => {
+  it('resolve with invalid payload falls through to NOT_FOUND', async () => {
     const plugin = {
       name: 'bad-resolver',
       resolvePageCss() {
@@ -1505,18 +1475,17 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=bad&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1532,18 +1501,18 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
       onError(info) { errors.push(info); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true, maxCssChars: 2000000 }
+      config: { maxCssChars: 2000000 }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=big&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1557,18 +1526,17 @@ describe('Resolve hooks (resolvePageCss, resolveProjectCss)', () => {
       resolvePageCss() { throw new Error('resolve boom'); }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
     const res = await fetch(`http://localhost:${port}/api/css?projectId=tr&pageId=p1`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NOT_FOUND' });
 
     await new Promise(r => server.close(r));
     await close();
@@ -1597,12 +1565,11 @@ describe('Adversarial: resolve hooks first-wins behavior', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1627,12 +1594,11 @@ describe('Adversarial: resolve hooks first-wins behavior', () => {
       resolvePageCss() { return { css: '.fallback { margin: 0; }' }; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1654,12 +1620,11 @@ describe('Adversarial: transformClasses edge cases', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1691,12 +1656,11 @@ describe('Adversarial: transformClasses edge cases', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin1, plugin2],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1724,12 +1688,11 @@ describe('Adversarial: evictProject state cleanup', () => {
       setup(ctx) { ctxRef = ctx; }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       plugins: [plugin],
-      config: { rateLimitDisabled: true }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise(r => server.once('listening', r));
     const { port } = server.address();
 
@@ -1782,7 +1745,6 @@ describe('Adversarial: setup ordering and hook visibility', () => {
 
     const { close } = await createCore({
       plugins: [pluginA, pluginB],
-      config: { rateLimitDisabled: true }
     });
 
     await new Promise(r => setTimeout(r, 50));
@@ -1815,7 +1777,6 @@ describe('Adversarial: chain depth tracking', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 1,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'rg', pageId: 'a', classes: 'text-red-500' });
@@ -1857,7 +1818,6 @@ describe('Adversarial: chain depth tracking', () => {
     const { close } = await createCore({
       plugins: [plugin],
       maxPluginCompileChainDepth: 2,
-      config: { rateLimitDisabled: true }
     });
 
     await ctxRef.compile({ projectId: 'dc', pageId: 'chain-0', classes: 'bg-blue-500' });

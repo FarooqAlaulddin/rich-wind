@@ -1,7 +1,7 @@
 {
   "name": "rich-wind",
   "version": "0.0.1-alpha.0",
-  "description": "A stateless Tailwind CSS runtime service for compiling CSS from HTML and class lists",
+  "description": "Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step.",
   "type": "module",
   "main": "./services/index.js",
   "types": "./services/index.d.ts",
@@ -10,16 +10,26 @@
       "types": "./services/index.d.ts",
       "import": "./services/index.js",
       "default": "./services/index.js"
+    },
+    "./plugins/auto-promote": {
+      "import": "./plugins/auto-promote/index.js",
+      "default": "./plugins/auto-promote/index.js"
+    },
+    "./plugins/cache-store-fs": {
+      "import": "./plugins/cache-store-fs/index.js",
+      "default": "./plugins/cache-store-fs/index.js"
     }
   },
   "files": [
-    "services/"
+    "services/",
+    "plugins/auto-promote/",
+    "plugins/cache-store-fs/"
   ],
   "workspaces": [
     "lexical-demo"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "start": "node ./services/index.js",
@@ -30,6 +40,7 @@
     "prod": "node ./services/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "prepack": "node ./scripts/clean-package.js clean",
     "postpack": "node ./scripts/clean-package.js restore",
     "test:pack": "node ./scripts/pack-smoke.js",
@@ -41,8 +52,8 @@
     "css",
     "runtime",
     "compiler",
-    "api",
-    "service"
+    "library",
+    "ai"
   ],
   "author": "Farooq Alaulddin",
   "license": "MIT",
@@ -51,11 +62,14 @@
     "url": "https://github.com/FarooqAlaulddin/rich-wind.git"
   },
   "dependencies": {
-    "@tailwindcss/node": "^4.1.18",
-    "@tailwindcss/oxide": "^4.1.18",
-    "express": "^5.2.1"
+    "@tailwindcss/node": "^4.3.3",
+    "@tailwindcss/oxide": "^4.3.3",
+    "proxy-addr": "^2.0.8"
   },
   "devDependencies": {
-    "vitest": "^4.0.18"
+    "@playwright/test": "^1.63.0",
+    "ajv": "^8.20.0",
+    "express": "^5.2.1",
+    "vitest": "^5.0.3"
   }
 }

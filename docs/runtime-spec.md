@@ -14,7 +14,7 @@ When a request hits `/api/compile`, Rich Wind goes through these steps:
 
 **Hashing.** The sorted class list is joined with `|` and hashed with SHA-256. This hash is the cache key — two requests with the same set of classes will always produce the same hash, regardless of the order they were sent in.
 
-**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system is loaded once at startup and reused for all requests.
+**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system loads lazily on first use and is then reused for all requests.
 
 ## Cache
 
@@ -322,13 +322,171 @@ Both are generated from a single Tailwind compile and split by pattern-matching 
 
 The `base` bundle (preflight) is compiled separately since it doesn't depend on any classes.
 
-## Rate Limiting
+## Threat Model and Enforcement Boundary
 
-Rich Wind includes a per-IP rate limiter using a fixed-window algorithm. Each IP address gets `rateLimitMax` requests (default 60) per `rateLimitWindowMs` (default 60 seconds). When the limit is hit, the response is `429` with a `Retry-After` header indicating how many seconds until the window resets.
+Rich Wind protects resources it owns: deterministic input validation, body and input
+caps, cache caps, CSS-output caps, and safe construction of Tailwind inline sources.
+It validates explicit classes before constructing `@source inline(...)`, including
+rejecting brace-expansion syntax. These controls apply equally to every caller.
 
-The rate limiter runs per-process. If you're running multiple replicas behind a load balancer, each replica tracks its own counters — so the effective limit per IP is `rateLimitMax * replicaCount`.
+The host app or proxy owns the network edge: authentication, tenant-to-`projectId`
+mapping, authorization, rate limiting, request logging, TLS, and WAF policy. Core has
+no API key or rate limiter. A plugin guard can block an HTTP request, but direct library
+calls intentionally bypass guards because their host has already authorized the call.
 
-Set `rateLimitDisabled: true` if you handle rate limiting at the gateway level. If Rich Wind is behind a reverse proxy, set `trustProxy: true` so it reads the real client IP from `X-Forwarded-For` instead of seeing the proxy's IP.
+Core enforces a compile concurrency cap (`maxConcurrentCompiles`, default `8`). When every
+slot is in use, a compile is shed immediately with `503 SERVER_BUSY` and `Retry-After: 1`;
+there is no wait queue. The cap lives in `core.compile`, so direct library calls are bounded
+too. Core has no per-client fairness: one client can hold every slot, and per-client limits
+belong to the host or proxy.
+
+Plugin compiles follow these slot rules. A `ctx.compile` from a hook that its parent compile
+awaits runs inside the parent's slot and never takes a second one. A `ctx.compile` from a
+deferred hook (`deferHooks`) or from a plugin route takes its own slot and can be shed with
+`SERVER_BUSY`. Auto-promote defers `onCompileResult`, so under full load its promotion
+compile is shed and treated as a skipped promotion.
+
+When deploying behind a trusted reverse proxy, set `trustProxy` so plugin request hooks
+receive the forwarded client address (`request.ip`). Never enable it for untrusted direct clients.
+
+`trustProxy` follows Express `trust proxy` semantics. It accepts `true` or `false`, a hop
+count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (names
+such as `loopback` and `uniquelocal` also work). With `RW_TRUST_PROXY`, `1` is a hop count
+of 1, not "trust all". When unset, core uses the socket address and ignores
+`X-Forwarded-For`, except when core is mounted in a host that already resolved `req.ip`
+(Express with `trust proxy` set); then core uses the host's `req.ip`. For `core.fetch`,
+`trustProxy` applies to the `ip` you pass, as if it were the socket address. The resolved
+address reaches plugin hooks only.
+
+`true` trusts the leftmost `X-Forwarded-For` entry, which the client controls, so it is
+unsafe on the open internet. Use a hop count equal to the number of proxies you run in front
+of core that each append to `X-Forwarded-For`, or a subnet list.
+
+Example, a Cloudflare Tunnel in front of nginx in front of core. Cloudflare's edge sets
+`X-Forwarded-For` to the client address and cloudflared forwards it to nginx on loopback.
+nginx appends cloudflared's loopback address with `$proxy_add_x_forwarded_for`, and core sees
+nginx's loopback socket. The trusted hops are nginx and cloudflared, so use hop count `2`
+(or `loopback`). The next entry is then the address Cloudflare saw, which is the client.
+Confirm the exact count against the real chain by logging `request.ip` from a known client.
+
+## Including Rich Wind in an App
+
+Core has no limiter and no authentication, so the host puts them in front. These are the
+supported ways to embed it. In every pattern the host's middleware runs before core, and a
+request the host rejects never reaches a plugin hook or the compiler.
+
+### Express host (mounted handler)
+
+`core.handler` resolves paths from `req.url`. Express rewrites `req.url` under a mount path,
+so the handler works under any prefix:
+
+```js
+import express from "express";
+import expressRateLimit from "express-rate-limit";
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const limiter = expressRateLimit({ windowMs: 60_000, limit: 120 });
+const auth = (req, res, next) =>
+  req.header("authorization") ? next() : res.status(401).json({ error: "Unauthorized" });
+
+const app = express();
+app.use("/rw", limiter, auth, core.handler);
+```
+
+`POST /rw/api/compile` reaches `/api/compile`. Do not put `express.json()` before the mount;
+core reads and bounds the body itself.
+
+### Plain node:http host
+
+A host that routes a prefix to core strips it from `req.url` first, keeping any query string:
+
+```js
+import http from "node:http";
+
+http.createServer((req, res) => {
+  if (req.url === "/rw" || req.url.startsWith("/rw/") || req.url.startsWith("/rw?")) {
+    req.url = req.url.slice(3) || "/";
+    if (req.url[0] === "?") req.url = "/" + req.url;
+    return core.handler(req, res);
+  }
+  res.statusCode = 404;
+  res.end();
+}).listen(3000);
+```
+
+### Next.js App Router
+
+Serve `core.fetch` from a route handler and set `basePath` to the route's prefix. This needs
+the Node.js runtime.
+
+```js
+// app/rw/[...path]/route.js
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const handle = (req) => core.fetch(req, { basePath: "/rw" });
+
+export const runtime = "nodejs";
+export const GET = handle;
+export const POST = handle;
+export const HEAD = handle;
+export const OPTIONS = handle;
+```
+
+### Fastify (library calls)
+
+Call the functions directly and map `RichWindError` to a reply. Direct calls bypass plugin
+guards, because the host has already authorized them:
+
+```js
+import Fastify from "fastify";
+import { createCore, RichWindError } from "rich-wind";
+
+const core = await createCore();
+const app = Fastify();
+
+app.post("/css/compile", async (request, reply) => {
+  try {
+    return await core.compile(request.body);
+  } catch (err) {
+    if (err instanceof RichWindError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+});
+```
+
+### Standalone server behind a proxy
+
+Run `npm start` and let the proxy own limiting, TLS and authentication. These nginx zones are
+field-tested: 120 requests per minute for compile and 600 per minute for everything else.
+An editor integration makes about 4 requests per keystroke, so lower limits flood the client
+with `429` responses.
+
+```nginx
+limit_req_zone $binary_remote_addr zone=richwind_compile:10m rate=120r/m;
+limit_req_zone $binary_remote_addr zone=richwind_api:10m     rate=600r/m;
+
+location = /api/compile {
+  limit_req zone=richwind_compile burst=30 nodelay;
+  proxy_pass http://127.0.0.1:3000;
+}
+location / {
+  limit_req zone=richwind_api burst=100 nodelay;
+  proxy_pass http://127.0.0.1:3000;
+}
+```
+
+Set `RW_TRUST_PROXY` to the number of proxy hops so plugin hooks see the real client address.
+
+### Plugin routes and access policy
+
+Routes a plugin registers under `/plugins/<name>/...` are reachable by anyone who can reach
+core. A plugin whose routes expose sensitive data or perform mutations must enforce its own
+access policy, for example in a `guard` hook or inside the route. Host middleware on the
+mount prefix covers them only when every request passes through that host.
 
 ## Security Headers
 
@@ -342,6 +500,10 @@ Every response includes these headers:
 | `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
 
 CSS responses, `GET /richwind-loader.js`, and `GET /richwind-reload.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources by optional HTML preview surfaces. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
+
+The core intentionally does not set CSP, HSTS, cookie attributes, or cache policy for a
+host application. Those headers depend on the host's authentication and deployment
+topology and belong at the application or reverse-proxy layer.
 
 ## What the Core Doesn't Do
 

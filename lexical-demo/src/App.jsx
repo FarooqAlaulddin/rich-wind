@@ -1,8 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import Editor from './components/Editor';
-import InspectorPanel from './components/InspectorPanel';
+import StylePanel from './components/StylePanel';
+import RichWindStrip from './components/RichWindStrip';
+import ExamplesMenu from './components/ExamplesMenu';
 import { useMultiPageCompile } from './hooks/useMultiPageCompile';
 import { useThemeMode } from './hooks/useThemeMode';
+import { removeRejectedClasses, loadEditorState } from './editorActions';
+import { collectUsedClasses } from './usedClasses';
 
 const PAGE_STYLE_ID = 'rw-editor-css';
 
@@ -16,17 +20,29 @@ function ensureStyleTag(id) {
   return el;
 }
 
+function WindMark() {
+  return (
+    <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M3 8h11a3 3 0 1 0-3-3" />
+      <path d="M3 13h15a3 3 0 1 1-3 3" />
+      <path d="M3 18h7a2 2 0 1 1-2 2" />
+    </svg>
+  );
+}
+
 export default function App() {
   const {
     projectId,
     baseCss, themeCss, utilitiesCss, fullCss,
-    sharedSizes, promotedClasses,
-    html, loading, cached,
+    sharedSizes, promotedClasses, promoteStats,
+    lastResult, error,
+    html, loading,
     activePage, pages, pageOrder,
     initialEditorState, setEditor: hookSetEditor,
     switchPage, doCompile, addPage, deletePage, resetDemo,
   } = useMultiPageCompile();
   const [editor, setEditor] = useState(null);
+  const [stripView, setStripView] = useState(null);
   const { isDark, toggle: toggleTheme } = useThemeMode();
 
   const handleEditorReady = useCallback((ed) => {
@@ -34,7 +50,7 @@ export default function App() {
     hookSetEditor(ed);
   }, [hookSetEditor]);
 
-  // Inject compiled CSS into the document head for WYSIWYG
+  // Inject compiled CSS into the document head so the editor is WYSIWYG
   useEffect(() => {
     ensureStyleTag(PAGE_STYLE_ID).textContent = fullCss;
   }, [fullCss]);
@@ -55,17 +71,47 @@ export default function App() {
     deletePage(pageId, editor);
   }, [deletePage, editor]);
 
+  const handleExample = useCallback((example) => {
+    loadEditorState(editor, example.state);
+  }, [editor]);
+
+  const used = useMemo(() => collectUsedClasses(html, pages), [html, pages]);
+
+  const handleRemoveRejected = useCallback(() => {
+    removeRejectedClasses(editor, lastResult.rejected);
+  }, [editor, lastResult]);
+
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>Lexical + Rich Wind</h1>
+        <div className="brand">
+          <WindMark />
+          <div className="brand-text">
+            <span className="brand-name">Rich Wind</span>
+            <span className="brand-tagline">Tailwind compiled at runtime. No build step.</span>
+          </div>
+        </div>
         <div className="header-actions">
-          <button className="theme-btn" onClick={toggleTheme} title="Toggle dark mode">{isDark ? 'Light' : 'Dark'}</button>
-          <button className="reset-btn" onClick={resetDemo} title="Reset demo to defaults">Reset</button>
+          <ExamplesMenu onPick={handleExample} />
+          <button
+            type="button"
+            className={`btn btn-icon${stripView === 'export' ? ' is-on' : ''}`}
+            onClick={() => setStripView((v) => (v === 'export' ? null : 'export'))}
+            title="Standalone export, shown in the Rich Wind strip"
+          >
+            Export
+          </button>
+          <button type="button" className="btn btn-icon" onClick={toggleTheme} aria-label="Toggle dark mode" title="Toggle dark mode">
+            {isDark ? 'Light' : 'Dark'}
+          </button>
+          <button type="button" className="btn btn-icon" onClick={resetDemo} title="Reset the demo to its sample pages">
+            Reset
+          </button>
         </div>
       </header>
-      <main className="split-layout">
-        <section className="editor-pane">
+
+      <main className="workspace">
+        <section className="editor-pane" aria-label="Editor">
           <Editor
             onContentChange={handleContentChange}
             onEditor={handleEditorReady}
@@ -78,24 +124,25 @@ export default function App() {
             onDeletePage={handleDeletePage}
           />
         </section>
-        <section className="inspector-pane">
-          <InspectorPanel
-            editor={editor}
-            html={html}
-            css={fullCss}
-            baseCss={baseCss}
-            themeCss={themeCss}
-            utilitiesCss={utilitiesCss}
-            sharedSizes={sharedSizes}
-            promotedClasses={promotedClasses}
-            loading={loading}
-            cached={cached}
-            projectId={projectId}
-            activePage={activePage}
-            pages={pages}
-            pageOrder={pageOrder}
-          />
-        </section>
+        <aside className="panel" aria-label="Style panel">
+          <StylePanel editor={editor} used={used} css={fullCss} rejected={lastResult.rejected} promoted={promotedClasses} loading={loading} />
+        </aside>
+        <RichWindStrip
+          view={stripView}
+          onView={setStripView}
+          html={html}
+          projectId={projectId}
+          activePage={activePage}
+          baseCss={baseCss}
+          themeCss={themeCss}
+          utilitiesCss={utilitiesCss}
+          fullCss={fullCss}
+          promotedClasses={promotedClasses}
+          lastResult={lastResult}
+          error={error}
+          loading={loading}
+          onRemoveRejected={handleRemoveRejected}
+        />
       </main>
     </div>
   );

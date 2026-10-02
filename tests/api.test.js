@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 import { createTestServer } from './helpers/createTestServer.js';
@@ -6,8 +7,8 @@ let server;
 let baseUrl;
 
 beforeAll(async () => {
-  const { app } = await createCore();
-  server = app.listen(0);
+  const { handler } = await createCore();
+  server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   baseUrl = `http://localhost:${port}`;
@@ -41,8 +42,42 @@ describe('POST /api/compile', () => {
     expect(body.css).toBeTruthy();
     expect(body.css.length).toBeGreaterThan(0);
     expect(Array.isArray(body.classes)).toBe(true);
+    expect(body.rejected).toEqual([]);
     expect(body.classes).toContain('text-red-500');
     expect(body.classes).toContain('bg-blue-500');
+  });
+
+  it('reports invalid explicit class tokens without treating HTML scanner noise as rejects', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'rejected-tokens',
+        html: '<p>prose words should not become rejection feedback</p>',
+        classes: 'text-red-500 definitely-not-a-tailwind-class text-red-500',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.classes).toContain('text-red-500');
+    expect(body.rejected).toEqual(['definitely-not-a-tailwind-class']);
+  });
+
+  it('rejects brace-expansion syntax before it can enter an inline source directive', async () => {
+    const response = await fetch(`${baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'brace-input',
+        classes: 'p-4 bg-{red,blue}-500',
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.classes).toEqual(['p-4']);
+    expect(body.rejected).toEqual(['bg-{red,blue}-500']);
   });
 
   it('returns cached: true on identical second request (same html+classes)', async () => {
@@ -162,7 +197,7 @@ describe('POST /api/compile', () => {
     expect(body.error).toBeTruthy();
   });
 
-  it('supports project_id snake_case alias', async () => {
+  it('rejects the removed project_id alias', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -172,12 +207,12 @@ describe('POST /api/compile', () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body.projectId).toBe('snake-case-proj');
+    expect(body.code).toBe('MISSING_INPUT');
   });
 
-  it('supports page_id snake_case alias', async () => {
+  it('ignores the removed page_id alias and uses the default page', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -190,7 +225,7 @@ describe('POST /api/compile', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.pageId).toBe('snake-page');
+    expect(body.pageId).toBe('default');
   });
 
   it('defaults pageId to "default" when omitted', async () => {
@@ -358,7 +393,7 @@ describe('POST /api/compile', () => {
     expect(body.css).toContain('--color-');
   });
 
-  it('accepts mode alias for bundle', async () => {
+  it('ignores the removed mode alias for bundle', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -372,10 +407,10 @@ describe('POST /api/compile', () => {
 
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.bundle).toBe('utilities');
+    expect(body.bundle).toBe('full');
     expect(body.css).toContain('bg-red-500');
-    expect(body.css).not.toMatch(/box-sizing:\s*border-box/);
-    expect(body.css).not.toContain(':root, :host');
+    expect(body.css).toMatch(/box-sizing:\s*border-box/);
+    expect(body.css).toContain(':root, :host');
   });
 
   it('defaults invalid bundle values to full', async () => {
@@ -420,10 +455,10 @@ describe('GET /api/css', () => {
     expect(css.length).toBeGreaterThan(0);
   });
 
-  it('returns empty CSS on cache miss', async () => {
+  it('returns NOT_FOUND on a cache miss', async () => {
     const response = await fetch(`${baseUrl}/api/css?projectId=missing-proj&pageId=missing-page`);
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('returns 400 when projectId is missing', async () => {
@@ -440,7 +475,7 @@ describe('GET /api/css', () => {
     expect(body.error).toBeTruthy();
   });
 
-  it('supports project_id and page_id query params', async () => {
+  it('does not accept project_id and page_id query aliases', async () => {
     // First compile
     await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
@@ -454,7 +489,7 @@ describe('GET /api/css', () => {
 
     // Get CSS with snake_case params
     const response = await fetch(`${baseUrl}/api/css?project_id=snake-query-test&page_id=page1`);
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     const css = await response.text();
     expect(css.length).toBeGreaterThan(0);
   });
@@ -519,10 +554,10 @@ describe('GET /api/projects/:projectId/css', () => {
     expect(css.length).toBeGreaterThan(0);
   });
 
-  it('returns empty CSS for unknown project', async () => {
+  it('returns NOT_FOUND for an unknown project', async () => {
     const response = await fetch(`${baseUrl}/api/projects/unknown-project-xyz/css`);
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('returns 400 for invalid projectId', async () => {

@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Rich Wind API",
-    "version": "0.0.1",
-    "description": "Runtime Tailwind CSS compilation and cache API."
+    "version": "1.0.0",
+    "description": "Runtime Tailwind CSS compilation and cache API. Every documented endpoint may be blocked by a plugin guard: 401 uses UNAUTHORIZED, 403 uses FORBIDDEN, 429 uses RATE_LIMITED, and other blocking statuses use REQUEST_BLOCKED."
   },
   "servers": [
     {
@@ -82,7 +82,7 @@
             }
           },
           "429": {
-            "description": "Rate limit exceeded",
+            "description": "Blocked by a plugin guard (RATE_LIMITED); core has no built-in limiter",
             "headers": {
               "Retry-After": {
                 "schema": {
@@ -109,6 +109,25 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Every compile slot is in use (SERVER_BUSY); the compile is shed without queueing",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds to wait before retrying. Always 1."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -122,24 +141,15 @@
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/projectIdAlias"
-          },
-          {
             "$ref": "#/components/parameters/pageId"
           },
           {
-            "$ref": "#/components/parameters/pageIdAlias"
-          },
-          {
             "$ref": "#/components/parameters/bundle"
-          },
-          {
-            "$ref": "#/components/parameters/mode"
           }
         ],
         "responses": {
           "200": {
-            "description": "CSS found (or empty if page not cached)",
+            "description": "CSS found",
             "headers": {
               "ETag": {
                 "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
@@ -160,6 +170,14 @@
           },
           "304": {
             "description": "Not Modified — CSS unchanged since If-None-Match"
+          },
+          "404": {
+            "description": "Cached CSS not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -194,14 +212,11 @@
           },
           {
             "$ref": "#/components/parameters/bundle"
-          },
-          {
-            "$ref": "#/components/parameters/mode"
           }
         ],
         "responses": {
           "200": {
-            "description": "Project CSS found (or empty if no pages cached)",
+            "description": "Project CSS found",
             "headers": {
               "ETag": {
                 "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
@@ -222,6 +237,14 @@
           },
           "304": {
             "description": "Not Modified — CSS unchanged since If-None-Match"
+          },
+          "404": {
+            "description": "Project CSS not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -418,16 +441,7 @@
         "schema": {
           "$ref": "#/components/schemas/ProjectId"
         },
-        "description": "Project identifier. Required unless project_id is provided."
-      },
-      "projectIdAlias": {
-        "name": "project_id",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/ProjectId"
-        },
-        "description": "Snake-case alias for projectId."
+        "description": "Project identifier."
       },
       "pageId": {
         "name": "pageId",
@@ -437,15 +451,6 @@
           "$ref": "#/components/schemas/PageId"
         },
         "description": "Page identifier. Defaults to \"default\"."
-      },
-      "pageIdAlias": {
-        "name": "page_id",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/PageId"
-        },
-        "description": "Snake-case alias for pageId."
       },
       "projectIdPath": {
         "name": "projectId",
@@ -462,15 +467,6 @@
         "schema": {
           "$ref": "#/components/schemas/Bundle"
         }
-      },
-      "mode": {
-        "name": "mode",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "$ref": "#/components/schemas/Bundle"
-        },
-        "description": "Alias for bundle."
       }
     },
     "schemas": {
@@ -490,15 +486,7 @@
           "full",
           "base",
           "theme",
-          "utilities",
-          "preflight",
-          "tokens",
-          "design",
-          "utility",
-          "utils",
-          "util",
-          "utilities-only",
-          "utility-only"
+          "utilities"
         ]
       },
       "NormalizedBundle": {
@@ -529,14 +517,7 @@
           "projectId": {
             "$ref": "#/components/schemas/ProjectId"
           },
-          "project_id": {
-            "$ref": "#/components/schemas/ProjectId"
-          },
           "pageId": {
-            "$ref": "#/components/schemas/PageId",
-            "default": "default"
-          },
-          "page_id": {
             "$ref": "#/components/schemas/PageId",
             "default": "default"
           },
@@ -548,10 +529,6 @@
           },
           "bundle": {
             "$ref": "#/components/schemas/Bundle"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/Bundle",
-            "description": "Alias for bundle."
           }
         },
         "allOf": [
@@ -560,11 +537,6 @@
               {
                 "required": [
                   "projectId"
-                ]
-              },
-              {
-                "required": [
-                  "project_id"
                 ]
               }
             ]
@@ -584,27 +556,11 @@
               {
                 "properties": {
                   "bundle": {
-                    "enum": [
-                      "base",
-                      "preflight"
-                    ]
+                    "enum": ["base"]
                   }
                 },
                 "required": [
                   "bundle"
-                ]
-              },
-              {
-                "properties": {
-                  "mode": {
-                    "enum": [
-                      "base",
-                      "preflight"
-                    ]
-                  }
-                },
-                "required": [
-                  "mode"
                 ]
               }
             ]
@@ -620,6 +576,7 @@
           "bundle",
           "hash",
           "classes",
+          "rejected",
           "cached",
           "css"
         ],
@@ -646,6 +603,13 @@
               "type": "string"
             }
           },
+          "rejected": {
+            "type": "array",
+            "description": "Invalid or unsafe normalized tokens from explicit classes input only.",
+            "items": {
+              "type": "string"
+            }
+          },
           "cached": {
             "type": "boolean"
           },
@@ -660,9 +624,6 @@
           "projectId": {
             "$ref": "#/components/schemas/ProjectId"
           },
-          "project_id": {
-            "$ref": "#/components/schemas/ProjectId"
-          },
           "prefix": {
             "type": "string"
           },
@@ -670,14 +631,6 @@
             "$ref": "#/components/schemas/ClassInput"
           },
           "limit": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "max": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "count": {
             "type": "integer",
             "minimum": 1
           }
@@ -763,14 +716,16 @@
       "ErrorResponse": {
         "type": "object",
         "required": [
-          "error"
+          "error",
+          "code"
         ],
         "properties": {
           "error": {
             "type": "string"
           },
           "code": {
-            "type": "string"
+            "type": "string",
+            "enum": ["INVALID_ID", "MISSING_INPUT", "INVALID_BODY", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE", "READ_ONLY_REPLICA", "RATE_LIMITED", "SERVER_BUSY", "UNAUTHORIZED", "FORBIDDEN", "REQUEST_BLOCKED", "NOT_FOUND", "INTERNAL"]
           }
         }
       },

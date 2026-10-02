@@ -23,17 +23,17 @@ for (let i = 0; i < plugins.length; i++) {
   }
 }
 
-const { app, close } = await createCore({
+const { handler, close } = await createCore({
   plugins,
   maxPluginCompileChainDepth: 3,
-  config: {
-    rateLimitDisabled: true,
-  },
 });
 
+// Express hosts the static demo build; core is mounted as a plain handler.
+const app = express();
 if (isProd) {
   app.use(demoBase, express.static(distDir));
 }
+app.use(handler);
 
 const server = app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

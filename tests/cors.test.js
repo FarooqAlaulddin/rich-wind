@@ -4,7 +4,6 @@ import { createTestServer } from './helpers/createTestServer.js';
 describe('CORS configuration', () => {
   it('does not emit CORS headers when RW_CORS_ORIGIN is not set', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -21,7 +20,7 @@ describe('CORS configuration', () => {
   it('supports wildcard CORS and handles preflight', async () => {
     const { baseUrl, close } = await createTestServer(
       { RW_CORS_ORIGIN: '*' },
-      { config: { rateLimitDisabled: true } }
+      {}
     );
 
     try {
@@ -58,7 +57,7 @@ describe('CORS configuration', () => {
   it('supports allowlisted origins and rejects preflight from blocked origin', async () => {
     const { baseUrl, close } = await createTestServer(
       { RW_CORS_ORIGIN: 'https://demo.example.com,https://studio.example.com' },
-      { config: { rateLimitDisabled: true } }
+      {}
     );
 
     try {
@@ -93,7 +92,7 @@ describe('CORS configuration', () => {
   it('config.corsOrigin overrides RW_CORS_ORIGIN', async () => {
     const { baseUrl, close } = await createTestServer(
       { RW_CORS_ORIGIN: '*' },
-      { config: { corsOrigin: 'https://locked.example.com', rateLimitDisabled: true } }
+      { config: { corsOrigin: 'https://locked.example.com' } }
     );
 
     try {

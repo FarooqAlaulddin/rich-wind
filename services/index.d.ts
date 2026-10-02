@@ -1,19 +1,31 @@
-import type { Express, RequestHandler } from 'express';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export type MaybePromise<T> = T | Promise<T>;
 
+export type RichWindErrorCode =
+  | 'INVALID_ID'
+  | 'MISSING_INPUT'
+  | 'INVALID_BODY'
+  | 'UNSUPPORTED_MEDIA_TYPE'
+  | 'PAYLOAD_TOO_LARGE'
+  | 'READ_ONLY_REPLICA'
+  | 'RATE_LIMITED'
+  | 'SERVER_BUSY'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'REQUEST_BLOCKED'
+  | 'NOT_FOUND'
+  | 'INTERNAL';
+
+export declare class RichWindError extends Error {
+  status: number;
+  code: RichWindErrorCode;
+  constructor(status: number, code: RichWindErrorCode, message: string, options?: ErrorOptions);
+}
+
 export type NormalizedBundle = 'full' | 'base' | 'theme' | 'utilities';
 
-export type Bundle =
-  | NormalizedBundle
-  | 'preflight'
-  | 'tokens'
-  | 'design'
-  | 'utility'
-  | 'utils'
-  | 'util'
-  | 'utilities-only'
-  | 'utility-only';
+export type Bundle = NormalizedBundle;
 
 export type NodeRole = 'hybrid' | 'writer' | 'reader' | 'write' | 'read';
 
@@ -22,13 +34,13 @@ export interface CoreConfig {
   maxHtmlChars: number;
   maxClassChars: number;
   maxClassCount: number;
+  /** Compiles that may run at once; a compile past the cap throws 503 SERVER_BUSY. */
+  maxConcurrentCompiles: number;
   maxIdLength: number;
   suggestLimit: number;
   suggestFallback: boolean;
-  rateLimitWindowMs: number;
-  rateLimitMax: number;
-  rateLimitDisabled: boolean;
-  trustProxy: boolean;
+  /** null when unset; a boolean, a hop count, or trusted addresses/subnets. */
+  trustProxy: TrustProxySetting | null;
   cacheMaxPages: number;
   cacheTtlMs: number;
   projectCacheTtlMs: number;
@@ -42,13 +54,11 @@ export interface CoreConfigInput {
   maxHtmlChars?: number | string;
   maxClassChars?: number | string;
   maxClassCount?: number | string;
+  maxConcurrentCompiles?: number | string;
   maxIdLength?: number | string;
   suggestLimit?: number | string;
   suggestFallback?: boolean | string;
-  rateLimitWindowMs?: number | string;
-  rateLimitMax?: number | string;
-  rateLimitDisabled?: boolean | string;
-  trustProxy?: boolean | string;
+  trustProxy?: TrustProxySetting | string;
   cacheMaxPages?: number | string;
   cacheTtlMs?: number | string;
   projectCacheTtlMs?: number | string;
@@ -63,8 +73,18 @@ export interface PluginRequestMeta {
   path: string;
 }
 
+export interface PluginGuardResult {
+  blocked: boolean;
+  error?: string;
+  status?: number;
+  retryAfter?: number | string;
+}
+
+export interface PluginGuardContext extends PluginContext, PluginRequestMeta {}
+
 export type PluginSource =
   | 'http'
+  | 'core'
   | 'plugin'
   | 'cache-store'
   | 'page'
@@ -78,29 +98,70 @@ export interface PluginResolveResult {
 
 export interface CompileInput {
   projectId: string;
-  pageId: string;
+  /** Defaults to `"default"`. */
+  pageId?: string;
   html?: string;
   classes?: string | string[];
   bundle?: Bundle;
 }
 
 export interface CompileSuccessResult {
+  success: true;
+  projectId: string;
+  pageId: string;
   css: string;
   classes: string[];
+  /** Invalid or unsafe normalized tokens supplied through `classes`, never HTML scanner candidates. */
+  rejected: string[];
   hash: string;
   cached: boolean;
   bundle: NormalizedBundle;
 }
 
-export interface CompileErrorResult {
-  error: string;
-  status: number;
-  code?: string;
-  classes?: string[];
-  css?: string;
+export interface GetCssInput {
+  projectId: string;
+  /** Defaults to `"default"`. */
+  pageId?: string;
+  bundle?: Bundle;
 }
 
-export type CompileResult = CompileSuccessResult | CompileErrorResult;
+export interface GetProjectCssInput {
+  projectId: string;
+  bundle?: Bundle;
+}
+
+/** What the CSS routes send on success; `etag` is unquoted, or null when there is none. */
+export interface CssResult {
+  css: string;
+  etag: string | null;
+}
+
+export interface InvalidateInput {
+  projectId: string;
+  /** Omit to invalidate the whole project. */
+  pageId?: string;
+}
+
+export interface InvalidateResult {
+  invalidated: true;
+  projectId: string;
+  pageId?: string;
+}
+
+export interface SuggestInput {
+  projectId?: string;
+  prefix?: string;
+  limit?: number;
+  classes?: string | string[];
+}
+
+export interface SuggestResult {
+  success: true;
+  projectId: string | null;
+  prefix: string;
+  count: number;
+  suggestions: string[];
+}
 
 export interface PageArtifact {
   css: string;
@@ -257,7 +318,8 @@ export interface PluginContext {
   evictProject(projectId: string): void;
   purgePage(projectId: string, pageId: string): Promise<boolean>;
   purgeProject(projectId: string): Promise<boolean>;
-  compile(input: CompileInput): Promise<CompileResult>;
+  /** Same input, result and RichWindError as `RichWindCore.compile`. */
+  compile(input: CompileInput): Promise<CompileSuccessResult>;
   hydratePageArtifact(input: HydratePageArtifactInput): boolean;
   hydrateProjectArtifact(input: HydrateProjectArtifactInput): boolean;
 }
@@ -271,11 +333,45 @@ export interface PluginStorage {
   list(prefix?: string): Promise<string[]>;
 }
 
+export type TrustProxySetting = boolean | number | string[];
+
+/** The request a plugin route handler receives, under either adapter. */
+export interface PluginRouteRequest {
+  method: string;
+  path: string;
+  params: Record<string, string>;
+  query: URLSearchParams;
+  headers: { get(name: string): string | null };
+  ip: string;
+  /** Body parsed as JSON, capped at maxBodyBytes; throws RichWindError 400/413. */
+  json(): Promise<unknown>;
+  /** Body as UTF-8 text, capped at maxBodyBytes; throws RichWindError 400/413. */
+  text(): Promise<string>;
+}
+
+/** A plain object or array body is sent as JSON. */
+export interface PluginRouteResponse {
+  status?: number;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | object | null;
+}
+
+export type PluginRouteHandler = (
+  request: PluginRouteRequest
+) => MaybePromise<PluginRouteResponse | null | undefined>;
+
+export interface FetchOptions {
+  /** Client address; the Fetch API carries none. trustProxy applies to it. */
+  ip?: string;
+  /** Prefix stripped before routing; paths outside it answer 404 NOT_FOUND. */
+  basePath?: string;
+}
+
 export interface PluginSetupContext extends PluginContext {
   addRoute(
     method: PluginRouteMethod,
     routePath: string,
-    handler: RequestHandler
+    handler: PluginRouteHandler
   ): void;
   storage: PluginStorage;
 }
@@ -402,6 +498,7 @@ export interface OnErrorContext extends PluginContext {
 }
 
 export type PluginHookName =
+  | 'guard'
   | 'onRequestStart'
   | 'onResponseSent'
   | 'onCompileStart'
@@ -425,6 +522,8 @@ export interface RichWindPlugin {
   setupTimeoutMs?: number;
   setup?(context: PluginSetupContext): MaybePromise<void>;
   teardown?(): MaybePromise<void>;
+  /** Runs for HTTP requests only. Return `{ blocked: true }` to stop the request. */
+  guard?(context: PluginGuardContext): MaybePromise<PluginGuardResult | null | undefined>;
   onRequestStart?(context: OnRequestStartContext): MaybePromise<void>;
   onResponseSent?(context: OnResponseSentContext): MaybePromise<void>;
   onCompileStart?(context: OnCompileStartContext): MaybePromise<void>;
@@ -460,10 +559,56 @@ export interface CreateCoreOptions {
 }
 
 export interface RichWindCore {
-  app: Express;
+  /** Node-style handler: http.createServer(core.handler) or app.use('/rw', core.handler). */
+  handler(req: IncomingMessage, res: ServerResponse, next?: (err?: unknown) => void): void;
+  /** Fetch-style handler for Next.js App Router, Hono and similar hosts. */
+  fetch(request: Request, options?: FetchOptions): Promise<Response>;
+  /** Each function returns its route's 200 body and throws `RichWindError` on failure. */
+  compile(input: CompileInput): Promise<CompileSuccessResult>;
+  getCss(input: GetCssInput): Promise<CssResult>;
+  getProjectCss(input: GetProjectCssInput): Promise<CssResult>;
+  invalidate(input: InvalidateInput): Promise<InvalidateResult>;
+  suggest(input: SuggestInput): Promise<SuggestResult>;
   close(): Promise<void>;
 }
 
 export declare function createCore(
   options?: CreateCoreOptions
 ): Promise<RichWindCore>;
+
+export interface ExportInput {
+  html?: string;
+  classes?: string | string[];
+}
+
+export interface ScanHtmlResult {
+  classes: string[];
+  rejected: string[];
+}
+
+export interface ExportCssResult {
+  css: string;
+  classes: string[];
+  rejected: string[];
+}
+
+export interface ExportSetPage extends ExportInput {
+  id: string;
+}
+
+export interface ExportSetResult {
+  shared: string;
+  pages: Record<string, string>;
+  classes: Record<string, string[]>;
+  rejected: Record<string, string[]>;
+}
+
+/** Valid classes in the HTML, and class-attribute tokens that compile to nothing. */
+export declare function scanHtml(html: string): Promise<ScanHtmlResult>;
+/** One page in, complete standalone CSS out; byte-identical for the same input. */
+export declare function exportCss(input?: ExportInput): Promise<ExportCssResult>;
+/** N pages in, one shared sheet plus one sheet per page out; deterministic. */
+export declare function exportSet(
+  pages: ExportSetPage[],
+  options?: { minPages?: number }
+): Promise<ExportSetResult>;

@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCore } from '../services/index.js';
 
@@ -5,8 +6,8 @@ let server;
 let baseUrl;
 
 beforeAll(async () => {
-  const { app } = await createCore();
-  server = app.listen(0);
+  const { handler } = await createCore();
+  server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   baseUrl = `http://localhost:${port}`;
@@ -243,5 +244,21 @@ describe('Cache behavior tests', () => {
 
     // CSS should be different after update
     expect(css1).not.toBe(css2);
+  });
+
+  it('changing a page\'s classes in one bundle never serves stale CSS from another', async () => {
+    const core = await createCore();
+    try {
+      const page = { projectId: 'stale-bundle', pageId: 'p' };
+      await core.compile({ ...page, bundle: 'full', classes: 'p-4' });
+      await core.compile({ ...page, bundle: 'utilities', classes: 'm-2' });
+      const full = await core.compile({ ...page, bundle: 'full', classes: 'm-2' });
+      expect(full.css).toMatch(/\.m-2\s*\{/);
+      expect(full.css).not.toMatch(/\.p-4\s*\{/);
+      const cached = await core.getCss({ ...page, bundle: 'full' });
+      expect(cached.css).toMatch(/\.m-2\s*\{/);
+    } finally {
+      await core.close();
+    }
   });
 });

@@ -1,0 +1,6 @@
+# npm audit after 1.8 (Express in devDependencies) and npm@11 audit fix, 2026-10-01
+# npm 10.9.8, node v22.23.2
+## npm audit
+found 0 vulnerabilities
+## npm audit --omit=dev
+found 0 vulnerabilities

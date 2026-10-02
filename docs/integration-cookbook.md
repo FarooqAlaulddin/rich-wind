@@ -4,19 +4,20 @@ Real patterns for putting Rich Wind into production. Each section is a self-cont
 
 ## Embedded Service
 
-The simplest deployment. Rich Wind runs as an in-process Express app with default settings.
+The simplest deployment. Rich Wind runs in-process behind a plain Node HTTP server with default settings.
 
 ```js
+import http from "node:http";
 import { createCore } from "rich-wind";
 
-const { app } = await createCore({
+const core = await createCore({
   config: {
     cacheMaxPages: 500,
     cacheTtlMs: 10 * 60 * 1000,
   }
 });
 
-app.listen(3001);
+http.createServer(core.handler).listen(3001);
 ```
 
 This works well for local tooling, internal services, or single-node deployments where you don't need persistence or multi-tenant isolation.
@@ -25,9 +26,14 @@ This works well for local tooling, internal services, or single-node deployments
 
 Rich Wind doesn't do authentication — it compiles whatever you send it. In a multi-tenant system, you need a wrapper that authenticates the caller and maps their identity to a scoped `projectId` so tenants can't see each other's cache.
 
+The gateway below is an Express host that owns authentication and rate limiting. It calls the core functions in-process, so no second HTTP hop is needed. `RichWindError` carries the status and code for validation failures. For mounting, Next.js, Fastify and proxy patterns see [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
+
 ```js
 import express from "express";
 import crypto from "node:crypto";
+import { createCore, RichWindError } from "rich-wind";
+
+const core = await createCore();
 
 const gateway = express();
 gateway.use(express.json({ limit: "100kb" }));
@@ -44,25 +50,74 @@ gateway.post("/css/compile", async (req, res) => {
   const tenantId = req.header("x-tenant-id");
   if (!tenantId) return res.status(401).json({ error: "Unauthorized" });
 
-  const resp = await fetch(`${process.env.RW_CORE_URL}/api/compile`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
+  try {
+    const result = await core.compile({
       projectId: scopedId(tenantId, req.body.projectSlug),
       pageId: req.body.pageId || "default",
       html: req.body.html,
       classes: req.body.classes,
       bundle: req.body.bundle
-    })
-  });
-
-  res.status(resp.status)
-    .type(resp.headers.get("content-type"))
-    .send(await resp.text());
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof RichWindError) {
+      return res.status(err.status).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
 });
 ```
 
+If you want Rich Wind's own HTTP routes available to authenticated callers as well, mount the handler behind your auth middleware instead: `gateway.use("/rw", requireTenant, core.handler)`. In that case you must still map `projectId` yourself, because core accepts whatever `projectId` the caller sends.
+
 The key idea: your users never see or control the `projectId`. You generate it from their authenticated identity, so there's no way for tenant A to read tenant B's cache.
+
+## Next.js App Router
+
+`core.fetch` takes a Web `Request` and returns a `Response`, so it drops into a route handler. Create the core once at module scope and share it.
+
+```js
+// lib/rich-wind.js
+import { createCore } from "rich-wind";
+
+export const core = await createCore();
+```
+
+```js
+// app/rw/[...path]/route.js
+import { core } from "@/lib/rich-wind";
+
+export const runtime = "nodejs"; // @tailwindcss/oxide is a native addon
+
+export const GET = (req) => core.fetch(req, { basePath: "/rw" });
+export const POST = GET;
+export const HEAD = GET;
+export const OPTIONS = GET;
+```
+
+`basePath` is stripped before routing, so `POST /rw/api/compile` reaches `/api/compile`. A path outside it answers `404 NOT_FOUND`. A `Request` carries no client address, and Next.js does not give a portable one. If you run behind a trusted proxy, read the header it sets and pass the address: `core.fetch(req, { basePath: "/rw", ip })`. Without `ip`, plugin hooks see `request.ip` as `"unknown"`. Edge runtimes cannot load `@tailwindcss/oxide`, so use the Node.js runtime.
+
+## Hono
+
+```js
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const app = new Hono();
+
+app.all("/rw/*", (c) =>
+  core.fetch(c.req.raw, {
+    basePath: "/rw",
+    ip: c.req.header("x-forwarded-for")?.split(",").pop()?.trim(),
+  })
+);
+
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+The example reads the last `X-Forwarded-For` entry, which is the one your nearest proxy appended. Only do this if a proxy you control sets the header. Otherwise omit `ip`.
 
 ## Editor Integration
 
@@ -274,8 +329,10 @@ const cacheStore = {
 ### Wiring it up
 
 ```js
-const { app } = await createCore({ cacheStore, cacheStoreTimeoutMs: 150 });
-app.listen(3001);
+import http from "node:http";
+
+const core = await createCore({ cacheStore, cacheStoreTimeoutMs: 150 });
+http.createServer(core.handler).listen(3001);
 ```
 
 ### Error visibility
@@ -283,7 +340,7 @@ app.listen(3001);
 The store is [fail-open](runtime-spec.html#failure-behavior) — if your backend is slow or down, Rich Wind continues working with in-memory cache only. To monitor store health, use the [`onError` plugin hook](plugin-system.html#error-handling) with `stage: "cache-store"`:
 
 ```js
-const { app } = await createCore({
+const core = await createCore({
   cacheStore,
   cacheStoreTimeoutMs: 150,
   plugins: [{

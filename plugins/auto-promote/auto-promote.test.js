@@ -1,3 +1,4 @@
+import http from 'node:http';
 import { describe, it, expect, afterAll } from 'vitest';
 import { createCore } from '../../services/index.js';
 import { createAutoPromotePlugin } from './index.js';
@@ -14,11 +15,10 @@ async function compileViaHttp(port, projectId, pageId, classes) {
 
 // Helper: start a server, return { port, server, close }
 async function startServer(coreOptions) {
-  const { app, close } = await createCore({
-    config: { rateLimitDisabled: true },
+  const { handler, close } = await createCore({
     ...coreOptions
   });
-  const server = app.listen(0);
+  const server = http.createServer(handler).listen(0);
   await new Promise(r => server.once('listening', r));
   const { port } = server.address();
   return { port, server, close };
@@ -323,13 +323,12 @@ describe('Auto-Promote Plugin', () => {
       await stopServer({ server, close });
     });
 
-    it('promoted bundle sets Cache-Control: public with max-age', async () => {
+    it('promoted bundle sets Cache-Control: public, no-cache', async () => {
       const plugin = createAutoPromotePlugin({ threshold: 2 });
       const { port, server, close } = await startServer({ plugins: [plugin] });
 
       const cssRes = await fetch(`http://localhost:${port}/plugins/auto-promote/css/proj`);
-      expect(cssRes.headers.get('cache-control')).toMatch(/public/);
-      expect(cssRes.headers.get('cache-control')).toMatch(/max-age=/);
+      expect(cssRes.headers.get('cache-control')).toBe('public, no-cache');
 
       await stopServer({ server, close });
     });
@@ -435,11 +434,10 @@ describe('Auto-Promote Plugin', () => {
         name: 'seeder',
         setup: () => {}
       };
-      const { app, close: close1 } = await createCore({
+      const { handler, close: close1 } = await createCore({
         plugins: [seedPlugin],
-        config: { rateLimitDisabled: true }
       });
-      const server1 = app.listen(0);
+      const server1 = http.createServer(handler).listen(0);
       await new Promise(r => server1.once('listening', r));
       const { port: port1 } = server1.address();
 

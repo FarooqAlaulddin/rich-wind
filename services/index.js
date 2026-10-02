@@ -1,4 +1,5 @@
-import express from 'express';
+import http from 'node:http';
+import proxyaddr from 'proxy-addr';
 import { compile, __unstable__loadDesignSystem } from '@tailwindcss/node';
 import { Scanner } from '@tailwindcss/oxide';
 import path from 'path';
@@ -65,6 +66,39 @@ const appendVaryHeader = (existingValue, nextToken) => {
 
 const NODE_ROLES = new Set(['hybrid', 'writer', 'reader']);
 const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
+export const ERROR_CODES = Object.freeze([
+    'INVALID_ID', 'MISSING_INPUT', 'INVALID_BODY', 'UNSUPPORTED_MEDIA_TYPE',
+    'PAYLOAD_TOO_LARGE', 'READ_ONLY_REPLICA', 'RATE_LIMITED', 'SERVER_BUSY',
+    'UNAUTHORIZED', 'FORBIDDEN', 'REQUEST_BLOCKED', 'NOT_FOUND', 'INTERNAL'
+]);
+
+export class RichWindError extends Error {
+    constructor(status, code, message, options) {
+        super(message, options);
+        this.name = 'RichWindError';
+        this.status = status;
+        this.code = code;
+    }
+}
+
+function guardErrorCode(status) {
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 429) return 'RATE_LIMITED';
+    return 'REQUEST_BLOCKED';
+}
+
+function defaultErrorCode(status) {
+    if (status === 401) return 'UNAUTHORIZED';
+    if (status === 403) return 'FORBIDDEN';
+    if (status === 404) return 'NOT_FOUND';
+    if (status === 409) return 'READ_ONLY_REPLICA';
+    if (status === 413) return 'PAYLOAD_TOO_LARGE';
+    if (status === 415) return 'UNSUPPORTED_MEDIA_TYPE';
+    if (status === 429) return 'RATE_LIMITED';
+    if (status >= 500) return 'INTERNAL';
+    return 'INVALID_BODY';
+}
 
 // Pre-compiled regex constants
 const VALID_ID_RE = /^[a-zA-Z0-9._-]+$/;
@@ -74,7 +108,7 @@ const LAYER_DECL_RE = /@layer[^;]*;/;
 const ESCAPE_BACKSLASH_RE = /\\/g;
 const ESCAPE_QUOTE_RE = /"/g;
 // Reject characters that could break out of @source inline("...") directives
-const UNSAFE_CLASS_CHAR_RE = /[);\n\r\0]/;
+const UNSAFE_CLASS_CHAR_RE = /[(){};,\n\r\0]/;
 
 function normalizeNodeRole(value) {
     if (typeof value !== 'string') return 'hybrid';
@@ -108,6 +142,11 @@ function buildConfig(overrides = {}) {
             50000,
             1
         ),
+        maxConcurrentCompiles: parseIntWithDefault(
+            overrides.maxConcurrentCompiles ?? process.env.RW_MAX_CONCURRENT_COMPILES,
+            8,
+            1
+        ),
         maxClassChars: parseIntWithDefault(
             overrides.maxClassChars ?? process.env.RW_MAX_CLASS_CHARS,
             10000,
@@ -132,10 +171,7 @@ function buildConfig(overrides = {}) {
             overrides.suggestFallback ?? process.env.RW_SUGGEST_FALLBACK,
             true
         ),
-        trustProxy: parseBoolean(
-            overrides.trustProxy ?? process.env.RW_TRUST_PROXY,
-            false
-        ),
+        trustProxy: parseTrustProxy(overrides.trustProxy ?? process.env.RW_TRUST_PROXY),
         cacheMaxPages: parseIntWithDefault(
             overrides.cacheMaxPages ?? process.env.RW_CACHE_MAX_PAGES,
             200,
@@ -166,10 +202,6 @@ function createCacheState() {
         projects: new Map(),
         pageLru: new Map()
     };
-}
-
-function getClientIp(req) {
-    return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 // =============================================================================
@@ -726,6 +758,25 @@ async function filterValidClasses(classes) {
     return classes.filter((_, i) => cssResults[i] !== null);
 }
 
+async function validateExplicitClasses(classes) {
+    const tokens = normalizeClassList(classes);
+    if (tokens.length === 0) return { valid: [], rejected: [] };
+
+    const designSystem = await getDesignSystem();
+    const cssResults = designSystem.candidatesToCss(tokens);
+    const valid = [];
+    const rejected = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        if (UNSAFE_CLASS_CHAR_RE.test(token) || cssResults[index] === null) rejected.push(token);
+        else valid.push(token);
+    }
+    return {
+        valid: Array.from(new Set(valid)),
+        rejected: Array.from(new Set(rejected)).sort()
+    };
+}
+
 function stampCss(css) {
     const stamp = '/*! managed by rich-wind */';
     return css.replace(/(\/\*! tailwindcss[^*]*\*\/)/, `$1\n${stamp}`);
@@ -807,14 +858,126 @@ async function generateBaseCss() {
 }
 
 // =============================================================================
+// Standalone export (no cache, no plugins, no project state)
+// =============================================================================
+const CLASS_ATTR_RE = /\sclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+const HTML_ENTITY_RE = /&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi;
+const NAMED_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+// Attribute values arrive entity-encoded ("[.dark_&amp;]:p-4"); classes are matched decoded.
+function decodeHtmlEntities(text) {
+    return text.replace(HTML_ENTITY_RE, (match, dec, hex, name) => {
+        if (name) return NAMED_ENTITIES[name.toLowerCase()];
+        const code = dec ? Number(dec) : parseInt(hex, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    });
+}
+
+/**
+ * Classes in HTML. `classes` are the scanner's valid candidates plus valid
+ * class-attribute tokens (sorted); `rejected` are class-attribute tokens that
+ * compile to nothing. Other scanner words (prose, attribute values) are never reported.
+ */
+export async function scanHtml(html) {
+    if (typeof html !== 'string' || html.length === 0) return { classes: [], rejected: [] };
+    const written = [];
+    for (const match of html.matchAll(CLASS_ATTR_RE)) {
+        written.push(...normalizeClassList(decodeHtmlEntities(match[1] ?? match[2])));
+    }
+    const [classes, checked] = await Promise.all([extractClasses(html), validateExplicitClasses(written)]);
+    return {
+        classes: Array.from(new Set([...classes, ...checked.valid])).sort(),
+        rejected: checked.rejected
+    };
+}
+
+async function resolveExportInput({ html, classes } = {}) {
+    const [fromHtml, fromInput] = await Promise.all([scanHtml(html), validateExplicitClasses(classes)]);
+    return {
+        classes: Array.from(new Set([...fromHtml.classes, ...fromInput.valid])).sort(),
+        rejected: Array.from(new Set([...fromHtml.rejected, ...fromInput.rejected])).sort()
+    };
+}
+
+/**
+ * One page in, complete CSS out (preflight, theme variables, utilities).
+ * Depends only on the input, so the same input always gives byte-identical CSS.
+ */
+export async function exportCss(input = {}) {
+    const { classes, rejected } = await resolveExportInput(input);
+    return { css: await generateCssForClasses(classes), classes, rejected };
+}
+
+/**
+ * N pages in, one shared sheet plus one sheet per page out. Load the shared
+ * sheet first, then the page's own sheet.
+ *
+ * The shared sheet holds preflight, the theme variables of every page and the
+ * utilities used on at least `minPages` pages. A page sheet starts at the
+ * page's first class (in Tailwind order) that is not shared and repeats any
+ * shared class sorting after it, so every page keeps Tailwind's cascade order.
+ */
+export async function exportSet(pages, { minPages = 2 } = {}) {
+    if (!Array.isArray(pages)) throw new TypeError('exportSet: pages must be an array');
+    const ids = new Set();
+    for (const page of pages) {
+        if (!page || typeof page.id !== 'string' || page.id.length === 0) {
+            throw new TypeError('exportSet: every page needs a string id');
+        }
+        if (ids.has(page.id)) throw new TypeError(`exportSet: duplicate page id "${page.id}"`);
+        ids.add(page.id);
+    }
+    const threshold = Number.isInteger(minPages) && minPages >= 1 ? minPages : 2;
+    const sorted = pages.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const resolved = await Promise.all(sorted.map((page) => resolveExportInput(page)));
+
+    const usage = new Map();
+    for (const { classes } of resolved) {
+        for (const cls of classes) usage.set(cls, (usage.get(cls) ?? 0) + 1);
+    }
+    const union = Array.from(usage.keys()).sort();
+    const shared = union.filter((cls) => usage.get(cls) >= threshold);
+
+    const designSystem = await getDesignSystem();
+    const order = new Map(designSystem.getClassOrder(union).map(([cls, rank]) => [cls, rank ?? 0n]));
+
+    const [sharedCss, unionCss] = await Promise.all([
+        generateCssForClasses(shared),
+        union.length > 0 ? generateCssForClasses(union) : ''
+    ]);
+    const unionTheme = (unionCss.match(THEME_BLOCK_RE) || []).join('').trim();
+    const sharedBody = sharedCss.replace(THEME_BLOCK_RE, '').trimEnd();
+
+    const out = { shared: unionTheme ? `${sharedBody}\n${unionTheme}\n` : `${sharedBody}\n`, pages: {}, classes: {}, rejected: {} };
+    await Promise.all(sorted.map(async (page, index) => {
+        const { classes, rejected } = resolved[index];
+        const own = classes.filter((cls) => usage.get(cls) < threshold);
+        let css = '';
+        if (own.length > 0) {
+            const start = own.reduce((min, cls) => (order.get(cls) < min ? order.get(cls) : min), order.get(own[0]));
+            const sheet = classes.filter((cls) => order.get(cls) >= start);
+            css = (await generateThemeUtilitiesForClasses(sheet)).utilitiesCss;
+        }
+        out.pages[page.id] = css;
+        out.classes[page.id] = classes;
+        out.rejected[page.id] = rejected;
+    }));
+    // Key order follows the sorted ids, whatever order the compiles finished in.
+    for (const key of ['pages', 'classes', 'rejected']) {
+        out[key] = Object.fromEntries(sorted.map((page) => [page.id, out[key][page.id]]));
+    }
+    return out;
+}
+
+// =============================================================================
 // Input normalization + compile orchestration
 // =============================================================================
 function normalizeBundle(value) {
     if (!value) return 'full';
     const normalized = String(value).trim().toLowerCase();
-    if (['base', 'preflight'].includes(normalized)) return 'base';
-    if (['theme', 'tokens', 'design'].includes(normalized)) return 'theme';
-    if (['utilities', 'utility', 'utils', 'util', 'utilities-only', 'utility-only'].includes(normalized)) return 'utilities';
+    if (normalized === 'base') return 'base';
+    if (normalized === 'theme') return 'theme';
+    if (normalized === 'utilities') return 'utilities';
     return 'full';
 }
 
@@ -1032,18 +1195,12 @@ const RICH_WIND_RELOAD_JS = `(function () {
 }());
 `;
 
-async function resolveClassesFromInput({ html, classes }) {
-    // extractClasses already validates via candidatesToCss, so only
+async function resolveClassesFromInput({ html, validInput }) {
+    // scanHtml already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
-    const fromHtml = html ? await extractClasses(html) : [];
-    const fromInput = normalizeClassList(classes);
-
-    if (fromInput.length === 0) {
-        return Array.from(new Set(fromHtml)).sort();
-    }
-    const validInput = await filterValidClasses(fromInput);
-    const combined = new Set([...fromHtml, ...validInput]);
-    return Array.from(combined).sort();
+    const scanned = html ? await scanHtml(html) : { classes: [], rejected: [] };
+    const combined = new Set([...scanned.classes, ...validInput]);
+    return { classes: Array.from(combined).sort(), htmlRejected: scanned.rejected };
 }
 
 async function compileAndCachePage({
@@ -1062,6 +1219,10 @@ async function compileAndCachePage({
     request = null
 }) {
     const normalizedBundle = normalizeBundle(bundle);
+    // Rejections come from the class list and from HTML class attributes; other
+    // scanner words (prose, attribute values) are never reported.
+    const { valid: validInput, rejected: inputRejected } = await validateExplicitClasses(classes);
+    let rejected = inputRejected;
 
     // Base bundle handling
     if (normalizedBundle === 'base') {
@@ -1070,7 +1231,7 @@ async function compileAndCachePage({
             await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: 'base', source, request });
             await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: 'base', classes: [], css, hash: 'base', cached: true, source, request });
         }
-        return { css, classes: [], hash: 'base', cached: true, bundle: normalizedBundle };
+        return { css, classes: [], rejected, hash: 'base', cached: true, bundle: normalizedBundle };
     }
 
     // Fire onCompileStart
@@ -1083,7 +1244,11 @@ async function compileAndCachePage({
         await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle);
     }
 
-    let resolvedClasses = await resolveClassesFromInput({ html, classes });
+    const resolved = await resolveClassesFromInput({ html, validInput });
+    let resolvedClasses = resolved.classes;
+    if (resolved.htmlRejected.length > 0) {
+        rejected = Array.from(new Set([...inputRejected, ...resolved.htmlRejected])).sort();
+    }
 
     // transformClasses pipeline
     if (!skipHooks && pluginRunner) {
@@ -1139,7 +1304,7 @@ async function compileAndCachePage({
                 await pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle: normalizedBundle, source, request });
                 await pluginRunner.runHook('onCompileResult', { projectId, pageId, bundle: normalizedBundle, classes: resolvedClasses, css: existing[bundleKey], hash: classHash, cached: true, source, request });
             }
-            return { css: existing[bundleKey], classes: resolvedClasses, hash: classHash, cached: true, bundle: normalizedBundle };
+            return { css: existing[bundleKey], classes: resolvedClasses, rejected, hash: classHash, cached: true, bundle: normalizedBundle };
         }
     }
 
@@ -1176,6 +1341,12 @@ async function compileAndCachePage({
     }
 
     if (existing) {
+        if (classesChanged) {
+            // CSS stored for the other bundles was built from the old classes.
+            existing.css = null;
+            existing.utilitiesCss = null;
+            existing.themeCss = null;
+        }
         existing.hash = classHash;
         existing.classes = newClassSet;
         existing.updatedAt = now;
@@ -1229,7 +1400,7 @@ async function compileAndCachePage({
         );
     }
 
-    return { css, classes: resolvedClasses, hash: classHash, cached: false, bundle: normalizedBundle };
+    return { css, classes: resolvedClasses, rejected, hash: classHash, cached: false, bundle: normalizedBundle };
 }
 
 async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full') {
@@ -1489,7 +1660,7 @@ function createPluginRunner(plugins = [], options = {}) {
                 continue;
             }
             await hookStore.run(
-                { inHook: true },
+                { inHook: true, slot: hookStore.getStore()?.slot },
                 () => runSingle(plugin, hook, hookContext)
             );
         }
@@ -1506,7 +1677,7 @@ function createPluginRunner(plugins = [], options = {}) {
             if (!fn) continue;
             try {
                 const result = await hookStore.run(
-                    { inHook: true },
+                    { inHook: true, slot: hookStore.getStore()?.slot },
                     () => withTimeout(Promise.resolve(fn({ ...hookContext, value })), plugin.timeoutMs)
                 );
                 if (result !== undefined) {
@@ -1530,7 +1701,7 @@ function createPluginRunner(plugins = [], options = {}) {
             if (!fn) continue;
             try {
                 const result = await hookStore.run(
-                    { inHook: true },
+                    { inHook: true, slot: hookStore.getStore()?.slot },
                     () => withTimeout(Promise.resolve(fn(hookContext)), plugin.timeoutMs)
                 );
                 if (result == null) continue;
@@ -1576,178 +1747,153 @@ function createPluginRunner(plugins = [], options = {}) {
 }
 
 // =============================================================================
-// HTTP routes
+// Core functions (shared by the HTTP routes, direct callers and ctx.compile)
 // =============================================================================
-function registerRoutes(app, pluginRunner, config, state, cacheStoreRunner, roleHelpers = {}, runtimeHelpers = {}) {
-    const withRequestHooks = (req, res, context) => {
-        const start = Date.now();
-        pluginRunner.runHook('onRequestStart', context);
-        res.once('finish', () => {
-            pluginRunner.runHook('onResponseSent', {
-                ...context,
-                status: res.statusCode,
-                durationMs: Date.now() - start
-            });
-        });
-    };
-    const queueStoreWrite = typeof runtimeHelpers.queueStoreWrite === 'function'
-        ? runtimeHelpers.queueStoreWrite
-        : (fn) => {
-            queueMicrotask(() => {
-                Promise.resolve(fn()).catch(() => {});
-            });
-        };
-    const isWriteAllowed = typeof roleHelpers.isWriteAllowed === 'function'
-        ? roleHelpers.isWriteAllowed
-        : (() => true);
-    const reportWriteBlocked = typeof roleHelpers.reportWriteBlocked === 'function'
-        ? roleHelpers.reportWriteBlocked
-        : (async () => {});
-// API Routes
+const INTERNAL_ERROR_MESSAGE = 'Internal server error.';
 
-function sendCss(req, res, css, etag) {
-    if (etag) {
-        const quoted = `"${etag}"`;
-        res.setHeader('ETag', quoted);
-        res.setHeader('Cache-Control', 'no-cache');
-        if (req.headers['if-none-match'] === quoted) {
-            return res.status(304).end();
-        }
-    }
-    return res.type('text/css').send(css);
+function invalidIdMessage(name, config) {
+    return `${name} must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`;
 }
 
-// Optional browser helper for plain HTML preview surfaces.
-app.get('/richwind-loader.js', (req, res) => {
-    withRequestHooks(req, res, {
-        action: 'loader',
-        request: { ip: getClientIp(req), method: req.method, path: req.path }
-    });
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.type('application/javascript').send(RICH_WIND_LOADER_JS);
-});
+function readInput(input) {
+    if (input == null) return {};
+    if (typeof input !== 'object' || Array.isArray(input)) {
+        throw new RichWindError(400, 'INVALID_BODY', 'Input must be an object.');
+    }
+    return input;
+}
 
-// Optional reload control for preview surfaces.
-app.get('/richwind-reload.js', (req, res) => {
-    withRequestHooks(req, res, {
-        action: 'reload',
-        request: { ip: getClientIp(req), method: req.method, path: req.path }
-    });
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.type('application/javascript').send(RICH_WIND_RELOAD_JS);
-});
+function createCoreFunctions({
+    state, config, pluginRunner, cacheStoreRunner, queueStoreWrite,
+    isWriteAllowed, reportWriteBlocked, chainDepthLimit
+}) {
+    let activeCompiles = 0;
+    // Runs one operation; anything that is not a RichWindError reaches onError and
+    // becomes 500 INTERNAL, so callers only ever see the public error contract.
+    const guarded = async (stage, meta, fn) => {
+        try {
+            return await fn();
+        } catch (err) {
+            if (err instanceof RichWindError) throw err;
+            if (!meta.skipHooks) {
+                await pluginRunner.runHook('onError', { error: err, stage, source: meta.source, request: meta.request });
+            }
+            throw new RichWindError(500, 'INTERNAL', INTERNAL_ERROR_MESSAGE, { cause: err });
+        }
+    };
 
-// Compile CSS for a project/page (in-memory cache)
-app.post('/api/compile', async (req, res) => {
-    try {
-        const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id;
-        const pageId = body.pageId ?? body.page_id ?? 'default';
-        const { html, classes } = body;
-        const bundle = normalizeBundle(body.bundle ?? body.mode);
-        const hookContext = {
-            projectId,
-            pageId,
-            bundle,
-            html,
-            classes,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'compile' });
+    // Runs the compile with the slot visible to the hooks it awaits. Plugin
+    // compiles also count against the compile chain depth.
+    const runCompilePage = async (compilePage, meta, parentStore, slot, context) => {
+        if (meta.source !== 'plugin') {
+            return hookStore.run({ ...(parentStore ?? {}), slot }, compilePage);
+        }
+        const currentDepth = parentStore?.compileChainDepth ?? 0;
+        if (currentDepth >= chainDepthLimit) {
+            const message = 'Plugin compile chain depth exceeded.';
+            if (!meta.skipHooks) {
+                await pluginRunner.runHook('onError', {
+                    error: new Error(message), stage: 'compile', source: 'plugin',
+                    code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context
+                });
+            }
+            throw new RichWindError(500, 'INTERNAL', message);
+        }
+        return hookStore.run(
+            { inHook: meta.skipHooks, compileChainDepth: currentDepth + 1, slot },
+            compilePage
+        );
+    };
+
+    const runCompile = async (input, meta) => {
+        const body = readInput(input);
+        const { projectId, html, classes } = body;
+        const pageId = body.pageId ?? 'default';
+        const bundle = normalizeBundle(body.bundle);
 
         if (!isWriteAllowed()) {
-            await reportWriteBlocked('http-compile', {
-                source: 'http',
-                request: hookContext.request,
-                projectId,
-                pageId,
-                bundle
+            await reportWriteBlocked(`${meta.source}-compile`, {
+                source: meta.source, request: meta.request, projectId, pageId, bundle
             });
-            return res.status(409).json({
-                error: 'This replica is read-only. Route compile writes to a writer replica.',
-                code: READ_ONLY_ERROR_CODE
-            });
+            throw new RichWindError(409, READ_ONLY_ERROR_CODE, 'This replica is read-only. Route compile writes to a writer replica.');
         }
-
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
-        }
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (!isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (!html && !classes && bundle !== 'base') {
-            return res.status(400).json({ error: 'Either html or classes is required.' });
-        }
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (!isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
+        if (!html && !classes && bundle !== 'base') throw new RichWindError(400, 'MISSING_INPUT', 'Either html or classes is required.');
         if (typeof html === 'string' && html.length > config.maxHtmlChars) {
-            return res.status(413).json({ error: `html is too large. Limit is ${config.maxHtmlChars} chars.` });
+            throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `html is too large. Limit is ${config.maxHtmlChars} chars.`);
         }
         if (typeof classes === 'string' && classes.length > config.maxClassChars) {
-            return res.status(413).json({ error: `classes is too large. Limit is ${config.maxClassChars} chars.` });
+            throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
         }
 
-        const result = await compileAndCachePage({
+        // One slot per compile, no wait queue. A compile made from a hook its parent
+        // compile awaits runs inside the parent's slot; any other compile (host,
+        // HTTP, deferred hook, plugin route) needs a free slot or is shed.
+        const parentStore = hookStore.getStore();
+        const parentSlot = parentStore?.slot;
+        let slot = null;
+        if (!parentSlot?.held) {
+            if (activeCompiles >= config.maxConcurrentCompiles) {
+                throw new RichWindError(503, 'SERVER_BUSY', 'All compile slots are in use. Retry shortly.');
+            }
+            activeCompiles++;
+            slot = { held: true };
+        }
+        const ownSlot = slot ?? parentSlot;
+
+        const compilePage = () => compileAndCachePage({
             state, config, projectId, pageId, html, classes, bundle,
-            pluginRunner, cacheStoreRunner,
-            queueStoreWrite,
-            skipHooks: false, source: 'http', request: hookContext.request
+            pluginRunner, cacheStoreRunner, queueStoreWrite,
+            skipHooks: meta.skipHooks, source: meta.source, request: meta.request
         });
+
+        let result;
+        try {
+            result = await runCompilePage(compilePage, meta, parentStore, ownSlot, { projectId, pageId, bundle });
+        } finally {
+            if (slot) {
+                slot.held = false;
+                activeCompiles--;
+            }
+        }
         if (result.error) {
-            return res.status(result.status || 400).json({ error: result.error });
+            throw new RichWindError(result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
         }
 
-        res.json({
+        return {
             success: true,
             projectId,
             pageId,
             bundle: result.bundle ?? bundle,
             hash: result.hash,
             classes: result.classes,
+            rejected: result.rejected ?? [],
             cached: result.cached,
             css: result.css
-        });
-    } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'compile', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: 'Internal server error.' });
-    }
-});
-
-// Get cached CSS for a project/page
-app.get('/api/css', async (req, res) => {
-    try {
-        const projectId = req.query.projectId ?? req.query.project_id;
-        const pageId = req.query.pageId ?? req.query.page_id ?? 'default';
-        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
-        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        const hookContext = {
-            projectId,
-            pageId,
-            bundle,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
         };
-        withRequestHooks(req, res, { ...hookContext, action: 'cache' });
+    };
 
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
-        }
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (!isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
+    const runGetCss = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId;
+        const pageId = body.pageId ?? 'default';
+        const bundle = normalizeBundle(body.bundle);
+
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (!isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
+
+        const hit = (source) => pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle, source, request: meta.request });
+        const miss = (source) => pluginRunner.runHook('onCacheMiss', { projectId, pageId, bundle, source, request: meta.request });
+        const fromStore = async () => {
+            const storeArtifact = await readPageArtifactFromStore(cacheStoreRunner, config, projectId, pageId, bundle);
+            if (!storeArtifact) return null;
+            hydratePageFromArtifact(state, config, projectId, pageId, bundle, storeArtifact);
+            await hit('page-store');
+            return { css: storeArtifact.css, etag: storeArtifact.hash ?? null };
+        };
 
         const readerStoreFirst =
             config.nodeRole === 'reader' &&
@@ -1755,168 +1901,63 @@ app.get('/api/css', async (req, res) => {
             bundle !== 'base';
 
         if (readerStoreFirst) {
-            const storeArtifact = await readPageArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                pageId,
-                bundle
-            );
-            if (storeArtifact) {
-                hydratePageFromArtifact(
-                    state,
-                    config,
-                    projectId,
-                    pageId,
-                    bundle,
-                    storeArtifact
-                );
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page-store',
-                    request: hookContext.request
-                });
-                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
-            }
-            await pluginRunner.runHook('onCacheMiss', {
-                projectId,
-                pageId,
-                bundle,
-                source: 'page-store',
-                request: hookContext.request
-            });
+            const stored = await fromStore();
+            if (stored) return stored;
+            await miss('page-store');
         } else {
             const cached = await getCachedPageCss(state, config, projectId, pageId, bundle);
             if (cached) {
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page',
-                    request: hookContext.request
-                });
+                await hit('page');
                 const pageHash = state.projects.get(projectId)?.pages.get(pageId)?.hash;
-                return sendCss(req, res, cached.css, pageHash);
+                return { css: cached.css, etag: pageHash ?? null };
             }
-
-            const storeArtifact = await readPageArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                pageId,
-                bundle
-            );
-            if (storeArtifact) {
-                hydratePageFromArtifact(
-                    state,
-                    config,
-                    projectId,
-                    pageId,
-                    bundle,
-                    storeArtifact
-                );
-                await pluginRunner.runHook('onCacheHit', {
-                    projectId,
-                    pageId,
-                    bundle,
-                    source: 'page-store',
-                    request: hookContext.request
-                });
-                return sendCss(req, res, storeArtifact.css, storeArtifact.hash);
-            }
-            await pluginRunner.runHook('onCacheMiss', {
-                projectId,
-                pageId,
-                bundle,
-                source: 'page',
-                request: hookContext.request
-            });
+            const stored = await fromStore();
+            if (stored) return stored;
+            await miss('page');
         }
 
         // Resolve hook: let plugins provide CSS on cache miss
         const resolved = await pluginRunner.runResolve('resolvePageCss', {
-            projectId, pageId, bundle, source: 'http', request: hookContext.request
+            projectId, pageId, bundle, source: meta.source, request: meta.request
         }, config);
-        if (resolved) {
-            return res.type('text/css').send(resolved.css);
-        }
+        if (resolved) return { css: resolved.css, etag: null };
 
-        return res.type('text/css').send('');
-    } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'cache', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
-    }
-});
+        throw new RichWindError(404, 'NOT_FOUND', 'Cached CSS was not found.');
+    };
 
-// Get aggregated CSS for a project (union of cached pages)
-app.get('/api/projects/:projectId/css', async (req, res) => {
-    try {
-        const { projectId } = req.params;
-        const bundle = normalizeBundle(req.query.bundle ?? req.query.mode);
-        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        const hookContext = {
-            projectId,
-            bundle,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
+    const runGetProjectCss = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId;
+        const bundle = normalizeBundle(body.bundle);
+
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+
+        const fromStore = async () => {
+            const storeArtifact = await readProjectArtifactFromStore(cacheStoreRunner, config, projectId, bundle);
+            if (!storeArtifact) return null;
+            return { css: storeArtifact.css, hash: storeArtifact.hash ?? null, cached: true, source: 'store' };
         };
-        withRequestHooks(req, res, { ...hookContext, action: 'project-css' });
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
+
         const readerStoreFirst =
             config.nodeRole === 'reader' &&
             cacheStoreRunner?.enabled &&
             bundle !== 'base';
         let result = null;
-
         if (readerStoreFirst) {
-            const storeArtifact = await readProjectArtifactFromStore(
-                cacheStoreRunner,
-                config,
-                projectId,
-                bundle
-            );
-            if (storeArtifact) {
-                result = {
-                    css: storeArtifact.css,
-                    hash: storeArtifact.hash ?? null,
-                    cached: true,
-                    source: 'store'
-                };
-            }
+            result = await fromStore();
         } else {
             result = await getProjectCss(state, config, projectId, bundle);
-            if (!result && bundle !== 'base') {
-                const storeArtifact = await readProjectArtifactFromStore(
-                    cacheStoreRunner,
-                    config,
-                    projectId,
-                    bundle
-                );
-                if (storeArtifact) {
-                    result = {
-                        css: storeArtifact.css,
-                        hash: storeArtifact.hash ?? null,
-                        cached: true,
-                        source: 'store'
-                    };
-                }
-            }
+            if (!result && bundle !== 'base') result = await fromStore();
         }
+
         if (!result) {
             // Resolve hook: let plugins provide project CSS on cache miss
             const resolved = await pluginRunner.runResolve('resolveProjectCss', {
-                projectId, bundle, source: 'http', request: hookContext.request
+                projectId, bundle, source: meta.source, request: meta.request
             }, config);
-            if (resolved) {
-                return res.type('text/css').send(resolved.css);
-            }
-            return res.type('text/css').send('');
+            if (resolved) return { css: resolved.css, etag: null };
+            throw new RichWindError(404, 'NOT_FOUND', 'Project CSS was not found.');
         }
 
         if (
@@ -1942,52 +1983,25 @@ app.get('/api/projects/:projectId/css', async (req, res) => {
         await pluginRunner.runHook('onProjectCss', {
             projectId,
             bundle,
-            css: result?.css ?? '',
-            hash: result?.hash ?? null,
-            cached: result?.cached ?? false,
-            source: 'http',
-            request: hookContext.request
+            css: result.css ?? '',
+            hash: result.hash ?? null,
+            cached: result.cached ?? false,
+            source: meta.source,
+            request: meta.request
         });
-        return sendCss(req, res, result?.css ?? '', result?.hash ?? null);
-    } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'project-css', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
-    }
-});
+        return { css: result.css ?? '', etag: result.hash ?? null };
+    };
 
-// Invalidate (purge) a page or an entire project from the in-memory cache and cache store
-app.post('/api/invalidate', async (req, res) => {
-    try {
-        const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id ?? null;
-        const pageId = body.pageId ?? body.page_id ?? null;
+    const runInvalidate = async (input) => {
+        const body = readInput(input);
+        const projectId = body.projectId ?? null;
+        const pageId = body.pageId ?? null;
 
-        withRequestHooks(req, res, {
-            action: 'invalidate',
-            projectId,
-            pageId,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        });
-
-        if (!projectId) {
-            return res.status(400).json({ error: 'projectId is required.' });
-        }
-        if (!isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
-        if (pageId !== null && !isValidId(pageId, config)) {
-            return res.status(400).json({
-                error: `pageId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
-        }
+        if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        if (pageId !== null && !isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
         if (!isWriteAllowed()) {
-            return res.status(409).json({
-                error: 'This replica is read-only. Route invalidation writes to a writer replica.',
-                code: READ_ONLY_ERROR_CODE
-            });
+            throw new RichWindError(409, READ_ONLY_ERROR_CODE, 'This replica is read-only. Route invalidation writes to a writer replica.');
         }
 
         const bundles = ['full', 'utilities', 'theme'];
@@ -1999,7 +2013,7 @@ app.post('/api/invalidate', async (req, res) => {
                     bundles.map(b => cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle: b }))
                 );
             }
-            return res.json({ invalidated: true, projectId, pageId });
+            return { invalidated: true, projectId, pageId };
         }
 
         // Purge entire project from memory
@@ -2019,35 +2033,18 @@ app.post('/api/invalidate', async (req, res) => {
                 bundles.map(b => cacheStoreRunner.deleteProjectArtifact({ projectId, bundle: b }))
             );
         }
-        return res.json({ invalidated: true, projectId });
-    } catch (err) {
-        const reqInfo = { ip: getClientIp(req), method: req.method, path: req.path };
-        await pluginRunner.runHook('onError', { error: err, stage: 'invalidate', source: 'http', request: reqInfo });
-        res.status(500).json({ error: 'Internal server error.' });
-    }
-});
+        return { invalidated: true, projectId };
+    };
 
-// Suggest Tailwind classes based on cached project data and/or input
-app.post('/api/suggest', async (req, res) => {
-    try {
-        const body = req.body || {};
-        const projectId = body.projectId ?? body.project_id ?? null;
+    const runSuggest = async (input, meta) => {
+        const body = readInput(input);
+        const projectId = body.projectId ?? null;
         const prefix = typeof body.prefix === 'string' ? body.prefix.trim() : '';
-        const limitRaw = body.limit ?? body.max ?? body.count;
-        const limit = Math.min(parseIntWithDefault(limitRaw, config.suggestLimit, 1), config.suggestLimit);
+        const limit = Math.min(parseIntWithDefault(body.limit, config.suggestLimit, 1), config.suggestLimit);
         const includeInput = normalizeClassList(body.classes);
-        const hookContext = {
-            projectId,
-            prefix,
-            limit,
-            request: { ip: getClientIp(req), method: req.method, path: req.path }
-        };
-        withRequestHooks(req, res, { ...hookContext, action: 'suggest' });
 
         if (projectId && !isValidId(projectId, config)) {
-            return res.status(400).json({
-                error: `projectId must be <= ${config.maxIdLength} chars and use a-z, 0-9, ".", "-", "_".`
-            });
+            throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
         }
 
         // Phase 1: Collect ALL candidates (no limit enforcement yet)
@@ -2070,7 +2067,7 @@ app.post('/api/suggest', async (req, res) => {
 
         // Phase 2: Run transform pipeline
         let suggestions = await pluginRunner.runPipeline('transformSuggestions',
-            { projectId, prefix, limit, source: 'http', request: hookContext.request },
+            { projectId, prefix, limit, source: meta.source, request: meta.request },
             allSuggestions
         );
 
@@ -2078,35 +2075,668 @@ app.post('/api/suggest', async (req, res) => {
         if (!Array.isArray(suggestions)) suggestions = allSuggestions;
         suggestions = suggestions.filter(s => typeof s === 'string');
         suggestions = [...new Set(suggestions)];
-        const effectiveLimit = Math.min(limit, config.suggestLimit);
-        suggestions = suggestions.slice(0, effectiveLimit);
+        suggestions = suggestions.slice(0, limit);
 
-        // Phase 4: Respond
-        await pluginRunner.runHook('onSuggest', { ...hookContext, suggestions, source: 'http' });
-        return res.json({ success: true, projectId, prefix, count: suggestions.length, suggestions });
-    } catch (err) {
-        await pluginRunner.runHook('onError', { error: err, stage: 'suggest', source: 'http', request: { ip: getClientIp(req), method: req.method, path: req.path } });
-        res.status(500).json({ error: 'Internal server error.' });
+        await pluginRunner.runHook('onSuggest', {
+            projectId, prefix, limit, request: meta.request, suggestions, source: meta.source
+        });
+        return { success: true, projectId, prefix, count: suggestions.length, suggestions };
+    };
+
+    // meta: { source: 'core' | 'http' | 'plugin', request, skipHooks }
+    const withMeta = (stage, run) => (input, meta = {}) => {
+        const resolved = { source: 'core', request: null, skipHooks: false, ...meta };
+        return guarded(stage, resolved, () => run(input, resolved));
+    };
+
+    return {
+        compile: withMeta('compile', runCompile),
+        getCss: withMeta('cache', runGetCss),
+        getProjectCss: withMeta('project-css', runGetProjectCss),
+        invalidate: withMeta('invalidate', runInvalidate),
+        suggest: withMeta('suggest', runSuggest)
+    };
+}
+
+// =============================================================================
+// HTTP transport (node:http and Fetch adapters over one router)
+// =============================================================================
+const JSON_TYPE = 'application/json; charset=utf-8';
+const PARAM_SEGMENT_RE = /^:([A-Za-z_$][A-Za-z0-9_$]*)(.*)$/;
+
+const bodyError = (status, code, message, cause) =>
+    new RichWindError(status, code, message, cause ? { cause } : undefined);
+
+// Case-insensitive header merge; later sources win, Vary values accumulate.
+function mergeHeaders(...sources) {
+    const out = new Map();
+    for (const source of sources) {
+        if (!source) continue;
+        const entries = typeof source.entries === 'function' && !Array.isArray(source)
+            ? source.entries()
+            : Object.entries(source);
+        for (const [name, value] of entries) {
+            if (value === undefined || value === null) continue;
+            const key = name.toLowerCase();
+            const prev = out.get(key);
+            if (key === 'vary' && prev) {
+                out.set(key, { name: prev.name, value: appendVaryHeader(prev.value, String(value)) });
+            } else {
+                out.set(key, { name: prev ? prev.name : name, value: String(value) });
+            }
+        }
     }
-});
+    return out;
+}
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    withRequestHooks(req, res, {
-        action: 'health',
-        request: { ip: getClientIp(req), method: req.method, path: req.path }
+function jsonResponse(status, body, headers = {}) {
+    return { status, headers: { 'Content-Type': JSON_TYPE, ...headers }, body: JSON.stringify(body) };
+}
+
+function errorResponse(status, code, error, headers) {
+    // A shed compile is safe to retry once a slot frees up.
+    const extra = code === 'SERVER_BUSY' ? { 'Retry-After': '1' } : {};
+    return jsonResponse(status, { error, code }, { ...extra, ...headers });
+}
+
+function isJsonContentType(value) {
+    if (!value) return false;
+    return value.split(';')[0].trim().toLowerCase() === 'application/json';
+}
+
+// Express `trust proxy` semantics: a boolean, a hop count, or a list of trusted
+// addresses/subnets (comma-separated string or array). null means not configured.
+function parseTrustProxy(value) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : null;
+    if (Array.isArray(value)) {
+        const list = value.map((v) => String(v).trim()).filter(Boolean);
+        return list.length ? list : null;
+    }
+    const normalized = String(value).trim();
+    const lower = normalized.toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(lower)) return lower === '1' ? 1 : true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(lower)) return false;
+    if (/^\d+$/.test(normalized)) return Number.parseInt(normalized, 10);
+    const list = normalized.split(',').map((v) => v.trim()).filter(Boolean);
+    return list.length ? list : null;
+}
+
+function compileTrustProxy(trustProxy) {
+    if (trustProxy === null) return null;
+    if (trustProxy === true) return () => true;
+    if (trustProxy === false) return () => false;
+    if (typeof trustProxy === 'number') return (_addr, i) => i < trustProxy;
+    return proxyaddr.compile(trustProxy);
+}
+
+function resolveClientIp(socketAddress, forwardedFor, trustFn) {
+    if (!socketAddress) return undefined;
+    if (!trustFn) return socketAddress;
+    const shim = {
+        headers: forwardedFor ? { 'x-forwarded-for': forwardedFor } : {},
+        connection: { remoteAddress: socketAddress },
+        socket: { remoteAddress: socketAddress }
+    };
+    return proxyaddr(shim, trustFn);
+}
+
+// Path patterns: exact, case-sensitive segments; ":name" captures one segment and
+// may carry a literal suffix (":file.css").
+function compilePathPattern(pattern) {
+    const segments = pattern.split('/').slice(1).map((segment) => {
+        const match = PARAM_SEGMENT_RE.exec(segment);
+        return match ? { param: match[1], suffix: match[2] } : { literal: segment };
     });
-    res.status(200).json({ status: 'ok' });
-});
+    return (path) => {
+        const parts = path.split('/').slice(1);
+        if (parts.length !== segments.length) return null;
+        const params = {};
+        for (let i = 0; i < segments.length; i++) {
+            const seg = segments[i];
+            const part = parts[i];
+            if (seg.literal !== undefined) {
+                if (part !== seg.literal) return null;
+                continue;
+            }
+            if (!part.endsWith(seg.suffix)) return null;
+            const raw = part.slice(0, part.length - seg.suffix.length);
+            if (!raw) return null;
+            try {
+                params[seg.param] = decodeURIComponent(raw);
+            } catch {
+                throw new RichWindError(400, 'INVALID_ID', `Path parameter "${seg.param}" is not valid percent-encoding.`);
+            }
+        }
+        return params;
+    };
+}
 
-// Error handler middleware (must be defined after all routes)
-app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.too.large') {
-        pluginRunner.runHook('onError', { error: err, stage: 'body', context: { path: req.path } });
-        return res.status(413).json({ error: 'Payload too large.' });
+// Express-compatible query object: a repeated key becomes an array, so it fails
+// the same validation it failed before instead of quietly taking the first value.
+function queryObject(searchParams) {
+    const out = {};
+    for (const key of new Set(searchParams.keys())) {
+        const values = searchParams.getAll(key);
+        out[key] = values.length > 1 ? values : values[0];
     }
-    return next(err);
-});
+    return out;
+}
+
+function decodeBodyText(buffer) {
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (err) {
+        throw bodyError(400, 'INVALID_BODY', 'Request body is not valid UTF-8.', err);
+    }
+}
+
+function parseJsonText(text) {
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        throw bodyError(400, 'INVALID_BODY', 'Invalid JSON request body.', err);
+    }
+}
+
+// Reads at most `limit` bytes from an async iterable of chunks. A declared
+// Content-Length over the limit is refused before reading.
+async function readLimited(chunks, declaredLength, limit) {
+    if (declaredLength != null && declaredLength > limit) {
+        throw bodyError(413, 'PAYLOAD_TOO_LARGE', 'Payload too large.');
+    }
+    const parts = [];
+    let total = 0;
+    for await (const chunk of chunks) {
+        const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+        total += bytes.length;
+        if (total > limit) throw bodyError(413, 'PAYLOAD_TOO_LARGE', 'Payload too large.');
+        parts.push(bytes);
+    }
+    if (declaredLength != null && total !== declaredLength) {
+        throw bodyError(400, 'INVALID_BODY', 'Request body length does not match Content-Length.');
+    }
+    return Buffer.concat(parts.map((p) => Buffer.from(p.buffer, p.byteOffset, p.byteLength)));
+}
+
+function parseContentLength(value) {
+    if (value == null || value === '') return null;
+    if (!/^\d+$/.test(String(value).trim())) {
+        throw bodyError(400, 'INVALID_BODY', 'Invalid Content-Length header.');
+    }
+    return Number.parseInt(value, 10);
+}
+
+async function* webStreamChunks(stream) {
+    if (!stream) return;
+    const reader = stream.getReader();
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) return;
+            yield value;
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
+// Builds the router behind core.handler and core.fetch. Every response is a plain
+// { status, headers, body } object; the adapters write it.
+function createHttpRouter({ config, pluginRunner, fns, pluginRoutes }) {
+    const sendCss = (nreq, css, etag) => {
+        const headers = { 'Content-Type': 'text/css; charset=utf-8' };
+        if (etag) {
+            const quoted = `"${etag}"`;
+            headers.ETag = quoted;
+            headers['Cache-Control'] = 'no-cache';
+            if (nreq.headers.get('if-none-match') === quoted) {
+                return { status: 304, headers, body: null };
+            }
+        }
+        return { status: 200, headers, body: css };
+    };
+
+    const scriptResponse = (nreq, source, etag) => {
+        const headers = {
+            'Content-Type': 'application/javascript; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+            'Cross-Origin-Resource-Policy': 'cross-origin',
+            ETag: etag
+        };
+        if (nreq.headers.get('if-none-match') === etag) return { status: 304, headers, body: null };
+        return { status: 200, headers, body: source };
+    };
+    const scriptEtag = (source) => `"${crypto.createHash('sha1').update(source).digest('hex').slice(0, 20)}"`;
+    const loaderEtag = scriptEtag(RICH_WIND_LOADER_JS);
+    const reloadEtag = scriptEtag(RICH_WIND_RELOAD_JS);
+
+    // Hooks fire for built-in route handlers only, as before.
+    const withRequestHooks = (nreq, context) => {
+        const start = Date.now();
+        pluginRunner.runHook('onRequestStart', context);
+        nreq.afterSend.push((status) => {
+            pluginRunner.runHook('onResponseSent', {
+                ...context,
+                status,
+                durationMs: Date.now() - start
+            });
+        });
+    };
+
+    const failure = async (err, stage, request) => {
+        if (err instanceof RichWindError) return errorResponse(err.status, err.code, err.message);
+        await pluginRunner.runHook('onError', { error: err, stage, source: 'http', request });
+        return errorResponse(500, 'INTERNAL', 'Internal server error.');
+    };
+
+    const builtIn = [
+        {
+            method: 'GET', path: '/richwind-loader.js',
+            handle: async (nreq) => {
+                withRequestHooks(nreq, { action: 'loader', request: nreq.info });
+                return scriptResponse(nreq, RICH_WIND_LOADER_JS, loaderEtag);
+            }
+        },
+        {
+            method: 'GET', path: '/richwind-reload.js',
+            handle: async (nreq) => {
+                withRequestHooks(nreq, { action: 'reload', request: nreq.info });
+                return scriptResponse(nreq, RICH_WIND_RELOAD_JS, reloadEtag);
+            }
+        },
+        {
+            method: 'POST', path: '/api/compile',
+            handle: async (nreq) => {
+                const request = nreq.info;
+                try {
+                    const body = nreq.body;
+                    withRequestHooks(nreq, {
+                        projectId: body.projectId,
+                        pageId: body.pageId ?? 'default',
+                        bundle: normalizeBundle(body.bundle),
+                        html: body.html,
+                        classes: body.classes,
+                        request,
+                        action: 'compile'
+                    });
+                    return jsonResponse(200, await fns.compile(body, { source: 'http', request }));
+                } catch (err) {
+                    return failure(err, 'compile', request);
+                }
+            }
+        },
+        {
+            method: 'GET', path: '/api/css',
+            handle: async (nreq) => {
+                const request = nreq.info;
+                try {
+                    const { projectId, pageId, bundle } = nreq.query;
+                    withRequestHooks(nreq, {
+                        projectId,
+                        pageId: pageId ?? 'default',
+                        bundle: normalizeBundle(bundle),
+                        request,
+                        action: 'cache'
+                    });
+                    const { css, etag } = await fns.getCss({ projectId, pageId, bundle }, { source: 'http', request });
+                    return sendCss(nreq, css, etag);
+                } catch (err) {
+                    return failure(err, 'cache', request);
+                }
+            },
+            headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }
+        },
+        {
+            method: 'GET', path: '/api/projects/:projectId/css',
+            handle: async (nreq) => {
+                const request = nreq.info;
+                try {
+                    const { projectId } = nreq.params;
+                    const { bundle } = nreq.query;
+                    withRequestHooks(nreq, {
+                        projectId,
+                        bundle: normalizeBundle(bundle),
+                        request,
+                        action: 'project-css'
+                    });
+                    const { css, etag } = await fns.getProjectCss({ projectId, bundle }, { source: 'http', request });
+                    return sendCss(nreq, css, etag);
+                } catch (err) {
+                    return failure(err, 'project-css', request);
+                }
+            },
+            headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }
+        },
+        {
+            method: 'POST', path: '/api/invalidate',
+            handle: async (nreq) => {
+                const request = nreq.info;
+                try {
+                    const body = nreq.body;
+                    withRequestHooks(nreq, {
+                        action: 'invalidate',
+                        projectId: body.projectId ?? null,
+                        pageId: body.pageId ?? null,
+                        request
+                    });
+                    return jsonResponse(200, await fns.invalidate(body, { source: 'http', request }));
+                } catch (err) {
+                    return failure(err, 'invalidate', request);
+                }
+            }
+        },
+        {
+            method: 'POST', path: '/api/suggest',
+            handle: async (nreq) => {
+                const request = nreq.info;
+                try {
+                    const body = nreq.body;
+                    withRequestHooks(nreq, {
+                        projectId: body.projectId ?? null,
+                        prefix: typeof body.prefix === 'string' ? body.prefix.trim() : '',
+                        limit: Math.min(parseIntWithDefault(body.limit, config.suggestLimit, 1), config.suggestLimit),
+                        request,
+                        action: 'suggest'
+                    });
+                    return jsonResponse(200, await fns.suggest(body, { source: 'http', request }));
+                } catch (err) {
+                    return failure(err, 'suggest', request);
+                }
+            }
+        },
+        {
+            method: 'GET', path: '/health',
+            handle: async (nreq) => {
+                withRequestHooks(nreq, { action: 'health', request: nreq.info });
+                return jsonResponse(200, { status: 'ok' });
+            }
+        }
+    ].map((route) => ({ ...route, match: compilePathPattern(route.path), builtIn: true }));
+
+    const routes = [...builtIn, ...pluginRoutes];
+
+    // Finds the route for a method + path. HEAD is answered by every GET route.
+    const findRoute = (method, path) => {
+        const lookup = method === 'HEAD' ? 'GET' : method;
+        for (const route of routes) {
+            if (route.method !== lookup) continue;
+            const params = route.match(path);
+            if (params) return { route, params };
+        }
+        return null;
+    };
+
+    const securityHeaders = () => ({
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'X-Frame-Options': 'DENY',
+        'Cross-Origin-Resource-Policy': 'same-origin'
+    });
+
+    const corsHeaders = (origin) => {
+        const resolvedOrigin = resolveCorsOrigin(config.corsOrigin, origin);
+        if (!resolvedOrigin) return { resolvedOrigin, headers: {} };
+        const headers = {
+            'Access-Control-Allow-Origin': resolvedOrigin,
+            'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+            // CORP must match CORS: same-origin (default) would block <link>/<img>
+            // subresource loads from other origins even when CORS permits fetch access.
+            'Cross-Origin-Resource-Policy': 'cross-origin'
+        };
+        if (resolvedOrigin !== '*') headers.Vary = 'Origin';
+        return { resolvedOrigin, headers };
+    };
+
+    const route = async (nreq) => {
+        const { method, path } = nreq;
+        if (nreq.outsideBasePath) return errorResponse(404, 'NOT_FOUND', 'Not found.');
+
+        if (method === 'OPTIONS' && config.corsOrigin) {
+            if (nreq.headers.get('origin') && !nreq.cors.resolvedOrigin) {
+                return errorResponse(403, 'FORBIDDEN', 'CORS origin not allowed.');
+            }
+            return { status: 204, headers: {}, body: null };
+        }
+
+        const isApiPost = method === 'POST' && path.startsWith('/api/');
+        if (isApiPost && (nreq.headers.get('content-encoding') || !isJsonContentType(nreq.headers.get('content-type')))) {
+            return errorResponse(415, 'UNSUPPORTED_MEDIA_TYPE', 'POST API requests require application/json without content encoding.');
+        }
+
+        // The guard runs before the body is read; it sees only address, method and path.
+        const block = await pluginRunner.runGuard(nreq.info);
+        if (block) {
+            const status = block.status ?? 429;
+            const headers = block.retryAfter != null ? { 'Retry-After': String(block.retryAfter) } : {};
+            return errorResponse(status, guardErrorCode(status), block.error ?? 'Blocked.', headers);
+        }
+
+        const found = findRoute(method, path);
+        if (!found) return errorResponse(404, 'NOT_FOUND', 'Not found.');
+        nreq.params = found.params;
+
+        if (isApiPost) {
+            try {
+                const body = await nreq.readJson();
+                if (!body || Array.isArray(body) || typeof body !== 'object') {
+                    return errorResponse(400, 'INVALID_BODY', 'Request body must be a JSON object.');
+                }
+                nreq.body = body;
+            } catch (err) {
+                if (!(err instanceof RichWindError)) throw err;
+                pluginRunner.runHook('onError', { error: err, stage: 'body', context: { path } });
+                const headers = err.status === 413 ? { Connection: 'close' } : {};
+                return errorResponse(err.status, err.code, err.message, headers);
+            }
+        }
+
+        const response = await found.route.handle(nreq);
+        if (found.route.headers) response.headers = { ...found.route.headers, ...response.headers };
+        return response;
+    };
+
+    // Entry point for both adapters. Never throws and never sends a stack trace.
+    const dispatch = async (nreq) => {
+        nreq.afterSend = [];
+        nreq.cors = corsHeaders(nreq.headers.get('origin'));
+        let response;
+        try {
+            response = await route(nreq);
+        } catch (err) {
+            if (err instanceof RichWindError) {
+                response = errorResponse(err.status, err.code, err.message);
+            } else {
+                await pluginRunner.runHook('onError', { error: err, stage: 'http', source: 'http', request: nreq.info });
+                response = errorResponse(500, 'INTERNAL', 'Internal server error.');
+            }
+        }
+        const merged = mergeHeaders(securityHeaders(), nreq.cors.headers, response.headers);
+        const status = response.status ?? 200;
+        let body = response.body ?? null;
+        if (body !== null && typeof body === 'object' && !(body instanceof Uint8Array)) {
+            // Keep plugin-route failures in the public error envelope.
+            if (status >= 400 && body.error && !body.code) body = { ...body, code: defaultErrorCode(status) };
+            body = JSON.stringify(body);
+            if (!merged.has('content-type')) merged.set('content-type', { name: 'Content-Type', value: JSON_TYPE });
+        }
+        if (typeof body === 'string' && !merged.has('content-type')) {
+            merged.set('content-type', { name: 'Content-Type', value: 'text/plain; charset=utf-8' });
+        }
+        if (status === 204 || status === 304) body = null;
+        const bytes = body === null ? null : (typeof body === 'string' ? Buffer.from(body) : body);
+        if (bytes !== null) merged.set('content-length', { name: 'Content-Length', value: String(bytes.byteLength) });
+        else merged.delete('content-length');
+        const headers = {};
+        for (const { name, value } of merged.values()) headers[name] = value;
+        return {
+            status,
+            headers,
+            body: nreq.method === 'HEAD' ? null : bytes,
+            finished: () => {
+                for (const fn of nreq.afterSend) fn(status);
+            }
+        };
+    };
+
+    return { dispatch };
+}
+
+// Wraps a plugin's addRoute handler: neutral request in, { status, headers, body }
+// out. Errors never escape: a RichWindError keeps its status, anything else is 500.
+function createPluginRoute({ method, path, handler, pluginName, reportError }) {
+    return {
+        method,
+        path,
+        match: compilePathPattern(path),
+        handle: async (nreq) => {
+            try {
+                const result = await handler(createPluginRequest(nreq));
+                if (!result || typeof result !== 'object') return { status: 204, headers: {}, body: null };
+                const status = Number.isInteger(result.status) && result.status >= 100 && result.status <= 599
+                    ? result.status
+                    : 200;
+                return { status, headers: { ...(result.headers || {}) }, body: result.body ?? null };
+            } catch (err) {
+                if (err instanceof RichWindError) {
+                    const headers = err.status === 413 ? { Connection: 'close' } : {};
+                    return errorResponse(err.status, err.code, err.message, headers);
+                }
+                await reportError({ error: err, stage: 'plugin-route', plugin: pluginName, source: 'http', request: nreq.info });
+                return errorResponse(500, 'INTERNAL', 'Internal server error.');
+            }
+        }
+    };
+}
+
+// The neutral request a plugin route handler receives.
+function createPluginRequest(nreq) {
+    return Object.freeze({
+        method: nreq.method,
+        path: nreq.path,
+        params: { ...nreq.params },
+        query: new URLSearchParams(nreq.searchParams),
+        headers: nreq.headers,
+        ip: nreq.info.ip,
+        json: () => nreq.readJson(),
+        text: () => nreq.readText()
+    });
+}
+
+function createNeutralRequest({ method, path, searchParams, headers, ip, readBodyBytes, preParsedBody }) {
+    let bytesPromise = null;
+    const readBytes = () => {
+        if (!bytesPromise) bytesPromise = readBodyBytes();
+        return bytesPromise;
+    };
+    const nreq = {
+        method,
+        path,
+        searchParams,
+        query: queryObject(searchParams),
+        headers,
+        params: {},
+        body: undefined,
+        info: { ip: ip || 'unknown', method, path },
+        readText: async () => decodeBodyText(await readBytes()),
+        readJson: async () => {
+            if (preParsedBody !== undefined) return preParsedBody;
+            const text = decodeBodyText(await readBytes());
+            if (text.trim() === '') return undefined;
+            return parseJsonText(text);
+        }
+    };
+    return nreq;
+}
+
+function createNodeAdapter(router, config, trustFn) {
+    return (req, res, next) => {
+        const url = new URL(req.url || '/', 'http://localhost');
+        const forwardedFor = req.headers['x-forwarded-for'];
+        const socketAddress = req.socket?.remoteAddress;
+        // A host that resolved req.ip (Express with `trust proxy`) wins when core's
+        // own trustProxy is not configured.
+        const ip = trustFn
+            ? resolveClientIp(socketAddress, forwardedFor, trustFn)
+            : (typeof req.ip === 'string' && req.ip ? req.ip : socketAddress);
+        const headerValue = (name) => {
+            const value = req.headers[name.toLowerCase()];
+            if (value === undefined) return null;
+            return Array.isArray(value) ? value.join(', ') : String(value);
+        };
+        // A host body parser (express.json(), express.text()) may already have
+        // consumed the stream; use what it parsed instead of waiting on it.
+        const consumed = Boolean(req.readableEnded) && req.body !== undefined;
+        const preParsedBody = consumed && req.body !== null && typeof req.body === 'object' && !Buffer.isBuffer(req.body)
+            ? req.body
+            : undefined;
+        const nreq = createNeutralRequest({
+            method: (req.method || 'GET').toUpperCase(),
+            path: url.pathname,
+            searchParams: url.searchParams,
+            headers: { get: headerValue },
+            ip,
+            preParsedBody,
+            readBodyBytes: () => {
+                if (consumed) {
+                    const raw = typeof req.body === 'string' || Buffer.isBuffer(req.body) ? req.body : '';
+                    return Promise.resolve(Buffer.from(raw));
+                }
+                return readLimited(req, parseContentLength(req.headers['content-length']), config.maxBodyBytes);
+            }
+        });
+
+        router.dispatch(nreq).then((response) => {
+            if (res.headersSent || res.writableEnded) return;
+            res.on('error', () => {});
+            res.once('finish', response.finished);
+            res.writeHead(response.status, response.headers);
+            res.end(response.body ?? undefined);
+        }).catch((err) => {
+            if (typeof next === 'function') return next(err);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': JSON_TYPE });
+                res.end(JSON.stringify({ error: 'Internal server error.', code: 'INTERNAL' }));
+            }
+        });
+    };
+}
+
+function createFetchAdapter(router, config, trustFn) {
+    return async (request, { ip, basePath } = {}) => {
+        const url = new URL(request.url);
+        let path = url.pathname;
+        const headers = request.headers;
+        if (basePath) {
+            const prefix = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+            if (path === prefix) {
+                path = '/';
+            } else if (prefix && path.startsWith(`${prefix}/`)) {
+                path = path.slice(prefix.length);
+            } else if (prefix) {
+                path = null;
+            }
+        }
+        const nreq = createNeutralRequest({
+            method: request.method.toUpperCase(),
+            path: path ?? url.pathname,
+            searchParams: url.searchParams,
+            headers: { get: (name) => headers.get(name) },
+            ip: resolveClientIp(ip, headers.get('x-forwarded-for'), trustFn),
+            readBodyBytes: () => readLimited(
+                webStreamChunks(request.body),
+                parseContentLength(headers.get('content-length')),
+                config.maxBodyBytes
+            )
+        });
+        nreq.outsideBasePath = path === null;
+        const response = await router.dispatch(nreq);
+        response.finished();
+        return new Response(response.body, { status: response.status, headers: response.headers });
+    };
 }
 
 // =============================================================================
@@ -2196,7 +2826,8 @@ function withTimeoutGeneric(promise, timeoutMs, label = 'Operation') {
 }
 
 async function mountPluginRoutes(
-    app,
+    routes,
+    reportError,
     pluginList,
     pluginContext,
     cacheStoreRunner,
@@ -2216,7 +2847,7 @@ async function mountPluginRoutes(
             continue;
         }
 
-        const router = express.Router();
+        const pluginRoutes = [];
         let setupDone = false;
 
         const addRoute = (method, routePath, handler) => {
@@ -2231,7 +2862,15 @@ async function mountPluginRoutes(
             if (typeof handler !== 'function') {
                 throw new Error('Route handler must be a function.');
             }
-            router[m](routePath, handler);
+            const prefix = `/plugins/${plugin.routeName}`;
+            const trimmed = routePath.length > 1 && routePath.endsWith('/') ? routePath.slice(0, -1) : routePath;
+            pluginRoutes.push(createPluginRoute({
+                method: m.toUpperCase(),
+                path: trimmed === '/' ? prefix : `${prefix}${trimmed}`,
+                handler,
+                pluginName: plugin.name,
+                reportError
+            }));
         };
 
         const storage = Object.freeze({
@@ -2311,7 +2950,7 @@ async function mountPluginRoutes(
                 `Plugin "${plugin.name}" setup`
             );
             plugin.active = true;
-            app.use(`/plugins/${plugin.routeName}`, router);
+            routes.push(...pluginRoutes);
         } catch (error) {
             console.error(`Plugin "${plugin.name}" setup failed:`, error.message);
             plugin.failed = true;
@@ -2337,74 +2976,14 @@ export async function createCore({
     const state = createCacheState();
     const storeWriteQueue = createAsyncTaskQueue();
     const queueStoreWrite = (fn) => storeWriteQueue.queue(fn);
-    const app = express();
-    app.disable('x-powered-by');
-    app.set('trust proxy', config.trustProxy);
-
-    app.use((req, res, next) => {
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Referrer-Policy', 'no-referrer');
-        res.setHeader('X-Frame-Options', 'DENY');
-        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-        next();
-    });
-
-    app.use((req, res, next) => {
-        const resolvedOrigin = resolveCorsOrigin(config.corsOrigin, req.headers.origin);
-        const corsEnabled = Boolean(config.corsOrigin);
-
-        if (resolvedOrigin) {
-            res.setHeader('Access-Control-Allow-Origin', resolvedOrigin);
-            if (resolvedOrigin !== '*') {
-                res.setHeader(
-                    'Vary',
-                    appendVaryHeader(res.getHeader('Vary'), 'Origin')
-                );
-            }
-            res.setHeader(
-                'Access-Control-Allow-Methods',
-                'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-            );
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-            res.setHeader('Access-Control-Max-Age', '86400');
-            // CORP must match CORS: same-origin (default) would block <link>/<img>
-            // subresource loads from other origins even when CORS permits fetch access.
-            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-        }
-
-        if (req.method === 'OPTIONS' && corsEnabled) {
-            if (req.headers.origin && !resolvedOrigin) {
-                return res.status(403).json({ error: 'CORS origin not allowed.' });
-            }
-            return res.status(204).end();
-        }
-
-        return next();
-    });
-
-    app.use(express.json({ limit: config.maxBodyBytes }));
-
     const pluginContext = buildPluginContext(state, config);
     const pluginRunner = createPluginRunner(plugins, { timeoutMs: pluginTimeoutMs, pluginContext });
 
-    app.use(async (req, res, next) => {
-        const block = await pluginRunner.runGuard({
-            ip: getClientIp(req),
-            method: req.method,
-            path: req.path
-        });
-        if (block) {
-            if (block.retryAfter != null) res.setHeader('Retry-After', block.retryAfter);
-            return res.status(block.status ?? 429).json({ error: block.error ?? 'Blocked.' });
-        }
-        return next();
-    });
     const cacheStoreRunner = createCacheStoreRunner(cacheStore, {
         timeoutMs: cacheStoreTimeoutMs,
         onError: (context) => pluginRunner.runHook('onError', context)
     });
     const persistedBundles = ['full', 'utilities', 'theme'];
-    const readOnlyWriteMessage = 'This replica is read-only. Route writes to a writer replica.';
     const isWriteAllowed = () => config.nodeRole !== 'reader';
     const reportWriteBlocked = async (action, context = {}) => {
         await pluginRunner.runHook('onError', {
@@ -2425,6 +3004,11 @@ export async function createCore({
             reportWriteBlocked(action, context).catch(() => {});
         });
     };
+
+    const fns = createCoreFunctions({
+        state, config, pluginRunner, cacheStoreRunner, queueStoreWrite,
+        isWriteAllowed, reportWriteBlocked, chainDepthLimit
+    });
 
     // Wire mutation functions onto pluginContext
     const evictProjectLocal = (projectId) => {
@@ -2514,52 +3098,13 @@ export async function createCore({
         return pageResult && projectResult;
     };
 
-    pluginContext.compile = async (input) => {
-        const blockedProjectId = input?.projectId ?? null;
-        const blockedPageId = input?.pageId ?? null;
-        const blockedBundle = normalizeBundle(input?.bundle);
-        if (!isWriteAllowed()) {
-            await reportWriteBlocked('plugin-compile', {
-                source: 'plugin',
-                projectId: blockedProjectId,
-                pageId: blockedPageId,
-                bundle: blockedBundle
-            });
-            return { error: readOnlyWriteMessage, status: 409, code: READ_ONLY_ERROR_CODE };
-        }
-        const { projectId, pageId, html, classes, bundle } = input || {};
-        if (!projectId || !isValidId(projectId, config)) return { error: 'Invalid projectId.', status: 400 };
-        if (!pageId || !isValidId(pageId, config)) return { error: 'Invalid pageId.', status: 400 };
-        if (html && typeof html === 'string' && html.length > config.maxHtmlChars) return { error: 'html too large.', status: 413 };
-        if (classes && typeof classes === 'string' && classes.length > config.maxClassChars) return { error: 'classes too large.', status: 413 };
-
-        const store = hookStore.getStore();
-        const skipHooks = store?.inHook ?? false;
-        const currentDepth = store?.compileChainDepth ?? 0;
-
-        if (currentDepth >= chainDepthLimit) {
-            const err = { error: 'Plugin compile chain depth exceeded.', status: 429 };
-            if (!skipHooks) {
-                await pluginRunner.runHook('onError', {
-                    error: new Error(err.error), stage: 'compile', source: 'plugin',
-                    code: 'PLUGIN_COMPILE_CHAIN_LIMIT', context: { projectId, pageId, bundle }
-                });
-            }
-            return err;
-        }
-
-        return hookStore.run(
-            { inHook: skipHooks, compileChainDepth: currentDepth + 1 },
-            () => compileAndCachePage({
-                state, config, projectId, pageId, html, classes, bundle,
-                pluginRunner, cacheStoreRunner,
-                queueStoreWrite,
-                skipHooks,
-                source: 'plugin',
-                request: null
-            })
-        );
-    };
+    // Same input, return value and RichWindError as core.compile; inside a hook the
+    // compile skips hooks, and plugin compile chains are bounded by chainDepthLimit.
+    pluginContext.compile = (input) => fns.compile(input, {
+        source: 'plugin',
+        request: null,
+        skipHooks: hookStore.getStore()?.inHook ?? false
+    });
 
     pluginContext.hydratePageArtifact = (input) => {
         if (!isWriteAllowed()) {
@@ -2610,8 +3155,10 @@ export async function createCore({
     Object.freeze(pluginContext);
 
     const defaultSetupTimeout = Math.max((pluginTimeoutMs ?? 200) * 5, 1000);
+    const pluginRoutes = [];
     await mountPluginRoutes(
-        app,
+        pluginRoutes,
+        (context) => pluginRunner.runHook('onError', context),
         pluginRunner.list,
         pluginContext,
         cacheStoreRunner,
@@ -2619,15 +3166,10 @@ export async function createCore({
         { isWriteAllowed, reportWriteBlocked }
     );
 
-    registerRoutes(
-        app,
-        pluginRunner,
-        config,
-        state,
-        cacheStoreRunner,
-        { isWriteAllowed, reportWriteBlocked },
-        { queueStoreWrite }
-    );
+    const router = createHttpRouter({ config, pluginRunner, fns, pluginRoutes });
+    const trustFn = compileTrustProxy(config.trustProxy);
+    const handler = createNodeAdapter(router, config, trustFn);
+    const fetchHandler = createFetchAdapter(router, config, trustFn);
 
     let closePromise = null;
     const close = () => {
@@ -2650,7 +3192,16 @@ export async function createCore({
         return closePromise;
     };
 
-    return { app, close };
+    return {
+        handler,
+        fetch: fetchHandler,
+        compile: (input) => fns.compile(input),
+        getCss: (input) => fns.getCss(input),
+        getProjectCss: (input) => fns.getProjectCss(input),
+        invalidate: (input) => fns.invalidate(input),
+        suggest: (input) => fns.suggest(input),
+        close
+    };
 }
 
 // =============================================================================
@@ -2661,8 +3212,9 @@ const isDirectRun =
     process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 
 if (isDirectRun) {
-    createCore().then(({ app, close }) => {
-        const server = app.listen(PORT, () => {
+    createCore().then(({ handler, close }) => {
+        const server = http.createServer(handler);
+        server.listen(PORT, () => {
             console.log(`Server running at http://localhost:${PORT}`);
             console.log('In-memory cache enabled (no DB).');
         });

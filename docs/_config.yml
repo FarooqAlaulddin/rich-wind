@@ -1,4 +1,41 @@
 title: Rich Wind
 description: Runtime Tailwind CSS compiler for dynamic HTML and class lists.
-theme: jekyll-theme-minimal
-show_downloads: false
+repository_url: https://github.com/FarooqAlaulddin/rich-wind
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+  syntax_highlighter: rouge
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+nav:
+  - title: Start
+    items:
+      - title: Overview
+        url: /
+      - title: Agent Quickstart
+        url: /agent-quickstart.html
+      - title: AI Runtime Styling
+        url: /ai-runtime-styling.html
+  - title: Guides
+    items:
+      - title: Integration Cookbook
+        url: /integration-cookbook.html
+      - title: Plugin System
+        url: /plugin-system.html
+      - title: FAQ
+        url: /faq.html
+  - title: Reference
+    items:
+      - title: API Reference
+        url: /api-reference.html
+      - title: Runtime Spec
+        url: /runtime-spec.html
+      - title: OpenAPI Contract
+        url: /openapi.json

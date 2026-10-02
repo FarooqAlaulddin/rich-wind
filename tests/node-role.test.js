@@ -1,3 +1,4 @@
+import http from 'node:http';
 import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import { createCore } from '../services/index.js';
@@ -85,8 +86,8 @@ function createSharedStore() {
 }
 
 async function startCore(options = {}) {
-  const { app, close } = await createCore(options);
-  const server = app.listen(0);
+  const { handler, close } = await createCore(options);
+  const server = http.createServer(handler).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   const { port } = server.address();
   return {
@@ -160,7 +161,7 @@ describe('Node role behavior (single writer, many readers)', () => {
     };
     const { baseUrl, close } = await createTestServer({}, {
       plugins: [plugin],
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     try {
@@ -193,7 +194,7 @@ describe('Node role behavior (single writer, many readers)', () => {
 
   it('allows POST /api/compile on writer replicas', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { nodeRole: 'writer', rateLimitDisabled: true }
+      config: { nodeRole: 'writer' }
     });
 
     try {
@@ -260,16 +261,14 @@ describe('Node role behavior (single writer, many readers)', () => {
     const { close } = await createCore({
       plugins: [probe, collector],
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
-    const compileResult = await ctxRef.compile({
+    await expect(ctxRef.compile({
       projectId: 'reader-plugin',
       pageId: 'p1',
       classes: 'text-red-500'
-    });
-    expect(compileResult.status).toBe(409);
-    expect(compileResult.code).toBe('READ_ONLY_REPLICA');
+    })).rejects.toMatchObject({ name: 'RichWindError', status: 409, code: 'READ_ONLY_REPLICA' });
 
     expect(await ctxRef.purgePage('reader-plugin', 'p1')).toBe(false);
     expect(await ctxRef.purgeProject('reader-plugin')).toBe(false);
@@ -343,12 +342,12 @@ describe('Node role behavior (single writer, many readers)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
     const baseUrl = `http://localhost:${port}`;
@@ -363,8 +362,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       artifacts.delete(key);
 
       const second = await fetch(`${baseUrl}/api/css?projectId=reader-store&pageId=home`);
-      expect(second.status).toBe(200);
-      expect(await second.text()).toBe('');
+      expect(second.status).toBe(404);
+      expect(await second.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();
@@ -386,12 +385,12 @@ describe('Node role behavior (single writer, many readers)', () => {
       }
     };
 
-    const { app, close } = await createCore({
+    const { handler, close } = await createCore({
       cacheStore,
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
-    const server = app.listen(0);
+    const server = http.createServer(handler).listen(0);
     await new Promise((resolve) => server.once('listening', resolve));
     const { port } = server.address();
     const baseUrl = `http://localhost:${port}`;
@@ -405,8 +404,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       artifacts.delete(projectKey);
 
       const second = await fetch(`${baseUrl}/api/projects/reader-project/css`);
-      expect(second.status).toBe(200);
-      expect(await second.text()).toBe('');
+      expect(second.status).toBe(404);
+      expect(await second.json()).toMatchObject({ code: 'NOT_FOUND' });
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await close();
@@ -420,21 +419,24 @@ describe('Node role behavior (single writer, many readers)', () => {
     const mutationProbePlugin = {
       name: 'mutation-probe',
       setup(ctx) {
-        ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req, res) => {
+        ctx.addRoute('post', '/mutate/:projectId/:pageId', async (req) => {
           const { projectId, pageId } = req.params;
+          const reqBody = await req.json().catch(() => ({}));
           const writeOk = await ctx.storage.set('probe', { enabled: true });
-          const compileResult = await ctx.compile({
-            projectId,
-            pageId,
-            classes: req.body?.classes || 'text-red-500'
-          });
+          let compileStatus = 200;
+          let compileCode = null;
+          try {
+            await ctx.compile({
+              projectId,
+              pageId,
+              classes: reqBody?.classes || 'text-red-500'
+            });
+          } catch (err) {
+            compileStatus = err.status;
+            compileCode = err.code;
+          }
           const purgeOk = await ctx.purgePage(projectId, pageId);
-          return res.json({
-            writeOk,
-            purgeOk,
-            compileStatus: compileResult?.status ?? 200,
-            compileCode: compileResult?.code ?? null
-          });
+          return { body: { writeOk, purgeOk, compileStatus, compileCode } };
         });
       },
       onError(info) {
@@ -445,12 +447,12 @@ describe('Node role behavior (single writer, many readers)', () => {
     const writer = await startCore({
       cacheStore: store,
       plugins: [mutationProbePlugin],
-      config: { nodeRole: 'writer', rateLimitDisabled: true }
+      config: { nodeRole: 'writer' }
     });
     const reader = await startCore({
       cacheStore: store,
       plugins: [mutationProbePlugin],
-      config: { nodeRole: 'reader', rateLimitDisabled: true }
+      config: { nodeRole: 'reader' }
     });
 
     try {
@@ -518,8 +520,8 @@ describe('Node role behavior (single writer, many readers)', () => {
       const readerAfterWriterDelete = await fetch(
         `${reader.baseUrl}/api/css?projectId=real-life&pageId=home`
       );
-      expect(readerAfterWriterDelete.status).toBe(200);
-      expect(await readerAfterWriterDelete.text()).toBe('');
+      expect(readerAfterWriterDelete.status).toBe(404);
+      expect(await readerAfterWriterDelete.json()).toMatchObject({ code: 'NOT_FOUND' });
 
       const readerMutationRoute = await fetch(
         `${reader.baseUrl}/plugins/mutation-probe/mutate/real-life/home`,

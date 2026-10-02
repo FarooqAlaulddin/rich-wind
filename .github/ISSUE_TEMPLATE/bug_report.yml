@@ -1,0 +1,25 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal request or snippet.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and Node.js
+      placeholder: "rich-wind 1.0.0, Node 22"
+    validations:
+      required: true

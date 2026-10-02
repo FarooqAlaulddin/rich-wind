@@ -4,9 +4,8 @@ import { createTestServer } from './helpers/createTestServer.js';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('POST without JSON content-type', () => {
-  it('/api/compile returns 400 with helpful error when body is not JSON', async () => {
+  it('/api/compile returns 415 with the error envelope when body is not JSON', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -15,18 +14,16 @@ describe('POST without JSON content-type', () => {
         headers: { 'content-type': 'text/plain' },
         body: 'not json'
       });
-      // Should get a clear error, not a 500 crash
-      expect(response.status).toBeLessThan(500);
+      expect(response.status).toBe(415);
       const body = await response.json();
-      expect(body.error).toBeTruthy();
+      expect(body).toMatchObject({ error: expect.any(String), code: 'UNSUPPORTED_MEDIA_TYPE' });
     } finally {
       await close();
     }
   });
 
-  it('/api/suggest handles non-JSON body gracefully (all fields optional)', async () => {
+  it('/api/suggest returns 415 rather than silently accepting a non-JSON body', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -35,11 +32,9 @@ describe('POST without JSON content-type', () => {
         headers: { 'content-type': 'text/plain' },
         body: 'not json'
       });
-      // Should not crash with 500 (the hookContext bug)
-      expect(response.status).toBeLessThan(500);
+      expect(response.status).toBe(415);
       const body = await response.json();
-      expect(body.success).toBe(true);
-      expect(Array.isArray(body.suggestions)).toBe(true);
+      expect(body).toMatchObject({ error: expect.any(String), code: 'UNSUPPORTED_MEDIA_TYPE' });
     } finally {
       await close();
     }
@@ -47,7 +42,6 @@ describe('POST without JSON content-type', () => {
 
   it('/api/compile returns 400 when body is empty', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -66,7 +60,6 @@ describe('POST without JSON content-type', () => {
 
   it('/api/suggest succeeds with empty JSON body (all fields optional)', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -88,7 +81,6 @@ describe('POST without JSON content-type', () => {
 describe('Compile edge cases', () => {
   it('handles arbitrary value classes like bg-[#ff0000]', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -112,7 +104,6 @@ describe('Compile edge cases', () => {
 
   it('same classes in different order produce same hash (normalization)', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -149,7 +140,6 @@ describe('Compile edge cases', () => {
 
   it('compiles base bundle without html or classes', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -173,7 +163,6 @@ describe('Compile edge cases', () => {
 
   it('handles empty string for html and classes', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -196,9 +185,8 @@ describe('Compile edge cases', () => {
     }
   });
 
-  it('accepts snake_case aliases (project_id, page_id)', async () => {
+  it('rejects removed snake_case aliases', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -211,11 +199,9 @@ describe('Compile edge cases', () => {
           classes: 'text-red-500'
         })
       });
-      expect(response.status).toBe(200);
+      expect(response.status).toBe(400);
       const body = await response.json();
-      expect(body.success).toBe(true);
-      expect(body.projectId).toBe('edge-snake');
-      expect(body.pageId).toBe('home');
+      expect(body.code).toBe('MISSING_INPUT');
     } finally {
       await close();
     }
@@ -225,7 +211,6 @@ describe('Compile edge cases', () => {
 describe('Suggest edge cases', () => {
   it('handles non-string classes input gracefully', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -246,7 +231,7 @@ describe('Suggest edge cases', () => {
 
   it('respects configured suggest limit', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true, suggestLimit: 3 }
+      config: { suggestLimit: 3 }
     });
 
     try {
@@ -269,7 +254,6 @@ describe('Suggest edge cases', () => {
 
   it('returns empty suggestions for unknown prefix', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -291,9 +275,8 @@ describe('Suggest edge cases', () => {
 });
 
 describe('Bundle normalization edge cases', () => {
-  it('treats "mode" alias the same as "bundle"', async () => {
+  it('ignores the removed mode alias', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -310,7 +293,7 @@ describe('Bundle normalization edge cases', () => {
       expect(response.status).toBe(200);
       const body = await response.json();
       expect(body.success).toBe(true);
-      expect(body.bundle).toBe('utilities');
+      expect(body.bundle).toBe('full');
     } finally {
       await close();
     }
@@ -318,7 +301,6 @@ describe('Bundle normalization edge cases', () => {
 
   it('falls back to full bundle for unknown bundle name', async () => {
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -347,7 +329,6 @@ describe('onError plugin hook safety', () => {
   it('/api/suggest catch block fires onError without crashing', async () => {
     const errors = [];
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true },
       plugins: [{
         name: 'error-spy',
         hooks: {
@@ -375,7 +356,6 @@ describe('onError plugin hook safety', () => {
   it('/api/compile catch block fires onError with request info', async () => {
     const errors = [];
     const { baseUrl, close } = await createTestServer({}, {
-      config: { rateLimitDisabled: true },
       plugins: [{
         name: 'error-spy',
         hooks: {
@@ -405,7 +385,6 @@ describe('Project CSS revalidation (expired but unchanged hash)', () => {
       RW_PROJECT_CACHE_TTL_MS: '150',
       RW_CACHE_TTL_MS: '60000',
     }, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
@@ -443,7 +422,6 @@ describe('cacheMaxPages minimum enforcement', () => {
     const { baseUrl, close } = await createTestServer({
       RW_CACHE_MAX_PAGES: '0',
     }, {
-      config: { rateLimitDisabled: true }
     });
 
     try {
