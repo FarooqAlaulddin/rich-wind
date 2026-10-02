@@ -13,17 +13,17 @@
     "gen:catalog": "node scripts/gen-catalog.mjs"
   },
   "dependencies": {
-    "@lexical/html": "^0.44.0",
-    "@lexical/react": "^0.44.0",
-    "@lexical/rich-text": "^0.44.0",
-    "@lexical/selection": "^0.44.0",
-    "@lexical/utils": "^0.44.0",
-    "lexical": "^0.44.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "@lexical/html": "^0.52.0",
+    "@lexical/react": "^0.52.0",
+    "@lexical/rich-text": "^0.52.0",
+    "@lexical/selection": "^0.52.0",
+    "@lexical/utils": "^0.52.0",
+    "lexical": "^0.52.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.1",
-    "vite": "^8.0.10"
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.2"
   }
 }

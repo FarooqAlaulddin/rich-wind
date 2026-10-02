@@ -11,3 +11,8 @@ package.json.bak
 
 # Local agent notes and settings (never tracked)
 .claude/
+
+# Playwright
+/test-results/
+/playwright-report/
+/lexical-demo/dist-e2e/
