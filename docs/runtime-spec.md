@@ -1,515 +1,83 @@
 # Runtime Spec
 
-This document explains how Rich Wind works under the hood — how it compiles CSS, how the cache behaves, what the cacheStore adapter interface looks like, and how bundle splitting works.
+The operational contract: what the cache does, what a `cacheStore` must implement, what each replica role can do, and where the core stops and the host starts. Defaults are in [Configuration](api-reference.html#configuration).
 
-## Compilation Pipeline
+## Caching
 
-When a request hits `/api/compile`, Rich Wind goes through these steps:
-
-**Class extraction.** If the request includes `html`, it's scanned for class candidates using Tailwind's `Scanner` (from `@tailwindcss/oxide`). Each candidate is checked against the Tailwind design system to confirm it's a real utility class. Invalid candidates are discarded.
-
-**Class normalization.** If the request includes a `classes` field, it's normalized into an array. Strings are split on whitespace. Arrays are flattened (nested strings are split too). Empty tokens are removed.
-
-**Merging.** Classes from HTML extraction and the `classes` field are combined into a `Set` (removing duplicates), validated again, and sorted alphabetically. This sorted list is the canonical representation of the page's classes.
-
-**Hashing.** The sorted class list is joined with `|` and hashed with SHA-256. This hash is the cache key — two requests with the same set of classes will always produce the same hash, regardless of the order they were sent in.
-
-**Compilation.** The validated classes are compiled through `@tailwindcss/node` using `@source inline(...)` directives. The Tailwind design system loads lazily on first use and is then reused for all requests.
-
-## Cache
-
-All cache state lives in process memory. Restarting the process clears it.
-
-### Page Cache
-
-Each compiled page is stored by `projectId + pageId`. A page entry holds:
-
-- The set of classes on that page
-- The content hash
-- Compiled CSS for each bundle type (`full`, `utilities`, `theme`) — only the ones that have been requested
-- `updatedAt` and `expiresAt` timestamps
-
-The cache uses a **sliding TTL**: every time a page is accessed (compiled, read via `/api/css`, etc.), its `expiresAt` is reset to `now + cacheTtlMs`. Pages that go untouched for longer than the TTL are considered expired and evicted on next access.
-
-There's also a **global page cap** (`cacheMaxPages`, default 200) across all projects. When the cap is reached, the least-recently-used page is evicted. This is tracked with an LRU map — every access moves the page to the end of the queue.
-
-When a page is evicted, its classes are decremented from the project's class count map. If a project has no pages left, the project is removed entirely.
-
-### Project Cache
-
-`GET /api/projects/:projectId/css` returns a stylesheet compiled from the union of all classes across all cached pages in a project. This aggregated CSS has its own cache entry with its own TTL (`projectCacheTtlMs`).
-
-The project cache is automatically invalidated whenever a page in that project is added, removed, or changes its class set. So you don't need to worry about staleness — the next project CSS request after a page change will recompile.
-
-### Base CSS
-
-The `base` bundle (Tailwind's preflight reset) doesn't depend on any classes. It's compiled once at first request and cached for the entire process lifetime.
+- Cache is in process memory, per process. A restart clears it unless a `cacheStore` holds the artifacts.
+- A page is keyed by `projectId` + `pageId`. The `hash` is the identity of the class set (also the ETag), not the key.
+- Page TTL is sliding (`cacheTtlMs`, reset on access); `cacheMaxPages` is a global LRU cap across projects. Expired entries are evicted when read, there is no background sweep.
+- Project CSS is the union of the classes of the project's pages held in memory. It is recompiled after any page in the project is added, removed, or changes, and has a fixed TTL (`projectCacheTtlMs`) that a hit does not extend.
+- `GET /api/css` and `core.getCss` never compile new classes. After expiry or eviction, with no store holding the entry, they return `404`; only compile rebuilds.
+- Split bundles are stored per half: requesting `theme` and then `utilities` for the same page compiles twice.
 
 ## cacheStore
 
-By default, cache lives only in memory. If the process restarts, everything is gone. The `cacheStore` option lets you add a persistence layer so cached artifacts survive restarts and can be shared across instances.
-
-A cacheStore is an object you pass to `createCore()`. It has four core artifact methods, plus up to three optional delete-through artifact methods used by plugin purge mutations, plus up to four optional plugin-data methods used by `ctx.storage` in plugin `setup()`.
-
-### readPageArtifact
-
-Called when a page isn't found in memory and Rich Wind checks the store before recompiling.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",   // which project
-  pageId: "hero",        // which page
-  bundle: "full",        // normalized bundle type
-  now: 1707800000000     // current timestamp in ms
-}
-```
-
-**Should return** an artifact object or `null`. An artifact looks like:
-
-```js
-{
-  css: "/* compiled CSS */",
-  classes: ["p-4", "text-red-500"],  // the class list (needed to rebuild project aggregates)
-  hash: "a1b2c3...",                 // content hash
-  updatedAt: 1707799000000,          // when this was last compiled
-  expiresAt: 1707800600000,          // when this artifact expires
-  source: "compile"                  // optional metadata
-}
-```
-
-The `classes` array is important — without it, Rich Wind can't reconstruct the project's class count map, so it can't generate project-level CSS. If your store returns an artifact without `classes`, the page CSS will be served but the page won't contribute to project aggregation.
-
-### upsertPageArtifact
-
-Called after a successful compile to persist the result. Fires asynchronously after the response is sent, so it never adds latency.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",
-  pageId: "hero",
-  bundle: "full",
-  css: "/* compiled CSS */",
-  hash: "a1b2c3...",
-  classes: ["p-4", "text-red-500"],
-  cached: false,
-  updatedAt: 1707800000000,
-  expiresAt: 1707800600000
-}
-```
-
-Your implementation should write this to whatever storage you're using. The `expiresAt` field tells you when this artifact can be pruned.
-
-### deletePageArtifact (optional)
-
-Called by `purgePage(projectId, pageId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",
-  pageId: "hero",
-  bundle: "full" // called separately for full/utilities/theme
-}
-```
-
-If implemented, it should remove the artifact for that page + bundle from persistence.
-
-### readProjectArtifact
-
-Called when project-level CSS (`GET /api/projects/:id/css`) isn't found in memory.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",
-  bundle: "full",
-  now: 1707800000000
-}
-```
-
-**Should return** an artifact object or `null`:
-
-```js
-{
-  css: "/* aggregated CSS */",
-  hash: "d4e5f6...",
-  updatedAt: 1707799000000,
-  expiresAt: 1707800600000
-}
-```
-
-### upsertProjectArtifact
-
-Called after project-level CSS is compiled, to persist the aggregate. Also fires asynchronously.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",
-  bundle: "full",
-  css: "/* aggregated CSS */",
-  hash: "d4e5f6...",
-  cached: false,
-  updatedAt: 1707800000000,
-  expiresAt: 1707800600000
-}
-```
-
-### deleteProjectArtifact (optional)
-
-Called by `purgeProject(projectId)` from plugin context. This is for explicit delete-through workflows and is not used by normal TTL/LRU eviction.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app",
-  bundle: "full" // called separately for full/utilities/theme
-}
-```
-
-If implemented, it should remove the project aggregate artifact for that bundle from persistence.
-
-### deleteProjectPageArtifacts (optional)
-
-Called by `purgeProject(projectId)` from plugin context for project-wide page artifact cleanup in persistence. This is especially important when purging from a cold replica that has no local page list.
-
-**Receives:**
-
-```js
-{
-  projectId: "my-app"
-}
-```
-
-If implemented, it should remove all persisted page artifacts for the project across bundles (`full` / `utilities` / `theme`).
-
-### Plugin data methods (optional)
-
-These methods back the plugin storage API described in [Plugin System](plugin-system.html#plugin-storage). They are optional. If omitted, plugin storage still exists and remains fail-open.
-
-#### readPluginData
-
-Called by `ctx.storage.get(key)`.
-
-**Receives:**
-
-```js
-{
-  pluginName: "analytics", // plugin route name (lowercased plugin name)
-  key: "metrics_v1"
-}
-```
-
-**Should return** the stored value or `null`.
-
-#### writePluginData
-
-Called by `ctx.storage.set(key, value)`.
-
-**Receives:**
-
-```js
-{
-  pluginName: "analytics",
-  key: "metrics_v1",
-  value: { compileCount: 42 } // adapter-defined serialization
-}
-```
-
-#### deletePluginData
-
-Called by `ctx.storage.delete(key)`.
-
-**Receives:**
-
-```js
-{
-  pluginName: "analytics",
-  key: "metrics_v1"
-}
-```
-
-#### listPluginData
-
-Called by `ctx.storage.list(prefix?)`.
-
-**Receives:**
-
-```js
-{
-  pluginName: "analytics",
-  prefix: "metrics" // optional; empty string when omitted
-}
-```
-
-**Should return** an array of keys for that plugin namespace, for example:
-
-```js
-["metrics_v1", "metrics_daily_2026_02_16"]
-```
-
-Rich Wind sanitizes list output before returning it to plugins: non-string keys are dropped, invalid keys are dropped, keys are deduplicated, and `prefix` filtering is enforced again defensively.
-
-### Failure behavior
-
-The cacheStore is **fail-open**. If any method throws an error or exceeds `cacheStoreTimeoutMs` (default 150ms), the request continues normally using in-memory cache. The error is reported to plugins through the [`onError` hook](plugin-system.html#error-handling) with `stage: "cache-store"`, but it never fails the HTTP request.
-
-For plugin storage specifically:
-- `ctx.storage.get(key)` falls back to `null`
-- `ctx.storage.set(key, value)` and `ctx.storage.delete(key)` fall back to `false`
-- `ctx.storage.list(prefix?)` falls back to `[]`
-
-For purge mutations specifically:
-- `ctx.purgePage(projectId, pageId)` and `ctx.purgeProject(projectId)` return `false` if required delete operations fail, time out, or are missing
-- `ctx.purgeProject(projectId)` can still purge known local pages without `deleteProjectPageArtifacts`, but a cold-replica purge (no local pages) requires `deleteProjectPageArtifacts` for full remote cleanup
-- local in-memory eviction still happens, so the process remains healthy and operational
-
-This means your store implementation doesn't need to be bulletproof. If your database is slow or down, Rich Wind keeps working — it just falls back to in-memory only until the store recovers.
+An object passed to `createCore({ cacheStore })` that persists artifacts and plugin data so they survive restarts and are shared between replicas. Exact types: `services/index.d.ts` (`CacheStoreAdapter`). Working adapters: [Redis](integration-cookbook.html#redis-cachestore), [filesystem](integration-cookbook.html#filesystem-cachestore).
+
+| Method | Called when | Receives | Returns |
+| --- | --- | --- | --- |
+| `readPageArtifact` | Page not in memory (compile pre-hydration and `GET /api/css`) | `projectId, pageId, bundle, now` | artifact or `null` |
+| `upsertPageArtifact` | After a compile | `projectId, pageId, bundle, css, hash, classes, cached, updatedAt, expiresAt` | ignored |
+| `deletePageArtifact` | `ctx.purgePage` and `POST /api/invalidate` with a `pageId`, once per bundle (`full`, `utilities`, `theme`) | `projectId, pageId, bundle` | ignored |
+| `readProjectArtifact` | Project CSS requested and the project has no pages in memory | `projectId, bundle, now` | artifact or `null` |
+| `upsertProjectArtifact` | Every project CSS read served from memory on a writer or hybrid node | `projectId, bundle, css, hash, cached, updatedAt, expiresAt` | ignored |
+| `deleteProjectArtifact` | `ctx.purgeProject` and `POST /api/invalidate` without a `pageId`, once per bundle | `projectId, bundle` | ignored |
+| `deleteProjectPageArtifacts` | `ctx.purgeProject` and `POST /api/invalidate` without a `pageId` | `projectId` | ignored |
+| `readPluginData` | `ctx.storage.get` | `pluginName, key` | value or `null` |
+| `writePluginData` | `ctx.storage.set` | `pluginName, key, value` | ignored |
+| `deletePluginData` | `ctx.storage.delete` | `pluginName, key` | ignored |
+| `listPluginData` | `ctx.storage.list` | `pluginName, prefix` | array of keys |
+
+An artifact is `{ css, hash, updatedAt, expiresAt, classes? }`.
+
+- Every method is optional. A missing method is reported once through `onError` with code `CACHE_STORE_METHOD_MISSING`.
+- Fail-open: a throw or timeout never fails the request. It is reported to [`onError`](plugin-system.html#hooks) with `stage: "cache-store"` and the request continues from memory. Purges return `false`.
+- The timeout is per call and is the top-level `cacheStoreTimeoutMs` option (not inside `config`). It stops core from waiting; it does not cancel the call.
+- Writes are queued without blocking the compile response, and their return values are ignored.
+- Page artifacts need `classes` to be hydrated into memory or counted in project CSS. Without `classes` they are still served by `GET`, but not hydrated, and compile pre-hydration skips them. With `classes`, the hash is recomputed from them.
+- `expiresAt` is honoured. Expired, oversized (`maxCssChars`), or malformed artifacts count as a miss.
+- A compile that misses memory can issue up to three sequential `readPageArtifact` calls (the requested bundle, then the other two of `full`, `utilities`, `theme`), each bounded by the timeout.
+- `deleteProjectPageArtifacts` is needed for a purge from a cold replica, which has no local page list to delete per page.
+- Plugin storage keys, fallbacks and role behaviour: [Plugin Storage](plugin-system.html#plugin-storage).
 
 ## Replica Roles
 
-Rich Wind supports explicit replica roles through `config.nodeRole` (or `RW_NODE_ROLE`):
+Set with `config.nodeRole` or `RW_NODE_ROLE`.
 
-| Role | Intended use |
-| --- | --- |
-| `hybrid` (default) | Single-node setups or simple deployments that allow reads and writes everywhere |
-| `writer` | Mutation pool replicas (`compile`, purge, plugin writes) |
-| `reader` | Read pool replicas (serve CSS and suggestions only) |
-
-On `reader` replicas:
-
-- `POST /api/compile` returns `409` (`READ_ONLY_REPLICA`)
-- write helpers are blocked:
-  - `ctx.compile` returns `{ status: 409, code: "READ_ONLY_REPLICA" }`
-  - `ctx.purge*` and `ctx.hydrate*` return `false`
-  - `ctx.evict*` does nothing
-- plugin storage writes are blocked (`ctx.storage.set/delete`)
-- plugin storage reads still work (`ctx.storage.get/list`)
-- if `cacheStore` is enabled, CSS reads check shared storage first; if the shared entry is gone, readers return `404` instead of stale local CSS
-
-Recommended production shape:
-1. Route all writes to `writer` replicas.
-2. Route read traffic to `reader` replicas.
-3. Keep both pools on the same shared `cacheStore`.
-
-### Artifact validation
-
-Rich Wind validates every artifact returned by the store before using it. An artifact is rejected (treated as a cache miss) if:
-
-- `css` is missing or not a string
-- `css` exceeds `maxCssChars`
-- `expiresAt` is in the past
-- `classes` is provided but can't be normalized (not a string or array, or exceeds `maxClassCount`)
-
-This protects against stale or corrupt data in the store.
-
-## Bundle Splitting
-
-When you request `theme` or `utilities` bundles, Rich Wind compiles the full set of classes (minus preflight) and then splits the output:
-
-- **Theme** — everything inside `:root, :host { ... }` blocks. These are the CSS custom properties that define colors, spacing, font sizes, etc.
-- **Utilities** — everything else. The actual utility rules like `.bg-red-500 { ... }`.
-
-Both are generated from a single Tailwind compile and split by pattern-matching the CSS output. This means requesting `theme` and `utilities` separately is not slower than requesting `full` — the compilation happens once and the result is cached per bundle.
-
-The `base` bundle (preflight) is compiled separately since it doesn't depend on any classes.
-
-## Threat Model and Enforcement Boundary
-
-Rich Wind protects resources it owns: deterministic input validation, body and input
-caps, cache caps, CSS-output caps, and safe construction of Tailwind inline sources.
-It validates explicit classes before constructing `@source inline(...)`, including
-rejecting brace-expansion syntax. These controls apply equally to every caller.
-
-The host app or proxy owns the network edge: authentication, tenant-to-`projectId`
-mapping, authorization, rate limiting, request logging, TLS, and WAF policy. Core has
-no API key or rate limiter. A plugin guard can block an HTTP request, but direct library
-calls intentionally bypass guards because their host has already authorized the call.
-
-Core enforces a compile concurrency cap (`maxConcurrentCompiles`, default `8`). When every
-slot is in use, a compile is shed immediately with `503 SERVER_BUSY` and `Retry-After: 1`;
-there is no wait queue. The cap lives in `core.compile`, so direct library calls are bounded
-too. Core has no per-client fairness: one client can hold every slot, and per-client limits
-belong to the host or proxy.
-
-Plugin compiles follow these slot rules. A `ctx.compile` from a hook that its parent compile
-awaits runs inside the parent's slot and never takes a second one. A `ctx.compile` from a
-deferred hook (`deferHooks`) or from a plugin route takes its own slot and can be shed with
-`SERVER_BUSY`. Auto-promote defers `onCompileResult`, so under full load its promotion
-compile is shed and treated as a skipped promotion.
-
-When deploying behind a trusted reverse proxy, set `trustProxy` so plugin request hooks
-receive the forwarded client address (`request.ip`). Never enable it for untrusted direct clients.
-
-`trustProxy` follows Express `trust proxy` semantics. It accepts `true` or `false`, a hop
-count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (names
-such as `loopback` and `uniquelocal` also work). With `RW_TRUST_PROXY`, `1` is a hop count
-of 1, not "trust all". When unset, core uses the socket address and ignores
-`X-Forwarded-For`, except when core is mounted in a host that already resolved `req.ip`
-(Express with `trust proxy` set); then core uses the host's `req.ip`. For `core.fetch`,
-`trustProxy` applies to the `ip` you pass, as if it were the socket address. The resolved
-address reaches plugin hooks only.
-
-`true` trusts the leftmost `X-Forwarded-For` entry, which the client controls, so it is
-unsafe on the open internet. Use a hop count equal to the number of proxies you run in front
-of core that each append to `X-Forwarded-For`, or a subnet list.
-
-Example, a Cloudflare Tunnel in front of nginx in front of core. Cloudflare's edge sets
-`X-Forwarded-For` to the client address and cloudflared forwards it to nginx on loopback.
-nginx appends cloudflared's loopback address with `$proxy_add_x_forwarded_for`, and core sees
-nginx's loopback socket. The trusted hops are nginx and cloudflared, so use hop count `2`
-(or `loopback`). The next entry is then the address Cloudflare saw, which is the client.
-Confirm the exact count against the real chain by logging `request.ip` from a known client.
-
-## Including Rich Wind in an App
-
-Core has no limiter and no authentication, so the host puts them in front. These are the
-supported ways to embed it. In every pattern the host's middleware runs before core, and a
-request the host rejects never reaches a plugin hook or the compiler.
-
-### Express host (mounted handler)
-
-`core.handler` resolves paths from `req.url`. Express rewrites `req.url` under a mount path,
-so the handler works under any prefix:
-
-```js
-import express from "express";
-import expressRateLimit from "express-rate-limit";
-import { createCore } from "rich-wind";
-
-const core = await createCore();
-const limiter = expressRateLimit({ windowMs: 60_000, limit: 120 });
-const auth = (req, res, next) =>
-  req.header("authorization") ? next() : res.status(401).json({ error: "Unauthorized" });
-
-const app = express();
-app.use("/rw", limiter, auth, core.handler);
-```
-
-`POST /rw/api/compile` reaches `/api/compile`. Do not put `express.json()` before the mount;
-core reads and bounds the body itself.
-
-### Plain node:http host
-
-A host that routes a prefix to core strips it from `req.url` first, keeping any query string:
-
-```js
-import http from "node:http";
-
-http.createServer((req, res) => {
-  if (req.url === "/rw" || req.url.startsWith("/rw/") || req.url.startsWith("/rw?")) {
-    req.url = req.url.slice(3) || "/";
-    if (req.url[0] === "?") req.url = "/" + req.url;
-    return core.handler(req, res);
-  }
-  res.statusCode = 404;
-  res.end();
-}).listen(3000);
-```
-
-### Next.js App Router
-
-Serve `core.fetch` from a route handler and set `basePath` to the route's prefix. This needs
-the Node.js runtime.
-
-```js
-// app/rw/[...path]/route.js
-import { createCore } from "rich-wind";
-
-const core = await createCore();
-const handle = (req) => core.fetch(req, { basePath: "/rw" });
-
-export const runtime = "nodejs";
-export const GET = handle;
-export const POST = handle;
-export const HEAD = handle;
-export const OPTIONS = handle;
-```
-
-### Fastify (library calls)
-
-Call the functions directly and map `RichWindError` to a reply. Direct calls bypass plugin
-guards, because the host has already authorized them:
-
-```js
-import Fastify from "fastify";
-import { createCore, RichWindError } from "rich-wind";
-
-const core = await createCore();
-const app = Fastify();
-
-app.post("/css/compile", async (request, reply) => {
-  try {
-    return await core.compile(request.body);
-  } catch (err) {
-    if (err instanceof RichWindError) {
-      return reply.code(err.status).send({ error: err.message, code: err.code });
-    }
-    throw err;
-  }
-});
-```
-
-### Standalone server behind a proxy
-
-Run `npm start` and let the proxy own limiting, TLS and authentication. These nginx zones are
-field-tested: 120 requests per minute for compile and 600 per minute for everything else.
-An editor integration makes about 4 requests per keystroke, so lower limits flood the client
-with `429` responses.
-
-```nginx
-limit_req_zone $binary_remote_addr zone=richwind_compile:10m rate=120r/m;
-limit_req_zone $binary_remote_addr zone=richwind_api:10m     rate=600r/m;
-
-location = /api/compile {
-  limit_req zone=richwind_compile burst=30 nodelay;
-  proxy_pass http://127.0.0.1:3000;
-}
-location / {
-  limit_req zone=richwind_api burst=100 nodelay;
-  proxy_pass http://127.0.0.1:3000;
-}
-```
-
-Set `RW_TRUST_PROXY` to the number of proxy hops so plugin hooks see the real client address.
-
-### Plugin routes and access policy
-
-Routes a plugin registers under `/plugins/<name>/...` are reachable by anyone who can reach
-core. A plugin whose routes expose sensitive data or perform mutations must enforce its own
-access policy, for example in a `guard` hook or inside the route. Host middleware on the
-mount prefix covers them only when every request passes through that host.
-
-## Security Headers
-
-Every response includes these headers:
-
-| Header | Value | Purpose |
+| Role | Can do | Cannot do |
 | --- | --- | --- |
-| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing |
-| `Referrer-Policy` | `no-referrer` | No referrer sent on navigation |
-| `X-Frame-Options` | `DENY` | Prevents embedding in iframes |
-| `Cross-Origin-Resource-Policy` | `same-origin` | Blocks cross-origin resource loading |
+| `hybrid` (default) | Everything | Nothing blocked |
+| `writer` | Compile, purge, hydrate, plugin storage writes | Nothing blocked |
+| `reader` | Serve CSS, suggestions, plugin storage reads | `POST /api/compile` and `POST /api/invalidate` return `409 READ_ONLY_REPLICA`; `ctx.compile` throws a `RichWindError` with the same status and code; `ctx.purge*` and `ctx.hydrate*` return `false`; `ctx.evict*` does nothing; `ctx.storage.set/delete` are blocked |
 
-CSS responses, `GET /richwind-loader.js`, and `GET /richwind-reload.js` override `Cross-Origin-Resource-Policy` to `cross-origin` so they can be used as browser subresources by optional HTML preview surfaces. Browser `fetch()` calls made by the loader still require CORS, so configure `RW_CORS_ORIGIN` when serving external viewers.
+- Readers read the store first. If the entry is missing there (or the store errors or times out), a reader returns `404` rather than stale local CSS; `resolvePageCss` and `resolveProjectCss` plugin hooks can still answer.
+- Route writes to writers, reads to readers, and give both pools the same `cacheStore`.
+- Caveat: keep one writer per project. A writer or hybrid node that holds only some of a project's pages builds the project aggregate from those local pages and upserts it, overwriting a fuller one.
 
-The core intentionally does not set CSP, HSTS, cookie attributes, or cache policy for a
-host application. Those headers depend on the host's authentication and deployment
-topology and belong at the application or reverse-proxy layer.
+## Security Boundary
 
-## What the Core Doesn't Do
+The core validates and bounds what it owns: input and body caps, cache caps, CSS output caps, and safe construction of Tailwind inline sources. The host owns the rest.
 
-Rich Wind is intentionally limited in scope. It doesn't include:
+- **Host owns:** authentication, tenant-to-`projectId` mapping, authorization, rate limiting, TLS, CSP, logging, WAF. Core trusts whatever `projectId` it is sent.
+- **Direct library calls bypass HTTP guards.** The host has already authorized them.
+- **Plugin routes** under `/plugins/<name>/...` are reachable by anyone who can reach core. A plugin that exposes data or mutates state must enforce its own access policy, in a `guard` hook or in the route.
+- **Guards fail open** if they throw or time out.
+- **Compile concurrency** is capped (`maxConcurrentCompiles`, see [Configuration](api-reference.html#configuration)). When all slots are busy a compile is shed immediately with `503 SERVER_BUSY` and `Retry-After: 1`; there is no queue and no per-client fairness, so one client can hold every slot. The cap also bounds direct `core.compile` calls. A `ctx.compile` from a hook its parent awaits runs inside the parent's slot; from a deferred hook or a plugin route it takes its own and can be shed.
+- **Class tokens** containing any of `( ) { } ; ,`, a newline, a carriage return, or NUL are put in `rejected` even if Tailwind would accept them.
+- **Headers:** core sets `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, and `Cross-Origin-Resource-Policy: same-origin` (`cross-origin` for CSS, the loader and reload scripts, and any response where CORS resolves an allowed origin). CSP, HSTS and cookies are the host's.
 
-- **Authentication or tenant enforcement.** It trusts whatever `projectId` you send. In production, put it behind a gateway that maps authenticated users to safe project IDs.
-- **Persistent storage.** Cache is in-memory by default. Use the `cacheStore` adapter if you need persistence.
-- **Custom Tailwind configuration.** It uses the default Tailwind design system. There's no API to upload a custom `tailwind.config.js` at request time.
-- **Streaming responses.** Compilation finishes before the response is sent.
+What the core does not do:
+
+- Authentication, tenant enforcement, or rate limiting.
+- Custom Tailwind configuration; it uses the default design system.
+- Streaming responses; compilation finishes before the response is sent.
+
+## Client IP and trustProxy
+
+`trustProxy` follows Express `trust proxy` semantics: `true` or `false`, a hop count (`1`, `2`, ...), or a comma-separated list of addresses or subnets (`loopback` and `uniquelocal` also work). With `RW_TRUST_PROXY`, `1` is a hop count, not "trust all".
+
+- `true` trusts the leftmost `X-Forwarded-For` entry, which the client controls. It is unsafe on the open internet. Use a hop count equal to the number of proxies in front of core that append to `X-Forwarded-For`, or a subnet list.
+- Unset: core uses the socket address and ignores `X-Forwarded-For`, except when mounted in a host that already resolved `req.ip` (such as Express with `trust proxy`); then it uses the host's `req.ip`.
+- For `core.fetch`, `trustProxy` applies to the `ip` you pass, as if it were the socket address.
+- The resolved address reaches plugin hooks only (`request.ip`).

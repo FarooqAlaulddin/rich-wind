@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Rich Wind API",
-    "version": "1.0.0",
+    "version": "0.0.1-alpha.0",
     "description": "Runtime Tailwind CSS compilation and cache API. Every documented endpoint may be blocked by a plugin guard: 401 uses UNAUTHORIZED, 403 uses FORBIDDEN, 429 uses RATE_LIMITED, and other blocking statuses use REQUEST_BLOCKED."
   },
   "servers": [
@@ -72,7 +72,17 @@
             }
           },
           "413": {
-            "description": "Payload or input too large",
+            "description": "Payload or input too large; an oversized body closes the connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json, or a Content-Encoding is present",
             "content": {
               "application/json": {
                 "schema": {
@@ -135,7 +145,7 @@
     "/api/css": {
       "get": {
         "summary": "Get cached page CSS",
-        "description": "Reads CSS for a cached page. Returns text/css when found.",
+        "description": "Reads cached CSS for a page; never compiles. 404 when the page is not cached, except bundle=base, which is page-independent and always 200. projectId is required (missing gives 400 MISSING_INPUT).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -152,12 +162,16 @@
             "description": "CSS found",
             "headers": {
               "ETag": {
-                "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
-                "schema": { "type": "string" }
+                "description": "Present when an ETag exists (not for hook-resolved CSS). Derived from the page's class hash; exact-match If-None-Match gives 304.",
+                "schema": {
+                  "type": "string"
+                }
               },
               "Cache-Control": {
-                "description": "no-cache — revalidate before use",
-                "schema": { "type": "string" }
+                "description": "Present when an ETag exists: no-cache",
+                "schema": {
+                  "type": "string"
+                }
               }
             },
             "content": {
@@ -169,13 +183,15 @@
             }
           },
           "304": {
-            "description": "Not Modified — CSS unchanged since If-None-Match"
+            "description": "Not Modified \u2014 CSS unchanged since If-None-Match"
           },
           "404": {
-            "description": "Cached CSS not found",
+            "description": "Page not cached; not returned for bundle=base",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -205,7 +221,7 @@
     "/api/projects/{projectId}/css": {
       "get": {
         "summary": "Get aggregated project CSS",
-        "description": "Returns a project-wide stylesheet built from the union of cached page classes.",
+        "description": "Project-wide stylesheet built from the union of classes of pages currently held in memory.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectIdPath"
@@ -219,12 +235,16 @@
             "description": "Project CSS found",
             "headers": {
               "ETag": {
-                "description": "Hash of the compiled class set. Send as If-None-Match for 304 revalidation.",
-                "schema": { "type": "string" }
+                "description": "Present when an ETag exists (not for hook-resolved CSS). Derived from the project's class-set hash; exact-match If-None-Match gives 304.",
+                "schema": {
+                  "type": "string"
+                }
               },
               "Cache-Control": {
-                "description": "no-cache — revalidate before use",
-                "schema": { "type": "string" }
+                "description": "Present when an ETag exists: no-cache",
+                "schema": {
+                  "type": "string"
+                }
               }
             },
             "content": {
@@ -236,13 +256,15 @@
             }
           },
           "304": {
-            "description": "Not Modified — CSS unchanged since If-None-Match"
+            "description": "Not Modified \u2014 CSS unchanged since If-None-Match"
           },
           "404": {
-            "description": "Project CSS not found",
+            "description": "No cached classes for the project; not returned for bundle=base",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -298,15 +320,39 @@
             "description": "Validation error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
           "409": {
-            "description": "Read-only replica — route writes to a writer node",
+            "description": "Read-only replica \u2014 route writes to a writer node",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ReadOnlyErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload or input too large; an oversized body closes the connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json, or a Content-Encoding is present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           },
@@ -314,7 +360,9 @@
             "description": "Unexpected server error",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
@@ -365,6 +413,26 @@
               }
             }
           },
+          "413": {
+            "description": "Payload or input too large; an oversized body closes the connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Content-Type is not application/json, or a Content-Encoding is present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Unexpected server error",
             "content": {
@@ -391,7 +459,24 @@
                   "type": "string"
                 }
               }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Send as If-None-Match for 304 revalidation."
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "public, max-age=3600"
+              }
             }
+          },
+          "304": {
+            "description": "Not Modified"
           }
         }
       }
@@ -409,7 +494,24 @@
                   "type": "string"
                 }
               }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Send as If-None-Match for 304 revalidation."
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "public, max-age=3600"
+              }
             }
+          },
+          "304": {
+            "description": "Not Modified"
           }
         }
       }
@@ -437,11 +539,11 @@
       "projectId": {
         "name": "projectId",
         "in": "query",
-        "required": false,
+        "required": true,
         "schema": {
           "$ref": "#/components/schemas/ProjectId"
         },
-        "description": "Project identifier."
+        "description": "Project identifier. Required; missing gives 400 MISSING_INPUT."
       },
       "pageId": {
         "name": "pageId",
@@ -473,12 +575,14 @@
       "ProjectId": {
         "type": "string",
         "pattern": "^[a-zA-Z0-9._-]+$",
-        "maxLength": 64
+        "maxLength": 64,
+        "description": "maxLength is the default 64, configurable via maxIdLength."
       },
       "PageId": {
         "type": "string",
         "pattern": "^[a-zA-Z0-9._-]+$",
-        "maxLength": 64
+        "maxLength": 64,
+        "description": "maxLength is the default 64, configurable via maxIdLength."
       },
       "Bundle": {
         "type": "string",
@@ -487,16 +591,8 @@
           "base",
           "theme",
           "utilities"
-        ]
-      },
-      "NormalizedBundle": {
-        "type": "string",
-        "enum": [
-          "full",
-          "base",
-          "theme",
-          "utilities"
-        ]
+        ],
+        "description": "Trimmed and case-insensitive. Omitted or unrecognized values fall back to full."
       },
       "ClassInput": {
         "oneOf": [
@@ -556,7 +652,9 @@
               {
                 "properties": {
                   "bundle": {
-                    "enum": ["base"]
+                    "enum": [
+                      "base"
+                    ]
                   }
                 },
                 "required": [
@@ -592,7 +690,7 @@
             "$ref": "#/components/schemas/PageId"
           },
           "bundle": {
-            "$ref": "#/components/schemas/NormalizedBundle"
+            "$ref": "#/components/schemas/Bundle"
           },
           "hash": {
             "type": "string"
@@ -605,7 +703,7 @@
           },
           "rejected": {
             "type": "array",
-            "description": "Invalid or unsafe normalized tokens from explicit classes input only.",
+            "description": "Sorted, de-duplicated tokens Tailwind cannot compile or that were withheld as unsafe: from explicit classes input and from class/className attributes in html. Other words in html are never listed. [] when nothing was rejected.",
             "items": {
               "type": "string"
             }
@@ -632,7 +730,8 @@
           },
           "limit": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Capped at suggestLimit. 0 or a non-numeric value falls back to suggestLimit; numeric strings are accepted."
           }
         }
       },
@@ -685,7 +784,9 @@
       },
       "InvalidateRequest": {
         "type": "object",
-        "required": ["projectId"],
+        "required": [
+          "projectId"
+        ],
         "properties": {
           "projectId": {
             "$ref": "#/components/schemas/ProjectId"
@@ -698,7 +799,10 @@
       },
       "InvalidateResponse": {
         "type": "object",
-        "required": ["invalidated", "projectId"],
+        "required": [
+          "invalidated",
+          "projectId"
+        ],
         "properties": {
           "invalidated": {
             "type": "boolean",
@@ -725,7 +829,21 @@
           },
           "code": {
             "type": "string",
-            "enum": ["INVALID_ID", "MISSING_INPUT", "INVALID_BODY", "UNSUPPORTED_MEDIA_TYPE", "PAYLOAD_TOO_LARGE", "READ_ONLY_REPLICA", "RATE_LIMITED", "SERVER_BUSY", "UNAUTHORIZED", "FORBIDDEN", "REQUEST_BLOCKED", "NOT_FOUND", "INTERNAL"]
+            "enum": [
+              "INVALID_ID",
+              "MISSING_INPUT",
+              "INVALID_BODY",
+              "UNSUPPORTED_MEDIA_TYPE",
+              "PAYLOAD_TOO_LARGE",
+              "READ_ONLY_REPLICA",
+              "RATE_LIMITED",
+              "SERVER_BUSY",
+              "UNAUTHORIZED",
+              "FORBIDDEN",
+              "REQUEST_BLOCKED",
+              "NOT_FOUND",
+              "INTERNAL"
+            ]
           }
         }
       },

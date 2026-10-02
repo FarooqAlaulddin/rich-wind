@@ -1,6 +1,6 @@
 # API Reference
 
-Rich Wind exposes JSON compile/cache/suggestion endpoints, optional browser helper scripts, and a health check. All JSON endpoints accept `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
+Rich Wind exposes JSON compile/cache/suggestion endpoints, optional browser helper scripts, and a health check. `POST /api/*` endpoints require `Content-Type: application/json`. IDs (`projectId`, `pageId`) must match `[a-zA-Z0-9._-]+` and be at most `maxIdLength` characters (default 64).
 
 Machine-readable contract: [`openapi.json`](openapi.json)
 
@@ -33,18 +33,11 @@ The `config` object controls cache sizes, timeouts, and limits on request and ou
 A Node request listener. Use it standalone or mount it in a Node host.
 
 ```js
-import http from "node:http";
-
-const server = http.createServer(core.handler);
-server.listen(3001);
+http.createServer(core.handler).listen(3001);  // standalone
+app.use("/rw", core.handler);                  // mounted: the host rewrites req.url
 ```
 
-```js
-// Express host: Express rewrites req.url under the mount, and core routes relative to it
-app.use("/rw", core.handler);
-```
-
-If the host already ran `express.json()`, core uses the parsed `req.body`. A Node-style host that does not rewrite `req.url` must strip its prefix from `req.url` before calling `core.handler`.
+A host that does not rewrite `req.url` must strip its prefix before calling `core.handler`. If the host already ran `express.json()`, core uses the parsed `req.body` (then `maxBodyBytes` does not bound it). Framework recipes: [Integration Cookbook](integration-cookbook.html#embedding).
 
 ### core.fetch(request, { ip, basePath })
 
@@ -56,20 +49,14 @@ Takes a Web `Request` and returns a `Promise<Response>`. Use it from Next.js App
 | `basePath` | Prefix stripped before routing. A path outside it answers `404 NOT_FOUND`. |
 
 ```js
-// Next.js: app/rw/[...path]/route.js
-import { core } from "@/lib/rich-wind";
-
 export const GET = (req) => core.fetch(req, { basePath: "/rw" });
-export const POST = GET;
-export const HEAD = GET;
-export const OPTIONS = GET;
 ```
 
-Next.js does not provide a portable client IP. If you run behind a trusted proxy, derive the address from the header it sets and pass it as `ip`. Bun and Deno are not supported targets. Edge runtimes cannot load `@tailwindcss/oxide`, which is a native addon, so run these handlers on the Node.js runtime.
+Node.js 22 or later only (`package.json` engines); `@tailwindcss/oxide` is a native addon, so edge runtimes cannot load it.
 
 ### Functions
 
-Each function takes the same fields as its route and returns the route's 200 body. They throw `RichWindError` with the status, code and message the route would send. The plugin guard runs on HTTP requests only, not on direct calls.
+Each function takes the same fields as its route and returns the route's 200 body. Failures throw `RichWindError` (`status`, `code`, `message`; see [Errors](#errors)). The plugin guard runs on HTTP requests only, not on direct calls.
 
 | Function | Route | Returns |
 | --- | --- | --- |
@@ -79,8 +66,6 @@ Each function takes the same fields as its route and returns the route's 200 bod
 | `core.invalidate({ projectId, pageId? })` | `POST /api/invalidate` | `{ invalidated, projectId, pageId? }` |
 | `core.suggest(input)` | `POST /api/suggest` | the suggest response body |
 | `core.close()` | none | `Promise<void>`; tears down plugins, idempotent |
-
-`RichWindError extends Error` and has `status` (HTTP status), `code` (one of the [error codes](#errors)), and `message`.
 
 ```js
 import { RichWindError } from "rich-wind";
@@ -110,16 +95,13 @@ import { scanHtml, exportCss, exportSet } from "rich-wind";
 
 ### HTTP surface
 
-- Paths are exact and case-sensitive, with no trailing slash.
-- `HEAD` is answered on every `GET` route.
-- Every non-2xx response is `{ "error": "...", "code": "..." }`. Unknown paths and unknown methods answer `404 NOT_FOUND`.
-- A bad percent-encoding in `:projectId` answers `400 INVALID_ID`.
-- `/richwind-loader.js` and `/richwind-reload.js` carry an `ETag` and `Cache-Control: public, max-age=3600`, and answer `304` to a matching `If-None-Match`. JSON responses carry no `ETag`.
-- The plugin guard runs before the body is read.
-- `POST /api/*` must be `application/json` without a `Content-Encoding`, otherwise `415`.
-- A `Content-Length` over `maxBodyBytes` is refused before reading. Chunked bodies are capped while reading. A `413` response sends `Connection: close`.
-- A length mismatch, invalid UTF-8, malformed JSON, or a body that is not a JSON object answers `400 INVALID_BODY`.
-- An unexpected handler error answers `500 INTERNAL`, reaches the `onError` hook, and never includes a stack trace.
+- Every error produced by core is `{ "error": "...", "code": "..." }` (see [Errors](#errors)). A `304` has no body; plugin routes return their own bodies.
+- Paths are exact and case-sensitive, with no trailing slash. `HEAD` is answered on every `GET` route. Unknown paths and methods answer `404 NOT_FOUND`.
+- `POST /api/*` must be `application/json` without a `Content-Encoding`, otherwise `415`. This check runs before the plugin guard.
+- A `413` for an oversized request body sends `Connection: close`.
+- `/richwind-loader.js` and `/richwind-reload.js` carry an `ETag` and `Cache-Control: public, max-age=3600`, and answer `304` to a matching `If-None-Match`.
+- CORS: with `corsOrigin` set, `OPTIONS` answers `204` and a disallowed `Origin` on `OPTIONS` answers `403 FORBIDDEN`; with it unset, `OPTIONS` answers `404`.
+- CSS `ETag` handling: [GET /api/css](#get-apicss).
 
 ---
 
@@ -137,11 +119,11 @@ The primary endpoint. Accepts HTML and/or a class list, compiles them into CSS, 
 | `classes` | string or string[] | no | Explicit list of classes. Strings are split on whitespace. |
 | `bundle` | string | no | Which CSS layers to include. Defaults to `"full"`. |
 
-You must provide at least one of `html` or `classes`, unless you're requesting the `base` bundle (which is just the preflight reset and doesn't need classes).
+You must provide at least one of `html` or `classes`, unless you request the `base` bundle (the preflight reset, which needs no classes).
 
-If you provide both `html` and `classes`, they're merged. Duplicates are removed, invalid classes are filtered out, and the final list is sorted before compilation.
+If you provide both `html` and `classes`, they are merged, de-duplicated and sorted. Tokens that cannot be compiled are returned in `rejected`: explicit `classes` entries, and unknown tokens in `class` / `className` attributes of `html` (words in prose or other attributes are never reported). A plugin `transformClasses` hook may change the final list (see `classes` below).
 
-**Bundle values:** `bundle` accepts `full`, `base`, `theme`, or `utilities`. Omit it for `full`; unrecognized values also fall back to `full`.
+**Bundle values:** `full`, `base`, `theme`, `utilities`. The value is trimmed and case-insensitive; omitted or unrecognized values fall back to `full`.
 
 **Response (200):**
 
@@ -159,18 +141,12 @@ If you provide both `html` and `classes`, they're merged. Duplicates are removed
 }
 ```
 
-- `hash` — SHA-256 of the sorted class list. Same classes always produce the same hash.
-- `cached` — `true` if this result came from cache without recompilation.
-- `classes` — the validated, sorted list of classes that were actually compiled.
-- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input and from `class` / `className` attributes in `html` that Tailwind could not compile or that Rich Wind withheld as unsafe. Other words the HTML scanner finds (prose, attribute values) are never listed. Always an array: `[]` when nothing was rejected, and for the `base` bundle.
+- `hash` — SHA-256 of the sorted class list; the same classes give the same hash. For `base` it is the literal `"base"`.
+- `cached` — `true` if this result came from cache without recompilation. Always `true` for `base`.
+- `classes` — the sorted list of classes that were compiled (after any plugin `transformClasses`).
+- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input and from `class` / `className` attributes in `html` that Tailwind could not compile or that Rich Wind withheld as unsafe. Other words the HTML scanner finds (prose, attribute values) are never listed. Always an array, `[]` when nothing was rejected. Explicit `classes` are validated even for the `base` bundle.
 
 Errors: see [Errors](#errors).
-
----
-
-### Compile concurrency
-
-Core runs at most `maxConcurrentCompiles` compiles at once (default `8`). There is no wait queue: when every slot is in use, the compile is shed immediately with `503` and `{ "error": "All compile slots are in use. Retry shortly.", "code": "SERVER_BUSY" }`, plus `Retry-After: 1`. Input validation errors (`400`, `413`, `409`) are returned before a slot is taken. The cap lives in `core.compile`, so direct library calls are bounded too and throw a `RichWindError` with status `503` and code `SERVER_BUSY`. Only compiles are capped; CSS `GET`s, `invalidate`, and `suggest` are not. See [Runtime Spec](runtime-spec.html#threat-model-and-enforcement-boundary) for how plugin compiles share slots.
 
 ---
 
@@ -182,15 +158,14 @@ Fetch the cached CSS for a previously compiled page. Returns `text/css`.
 | --- | --- | --- |
 | `projectId` | yes | Project cache scope |
 | `pageId` | no | Defaults to `"default"` |
-| `bundle` | no | Same normalization as compile |
+| `bundle` | no | Same normalization as compile (unrecognized values fall back to `full`) |
 
 This endpoint serves cached CSS and never compiles new classes. If the page hasn't
-been compiled yet (or its cache has expired), it returns `404 NOT_FOUND` with the JSON
-error envelope. A browser stylesheet link may log that 404; no stylesheet is applied.
+been compiled yet (or its cache has expired and no `cacheStore` holds it), it returns `404 NOT_FOUND`. `bundle=base` is page-independent and always returns `200`.
 When the page is cached but the requested `theme` or `utilities` bundle has not yet
 been materialized, Rich Wind derives that bundle from the cached class set and stores it.
 
-Responses include an `ETag` (derived from the page's class hash) and `Cache-Control: no-cache`. Send `If-None-Match` with the ETag to receive a `304 Not Modified` when the CSS hasn't changed.
+When an ETag exists (not for hook-resolved CSS), the response carries `ETag` (derived from the page's class hash, so `full`, `theme` and `utilities` of one page share it) and `Cache-Control: no-cache`. `If-None-Match` is an exact string match (no `W/`, lists or `*`); a match answers `304`.
 
 ```bash
 curl "http://localhost:3001/api/css?projectId=my-app&pageId=hero"
@@ -202,17 +177,16 @@ curl "http://localhost:3001/api/css?projectId=my-app&pageId=hero"
 
 Fetch a project-wide stylesheet. Returns `text/css`.
 
-This compiles the **union** of every class from every currently-cached page in the project into a single stylesheet. It's useful for generating a combined CSS file that covers an entire site or tenant.
+The union of every class from the pages currently held in memory for the project (expiry is lazy, so expired pages not yet evicted still count), as a single stylesheet.
 
 | Param | Required | Notes |
 | --- | --- | --- |
-| `bundle` | no | Query param, same normalization as compile |
+| `bundle` | no | Query param, same normalization as compile. `bundle=base` is page-independent and always `200` |
 
-The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It's
-invalidated automatically when pages are added, removed, or their classes change. If no
-classes are cached for the project, it returns `404 NOT_FOUND` with the JSON error envelope.
+The project-level CSS has its own cache with its own TTL (`projectCacheTtlMs`). It is
+invalidated when pages are added, removed, or their classes change. If the project has no cached classes (for example the theme before any page is compiled), it returns `404 NOT_FOUND`.
 
-Responses include an `ETag` and `Cache-Control: no-cache`. Send `If-None-Match` to receive `304 Not Modified` when the CSS hasn't changed.
+`ETag`, `Cache-Control` and `If-None-Match` behave as for `GET /api/css`.
 
 ```bash
 curl "http://localhost:3001/api/projects/my-app/css"
@@ -223,7 +197,7 @@ curl "http://localhost:3001/api/projects/my-app/css?bundle=utilities"
 
 ## POST /api/invalidate
 
-Immediately purge a page or an entire project from the in-memory cache and the persistent cache store. Use this when content changes and you can't wait for TTL expiry.
+Purge a page or an entire project from the in-memory cache and the `cacheStore`. Purging the store needs the optional `delete*` adapter methods; without them the store keeps the data and the call still returns `invalidated: true`.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -244,9 +218,7 @@ Immediately purge a page or an entire project from the in-memory cache and the p
 { "invalidated": true, "projectId": "my-app", "pageId": "home" }
 ```
 
-After invalidation, the next `GET /api/css` for that page returns `404 NOT_FOUND` until it
-is recompiled via `POST /api/compile`. Not allowed on reader nodes — returns `409` with
-`code: "READ_ONLY_REPLICA"`.
+Not allowed on reader nodes: `409 READ_ONLY_REPLICA`.
 
 ```bash
 curl -X POST http://localhost:3001/api/invalidate \
@@ -269,9 +241,9 @@ Arbitrary value classes like `text-[18px]` are not included in the static list �
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `projectId` | string | no | Scope to a project's cached classes |
-| `prefix` | string | no | Filter results to classes starting with this, e.g. `"bg-"` |
+| `prefix` | string | no | Trimmed; filters all results, including provided `classes`, to those starting with it, e.g. `"bg-"` |
 | `classes` | string or string[] | no | Additional classes to include in results |
-| `limit` | number | no | Max results. Also accepts `max` or `count`. Capped at `suggestLimit`. |
+| `limit` | number or numeric string | no | Max results, capped at `suggestLimit`. `0` or non-numeric falls back to `suggestLimit`. |
 
 ```json
 {
@@ -287,22 +259,14 @@ Arbitrary value classes like `text-[18px]` are not included in the static list �
 
 ## Optional Helper: GET /richwind-loader.js
 
-Returns a browser helper for plain HTML preview surfaces where calling the JSON API directly from host code is inconvenient. Most application integrations should call `POST /api/compile` directly instead.
-
-Include it with a standard `<script src>` tag:
+Browser helper for plain HTML preview pages. Applications should call `POST /api/compile` directly.
 
 ```html
-<script
-  defer
-  src="https://your-rich-wind.example.com/richwind-loader.js"
-  data-project-id="my-app"
-  data-page-id="home"
-></script>
+<script defer src="https://your-rich-wind.example.com/richwind-loader.js"
+  data-project-id="my-app" data-page-id="home"></script>
 ```
 
-The loader infers `coreUrl` from its own `src` URL, adds shared stylesheet links for `base` and project `theme`, then compiles the classes present in `document.body` as the page's `utilities` bundle. If the auto-promote plugin is mounted at its default route, the loader also attempts to link that promoted stylesheet.
-
-Supported attributes:
+It infers `coreUrl` from its own `src`, links the `base` and project `theme` stylesheets (the theme 404s until a page in the project is compiled), then compiles `document.body` as the page's `utilities` bundle. If the auto-promote plugin is mounted at its default route, it also links that stylesheet. Instead of data attributes it accepts `window.RichWind = { coreUrl, projectId, pageId }`.
 
 | Attribute | Required | Notes |
 | --- | --- | --- |
@@ -312,42 +276,32 @@ Supported attributes:
 | `data-bundle` | no | Compile bundle for body utilities. Defaults to `"utilities"`. |
 | `data-compile` | no | Set to `"false"` to only attach shared stylesheet links. |
 
-For cross-origin preview surfaces, enable CORS with `RW_CORS_ORIGIN=*` or a comma-separated origin allowlist. The loader uses browser `fetch()` for `POST /api/compile`, so the browser enforces CORS even though the script itself can be loaded as a normal subresource.
+Cross-origin pages need `corsOrigin`, because the loader calls `POST /api/compile` with `fetch()`.
 
 ---
 
 ## Optional Helper: GET /richwind-reload.js
 
-Returns an optional browser helper for local or static preview surfaces that need an in-page reload control. This is not part of the core compile/cache workflow.
-
-Include it after the Rich Wind loader:
-
-```html
-<script defer src="https://your-rich-wind.example.com/richwind-reload.js"></script>
-```
-
-The script injects a fixed bottom-right reload button and the button's styles directly into the document. Clicking it reloads the page with a cache-busting `rwReload` query parameter.
-
-Supported attributes:
+Injects a fixed bottom-right reload button. Include it after the loader.
 
 | Attribute | Required | Notes |
 | --- | --- | --- |
 | `data-label` | no | Button text. Defaults to `"Reload"`. |
-| `data-title` | no | Button title and accessible label. Defaults to `"Reload this page"`. |
-| `data-cache-bust` | no | Set to `"false"` to use `window.location.reload()` without changing the URL. |
-| `data-enabled` | no | Set to `"false"` to disable mounting the button. |
+| `data-title` | no | Button title. Defaults to `"Reload this page"`. |
+| `data-cache-bust` | no | `"false"` uses `window.location.reload()` instead of adding an `rwReload` query parameter. |
+| `data-enabled` | no | `"false"` disables the button. |
 
 ---
 
 ## GET /health
 
-Returns `{ "status": "ok" }`. Not subject to plugin guards or core limits; apply any request limiting at your host or proxy.
+Returns `{ "status": "ok" }`. Plugin guards run for this route too.
 
 ---
 
 ## Errors
 
-Every non-2xx HTTP response is `{ "error": string, "code": string }`. Direct calls throw `RichWindError` with the same `status`, `code` and `message`. The enum is frozen for 1.x.
+Every error produced by core is `{ "error": string, "code": string }`; plugin routes return their own bodies. Direct calls throw `RichWindError` (extends `Error`) with the same `status`, `code` and `message`.
 
 | Code | Status | When |
 | --- | --- | --- |
@@ -360,47 +314,36 @@ Every non-2xx HTTP response is `{ "error": string, "code": string }`. Direct cal
 | `READ_ONLY_REPLICA` | 409 | compile or invalidate on a `nodeRole: "reader"` node |
 | `PAYLOAD_TOO_LARGE` | 413 | body over `maxBodyBytes`; `html`, `classes` or class count over its limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST /api/*` without `application/json`, or with a `Content-Encoding` |
-| `RATE_LIMITED` | 429 | a plugin guard blocked the request (core has no limiter); the guard may set `Retry-After` |
-| `REQUEST_BLOCKED` | guard status | a plugin guard blocked the request with another status |
-| `INTERNAL` | 500 | unexpected error; no stack trace is sent |
+| `RATE_LIMITED` | 429 | a plugin guard blocked the request (core has no limiter), or a guard returned no status; the guard may set `Retry-After` |
+| `REQUEST_BLOCKED` | guard status | a plugin guard blocked the request with a status other than 401, 403 or 429 |
+| `INTERNAL` | 500 | unexpected error (no stack trace is sent), or plugin compile chain depth exceeded |
 | `SERVER_BUSY` | 503 | every compile slot is in use; sent with `Retry-After: 1` |
 
-## What core enforces vs what the host enforces
-
-| Core enforces | The host or proxy enforces |
-| --- | --- |
-| Body size (`maxBodyBytes`), `html` and `classes` size, class count | Who may call, and authentication |
-| `projectId` and `pageId` validation | Tenant isolation: which `projectId` a caller may use |
-| Content type and body rules (`415`, `400`, `413`) | Request rate limits |
-| CSS output cap (`maxCssChars`) | Access control on plugin routes that expose data or mutations |
-| LRU cache caps (`cacheMaxPages`, TTLs) | Which clients may reach the standalone server |
-| Compile concurrency cap (`maxConcurrentCompiles`) | |
-
-See the [Threat Model and Enforcement Boundary](runtime-spec.html#threat-model-and-enforcement-boundary) and [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
+What core enforces and what the host must enforce: [Runtime Spec](runtime-spec.html#security-boundary).
 
 ---
 
 ## Configuration
 
-Every config option can be set in JavaScript (via `createCore({ config: { ... } })`) or as an environment variable. JS options take precedence. Invalid values fall back to defaults silently.
+Every option can be set in `createCore({ config: { ... } })` or as an environment variable; JS options win. Invalid or below-minimum values fall back to the default silently. Minimums: `maxBodyBytes` 1024; `cacheTtlMs`, `projectCacheTtlMs`, `pluginTimeoutMs` 0; all others 1.
 
 | Config key | Env var | Default | Description |
 | --- | --- | --- | --- |
-| `maxBodyBytes` | `RW_MAX_BODY_BYTES` | `100000` | Max request body size in bytes |
+| `maxBodyBytes` | `RW_MAX_BODY_BYTES` | `100000` | Max request body size in bytes (a pre-parsed `req.body` is not bounded) |
 | `maxHtmlChars` | `RW_MAX_HTML_CHARS` | `50000` | Max length of the `html` field |
 | `maxClassChars` | `RW_MAX_CLASS_CHARS` | `10000` | Max length of the `classes` field (when string) |
 | `maxClassCount` | `RW_MAX_CLASS_COUNT` | `1500` | Max number of resolved classes per compile |
 | `maxConcurrentCompiles` | `RW_MAX_CONCURRENT_COMPILES` | `8` | Max compiles running at once (minimum `1`). Extra compiles are shed with `503 SERVER_BUSY`; there is no wait queue |
 | `maxIdLength` | `RW_MAX_ID_LENGTH` | `64` | Max length of `projectId` and `pageId` |
-| `maxCssChars` | `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts, transforms, and resolve hooks |
+| `maxCssChars` | `RW_MAX_CSS_CHARS` | `2000000` | Max CSS length accepted from cacheStore artifacts, transforms, and resolve hooks (does not cap Tailwind's own compile output) |
 | `cacheMaxPages` | `RW_CACHE_MAX_PAGES` | `200` | Max total pages held in memory across all projects |
 | `cacheTtlMs` | `RW_CACHE_TTL_MS` | `600000` | Page cache TTL in ms (sliding — resets on access) |
-| `projectCacheTtlMs` | `RW_PROJECT_CACHE_TTL_MS` | `600000` | Project aggregate cache TTL in ms |
+| `projectCacheTtlMs` | `RW_PROJECT_CACHE_TTL_MS` | resolved `cacheTtlMs` | Project aggregate cache TTL in ms |
 | `suggestLimit` | `RW_SUGGEST_LIMIT` | `100` | Max number of suggestions returned |
 | `suggestFallback` | `RW_SUGGEST_FALLBACK` | `true` | Whether to include Tailwind's static class list in suggestions |
-| `trustProxy` | `RW_TRUST_PROXY` | unset | Express `trust proxy` semantics: `true`/`false`, a hop count (`1`, `2`, ...), or a comma-separated list of trusted addresses or subnets (`loopback`, `uniquelocal` also accepted). Unset uses the socket address and ignores `X-Forwarded-For`. `RW_TRUST_PROXY=1` is hop count 1, not "trust all". See [Runtime Spec](runtime-spec.html#threat-model-and-enforcement-boundary) |
-| `nodeRole` | `RW_NODE_ROLE` | `hybrid` | Replica role: `hybrid`, `writer`, or `reader` |
-| `corsOrigin` | `RW_CORS_ORIGIN` | unset | CORS allowlist (`*` or comma-separated origins) |
+| `trustProxy` | `RW_TRUST_PROXY` | unset | Express `trust proxy` semantics; `1` is hop count 1, not "trust all". See [Runtime Spec](runtime-spec.html#client-ip-and-trustproxy) |
+| `nodeRole` | `RW_NODE_ROLE` | `hybrid` | `hybrid`, `writer` or `reader`; `write` and `read` are accepted aliases, case-insensitive; unknown values give `hybrid`. See [Runtime Spec](runtime-spec.html#replica-roles) |
+| `corsOrigin` | `RW_CORS_ORIGIN` | unset | `*` or a comma-separated origin list; `0`, `false`, `off`, `none`, `disabled` disable CORS |
 
 These options live outside `config` — they're top-level arguments to `createCore()`:
 
@@ -408,52 +351,21 @@ These options live outside `config` — they're top-level arguments to `createCo
 | --- | --- | --- | --- |
 | `plugins` | — | `[]` | Plugin or array of plugins |
 | `pluginTimeoutMs` | `RW_PLUGIN_TIMEOUT_MS` | `200` | Default timeout for plugin hooks |
-| `setupTimeoutMs` | — | computed | Plugin setup timeout (min 1000ms) |
+| `setupTimeoutMs` | — | `max((pluginTimeoutMs ?? 200) * 5, 1000)` | Plugin setup timeout in ms |
 | `maxPluginCompileChainDepth` | — | `2` | Max depth for plugin-initiated compile chains |
 | `cacheStore` | — | `null` | Persistence adapter (see [Runtime Spec](runtime-spec.html#cachestore), including optional `deletePageArtifact`/`deleteProjectArtifact`/`deleteProjectPageArtifacts` for purge mutations) |
-| `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation |
+| `cacheStoreTimeoutMs` | `RW_CACHE_STORE_TIMEOUT_MS` | `150` | Timeout per cacheStore operation (`0` falls back to `150`) |
 
 `PORT` (default `3001`) is only used when running `node services/index.js` directly. When you embed the library, you create the server yourself, for example `http.createServer(core.handler)`.
-
-For single-writer deployments, use this split:
-- `writer` nodes: accept compile and other writes
-- `reader` nodes: serve CSS/suggestions only
-- both point to the same `cacheStore`
 
 ---
 
 ## Compatibility Policy (1.x)
 
-From 1.0, the HTTP API and the embedding API follow these rules until the next major version.
+Intended commitments, taking effect at 1.0.0. The package is currently `0.0.1-alpha.0` and nothing here is guaranteed before then.
 
-**HTTP responses**
-
-- Response fields do not change type or meaning.
-- Successful status codes and their side effects stay stable.
-- Error codes keep their meaning.
-- Response objects may gain new optional fields, so clients must ignore unknown fields.
-
-**Embedding contract**
-
-These are stable in 1.x:
-
-- The members `createCore()` returns: `handler`, `fetch`, `compile`, `getCss`, `getProjectCss`, `invalidate`, `suggest`, and `close`. The object may gain members.
-- `core.handler` and `core.fetch` work under any prefix: `basePath` for `fetch`, a mount or prefix strip for `handler`.
-- Each function returns what its route returns and throws `RichWindError` with the route's status, code, and message.
-- `ctx.compile` behaves like `core.compile`.
-- The plugin `addRoute` contract: a neutral request in, `{ status, headers, body }` out.
-- The HTTP surface rules: exact case-sensitive paths, `HEAD` on `GET` routes, and the `{ error, code }` error envelope.
-- The standalone server stays in 1.x.
-
-**Error codes**
-
-The error code enum is frozen for 1.x: `INVALID_ID`, `MISSING_INPUT`, `INVALID_BODY`, `UNSUPPORTED_MEDIA_TYPE`, `PAYLOAD_TOO_LARGE`, `READ_ONLY_REPLICA`, `RATE_LIMITED`, `SERVER_BUSY`, `UNAUTHORIZED`, `FORBIDDEN`, `REQUEST_BLOCKED`, `NOT_FOUND`, `INTERNAL`. New error codes are reserved for the next major version; new failure cases map to an existing code.
-
-**Tailwind**
-
-- Generated CSS and the `rejected` list track the installed Tailwind 4.x release. A Tailwind minor or patch can change CSS output and which classes are rejected. That is not a Rich Wind breaking change.
-- Rich Wind depends on Tailwind's `__unstable__loadDesignSystem` and `candidatesToCss`. If a Tailwind release breaks them, Rich Wind answers by narrowing its `tailwindcss` dependency range in a patch release until support lands.
-
-**Configuration**
-
-Environment variables and option names are stable within 1.x. Defaults may change only in a minor release and are noted in the changelog (`CHANGELOG.md`).
+- HTTP responses: fields do not change type or meaning, success statuses stay stable, and responses may gain optional fields (ignore unknown fields).
+- The error `code` enum and its meanings stay fixed; new failure cases map to an existing code.
+- The members `createCore()` returns, the `{ error, code }` envelope, exact case-sensitive paths and `HEAD` on `GET` routes stay stable.
+- Environment variable and option names stay stable; defaults change only in a minor release.
+- Generated CSS and `rejected` follow the installed Tailwind 4.x release; a Tailwind update changing them is not a Rich Wind breaking change.

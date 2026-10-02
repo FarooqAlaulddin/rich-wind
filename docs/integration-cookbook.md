@@ -1,32 +1,123 @@
 # Integration Cookbook
 
-Real patterns for putting Rich Wind into production. Each section is a self-contained recipe — pick the ones that apply to your setup.
+How-to recipes for putting Rich Wind into an app. Core has no authentication and no rate limiter, so in every pattern the host's middleware runs first; a request the host rejects never reaches a plugin hook or the compiler. The access rules are in [Security Boundary](runtime-spec.html#security-boundary).
 
-## Embedded Service
+## Embedding
 
-The simplest deployment. Rich Wind runs in-process behind a plain Node HTTP server with default settings.
+### Express (mounted handler)
+
+`core.handler` resolves paths from `req.url`, which Express rewrites under a mount path, so it works under any prefix. A body already parsed by `express.json()` is used as is (see [createCore](api-reference.html#createcore)).
+
+```js
+import express from "express";
+import expressRateLimit from "express-rate-limit";
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const limiter = expressRateLimit({ windowMs: 60_000, limit: 120 });
+const auth = (req, res, next) =>
+  req.header("authorization") ? next() : res.status(401).json({ error: "Unauthorized" });
+
+const app = express();
+app.use("/rw", limiter, auth, core.handler);
+```
+
+`POST /rw/api/compile` reaches `/api/compile`.
+
+### node:http
+
+Strip the prefix from `req.url` before calling the handler, keeping any query string:
 
 ```js
 import http from "node:http";
 import { createCore } from "rich-wind";
 
-const core = await createCore({
-  config: {
-    cacheMaxPages: 500,
-    cacheTtlMs: 10 * 60 * 1000,
-  }
-});
+const core = await createCore();
 
-http.createServer(core.handler).listen(3001);
+http.createServer((req, res) => {
+  if (req.url === "/rw" || req.url.startsWith("/rw/") || req.url.startsWith("/rw?")) {
+    req.url = req.url.slice(3) || "/";
+    if (req.url[0] === "?") req.url = "/" + req.url;
+    return core.handler(req, res);
+  }
+  res.statusCode = 404;
+  res.end();
+}).listen(3000);
 ```
 
-This works well for local tooling, internal services, or single-node deployments where you don't need persistence or multi-tenant isolation.
+To serve core at the root, pass `core.handler` straight to `http.createServer`.
+
+### Next.js App Router
+
+`core.fetch` takes a Web `Request` and returns a `Response`. It needs the Node.js runtime because `@tailwindcss/oxide` is a native addon.
+
+```js
+// app/rw/[...path]/route.js
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const handle = (req) => core.fetch(req, { basePath: "/rw" });
+
+export const runtime = "nodejs";
+export const GET = handle;
+export const POST = handle;
+export const HEAD = handle;
+```
+
+`basePath` and `ip` are described under [core.fetch](api-reference.html#createcore). Export `OPTIONS = handle` only if you configured CORS (`RW_CORS_ORIGIN`).
+
+### Hono
+
+```js
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { createCore } from "rich-wind";
+
+const core = await createCore();
+const app = new Hono();
+
+app.all("/rw/*", (c) =>
+  core.fetch(c.req.raw, {
+    basePath: "/rw",
+    ip: c.req.header("x-forwarded-for")?.split(",").pop()?.trim(),
+  })
+);
+
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+The sample passes the last `X-Forwarded-For` entry, which is the address your nearest proxy appended. That is the final client address only if one trusted proxy sits in front of you, so leave `trustProxy` unset. If you instead pass the proxy's own address as `ip`, set `trustProxy` so core resolves the client from it. If no proxy you control sets the header, omit `ip`.
+
+### Fastify (library calls)
+
+Call the core functions directly and map `RichWindError` to a reply. Direct calls bypass plugin guards.
+
+```js
+import Fastify from "fastify";
+import { createCore, RichWindError } from "rich-wind";
+
+const core = await createCore();
+const app = Fastify();
+
+app.post("/css/compile", async (request, reply) => {
+  try {
+    return await core.compile(request.body);
+  } catch (err) {
+    if (err instanceof RichWindError) {
+      return reply.code(err.status).send({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+});
+```
+
+### Standalone behind a proxy
+
+Run `npm start` (listens on `PORT`, default `3001`) and let the proxy own authentication, TLS and rate limiting. Set `RW_TRUST_PROXY` to the number of proxy hops so plugin hooks see the real client address.
 
 ## Multi-Tenant Wrapper
 
-Rich Wind doesn't do authentication — it compiles whatever you send it. In a multi-tenant system, you need a wrapper that authenticates the caller and maps their identity to a scoped `projectId` so tenants can't see each other's cache.
-
-The gateway below is an Express host that owns authentication and rate limiting. It calls the core functions in-process, so no second HTTP hop is needed. `RichWindError` carries the status and code for validation failures. For mounting, Next.js, Fastify and proxy patterns see [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
+Derive `projectId` server-side from the authenticated identity, so callers never choose it. The gateway below calls the core in-process; `RichWindError` carries the status and code for validation failures.
 
 ```js
 import express from "express";
@@ -38,16 +129,16 @@ const core = await createCore();
 const gateway = express();
 gateway.use(express.json({ limit: "100kb" }));
 
-// Hash tenant + project into a safe, collision-free internal ID
+// JSON.stringify of a pair is unambiguous: ("a:b","c") and ("a","b:c") differ.
 function scopedId(tenantId, slug) {
   return crypto.createHash("sha256")
-    .update(`${tenantId}:${slug}`)
+    .update(JSON.stringify([tenantId, slug]))
     .digest("hex")
     .slice(0, 32);
 }
 
 gateway.post("/css/compile", async (req, res) => {
-  const tenantId = req.header("x-tenant-id");
+  const tenantId = req.header("x-tenant-id"); // replace with real authentication
   if (!tenantId) return res.status(401).json({ error: "Unauthorized" });
 
   try {
@@ -68,291 +159,105 @@ gateway.post("/css/compile", async (req, res) => {
 });
 ```
 
-If you want Rich Wind's own HTTP routes available to authenticated callers as well, mount the handler behind your auth middleware instead: `gateway.use("/rw", requireTenant, core.handler)`. In that case you must still map `projectId` yourself, because core accepts whatever `projectId` the caller sends.
-
-The key idea: your users never see or control the `projectId`. You generate it from their authenticated identity, so there's no way for tenant A to read tenant B's cache.
-
-## Next.js App Router
-
-`core.fetch` takes a Web `Request` and returns a `Response`, so it drops into a route handler. Create the core once at module scope and share it.
-
-```js
-// lib/rich-wind.js
-import { createCore } from "rich-wind";
-
-export const core = await createCore();
-```
-
-```js
-// app/rw/[...path]/route.js
-import { core } from "@/lib/rich-wind";
-
-export const runtime = "nodejs"; // @tailwindcss/oxide is a native addon
-
-export const GET = (req) => core.fetch(req, { basePath: "/rw" });
-export const POST = GET;
-export const HEAD = GET;
-export const OPTIONS = GET;
-```
-
-`basePath` is stripped before routing, so `POST /rw/api/compile` reaches `/api/compile`. A path outside it answers `404 NOT_FOUND`. A `Request` carries no client address, and Next.js does not give a portable one. If you run behind a trusted proxy, read the header it sets and pass the address: `core.fetch(req, { basePath: "/rw", ip })`. Without `ip`, plugin hooks see `request.ip` as `"unknown"`. Edge runtimes cannot load `@tailwindcss/oxide`, so use the Node.js runtime.
-
-## Hono
-
-```js
-import { Hono } from "hono";
-import { serve } from "@hono/node-server";
-import { createCore } from "rich-wind";
-
-const core = await createCore();
-const app = new Hono();
-
-app.all("/rw/*", (c) =>
-  core.fetch(c.req.raw, {
-    basePath: "/rw",
-    ip: c.req.header("x-forwarded-for")?.split(",").pop()?.trim(),
-  })
-);
-
-serve({ fetch: app.fetch, port: 3000 });
-```
-
-The example reads the last `X-Forwarded-For` entry, which is the one your nearest proxy appended. Only do this if a proxy you control sets the header. Otherwise omit `ip`.
+To expose Rich Wind's own routes to authenticated callers, mount `core.handler` behind your auth middleware instead. You must then still map `projectId` yourself, because core accepts whatever the caller sends.
 
 ## Editor Integration
 
-If you're building a live editor with Tailwind autocomplete, the flow looks like this:
+- Suggest while typing: `POST /api/suggest`, debounced.
+- Compile on an explicit action (run or save), not per keystroke.
+- Compare the compile response's `hash` with the last one; if equal, skip the preview refresh.
 
-**While the user types** — call `POST /api/suggest` with the current prefix and the project ID. Debounce to 100–200ms so you're not hammering the API on every keystroke. Suggestions are fast since they read from an in-memory index.
+For AI-generated HTML and agent preview loops, see [Agent Quickstart](agent-quickstart.html).
 
-**When the user runs or saves** — call `POST /api/compile` with the full HTML or class list. This is the expensive operation. Compile on explicit actions, not on every keystroke.
+## CMS Publish
 
-**For the preview pane** — call `GET /api/css` with the project and page ID to fetch the most recently compiled stylesheet. If you've already compiled, this is just a cache read.
+Persist content and its ids, compile at publish, and serve the `css` from the compile response (or from your own storage) so Rich Wind is not on the read path.
 
-The response from `/api/compile` includes a `hash` and `cached` flag. Use `hash` to detect whether the preview actually needs updating — if the hash hasn't changed, the CSS is identical and you can skip a preview refresh.
+## Redis cacheStore
 
-## AI-Generated UI / Agent Preview Pipeline
-
-If an AI agent, CMS assistant, or visual builder generates HTML after your app has already shipped, treat Rich Wind as the compile-and-policy boundary between the generator and the rendered preview.
-
-Recommended flow:
-
-1. The agent or editor generates HTML/classes.
-2. Your host application authenticates the user and maps them to a safe tenant-scoped `projectId`.
-3. The host calls `POST /api/compile` with the generated HTML and a stable `pageId`.
-4. The preview loads the returned CSS directly, or fetches the cached stylesheet from `GET /api/css`.
-5. On publish, the host stores the compiled page CSS or project CSS in its own CDN/object storage.
-
-This keeps the AI tool out of your Tailwind build pipeline. The agent can iterate quickly, while the host application still controls identity, page ownership, persistence, and publish approval.
-
-For governance, add plugins or wrapper checks:
-
-- `transformClasses` can remove disallowed utilities before CSS generation.
-- `onCompileResult` can record class usage and CSS size per tenant/page.
-- `transformCss` can add final CSS policies or metadata.
-- `purgePage()` and `purgeProject()` can support explicit unpublish/delete flows.
-
-For future agent integrations, expose a small wrapper around Rich Wind rather than exposing raw tenant IDs:
-
-| Agent-facing action | Rich Wind call |
-| --- | --- |
-| Validate generated classes | `POST /api/compile` and inspect returned `classes` |
-| Suggest utility classes | `POST /api/suggest` |
-| Render preview CSS | `POST /api/compile` or `GET /api/css` |
-| Publish cached stylesheet | `GET /api/projects/:projectId/css` or stored compile output |
-
-## CMS / Publish Pipeline
-
-For content management systems and static site generators where you compile at publish time:
-
-1. **On save/publish** — `POST /api/compile` for each page being published. Store the returned CSS alongside your page content in your CMS or object storage.
-2. **At runtime** — serve the pre-built CSS directly from your CDN. Rich Wind is not in the hot path.
-3. **For project-wide CSS** — `GET /api/projects/:id/css` generates a single stylesheet covering all compiled pages. Useful for a global `<link>` tag.
-
-This keeps Rich Wind as a build-time tool for authoring and preview. Your production site serves static CSS with no dependency on Rich Wind being available.
-
-## Horizontal Scaling
-
-Rich Wind's cache is per-process. If you run three replicas behind a load balancer, each replica builds its own cache independently. This means:
-
-- The same page might be compiled multiple times (once per replica that gets a request for it)
-- Cache hit rates drop as you add replicas
-- Project-level CSS might differ briefly between replicas if they've seen different pages
-
-**Mitigations:**
-
-- **Sticky sessions** — route requests from the same editing session to the same replica. This keeps the cache warm for active users.
-- **cacheStore adapter** — add a shared persistence layer (Redis, database, filesystem) so replicas share cached artifacts. See the [cacheStore section in Runtime Spec](runtime-spec.html#cachestore) for the adapter interface.
-- **Single writer, many readers** — run writer replicas with `RW_NODE_ROLE=writer` and read replicas with `RW_NODE_ROLE=reader`. Route compile/purge/storage writes to writers only.
-- **Global purge support** — implement `deleteProjectPageArtifacts` so `ctx.purgeProject()` can fully clean persisted page artifacts even from a cold replica.
-- **Pre-compile on deploy** — compile your known pages on startup so the cache is warm from the start.
-
-**Simple request routing (recommended):**
-
-1. Send `POST /api/compile` and plugin mutation routes to writer replicas.
-2. Send `GET /api/css`, `GET /api/projects/:projectId/css`, and `POST /api/suggest` to reader replicas.
-3. Keep writer and reader replicas on the same shared `cacheStore`.
-
-## cacheStore Adapters
-
-The `cacheStore` option accepts any object that implements the core artifact methods (page + project). It can also implement plugin-data methods so plugin `ctx.storage` state is durable across restarts. What backs those methods is up to you — a database, Redis, S3, the local filesystem, or anything else that can store and retrieve JSON.
-
-For the full interface — what each method receives, what it should return, failure behavior, and validation rules — see the [cacheStore section in Runtime Spec](runtime-spec.html#cachestore).
-
-The pattern is the same regardless of backend: map `projectId + pageId + bundle` to storage keys for artifacts and `pluginName + key` to storage keys for plugin state. If you plan to use `ctx.purgePage()` / `ctx.purgeProject()` from plugins, implement `deletePageArtifact`, `deleteProjectArtifact`, and `deleteProjectPageArtifacts`. Here are two examples:
-
-### Redis
+Separate prefixes for pages, projects and plugin data keep the key spaces from colliding (ids contain no `:`).
 
 ```js
+import Redis from "ioredis";
+import { createCore } from "rich-wind";
+
+const redis = new Redis();
+const ttlSeconds = (expiresAt) => Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
+const pageKey = (p, g, b) => `rw:page:${p}:${g}:${b}`;
+const projectKey = (p, b) => `rw:project:${p}:${b}`;
+const pluginKey = (n, k) => `rw:plugin:${n}:${k}`;
+const getJson = async (key) => {
+  const raw = await redis.get(key);
+  return raw ? JSON.parse(raw) : null;
+};
+const scanDel = async (pattern) => {
+  let cursor = "0";
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 200);
+    cursor = next;
+    if (keys.length > 0) await redis.del(keys);
+  } while (cursor !== "0");
+};
+
 const cacheStore = {
-  async readPageArtifact({ projectId, pageId, bundle }) {
-    const raw = await redis.get(`rw:${projectId}:${pageId}:${bundle}`);
-    return raw ? JSON.parse(raw) : null;
-  },
-  async upsertPageArtifact(input) {
-    const key = `rw:${input.projectId}:${input.pageId}:${input.bundle}`;
-    const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
-    await redis.set(key, JSON.stringify(input), "EX", ttl);
-  },
-  async deletePageArtifact({ projectId, pageId, bundle }) {
-    await redis.del(`rw:${projectId}:${pageId}:${bundle}`);
-  },
-  async deleteProjectPageArtifacts({ projectId }) {
-    const prefix = `rw:${projectId}:`;
+  readPageArtifact: ({ projectId, pageId, bundle }) => getJson(pageKey(projectId, pageId, bundle)),
+  upsertPageArtifact: (i) =>
+    redis.set(pageKey(i.projectId, i.pageId, i.bundle), JSON.stringify(i), "EX", ttlSeconds(i.expiresAt)),
+  deletePageArtifact: ({ projectId, pageId, bundle }) => redis.del(pageKey(projectId, pageId, bundle)),
+  deleteProjectPageArtifacts: ({ projectId }) => scanDel(`rw:page:${projectId}:*`),
+
+  readProjectArtifact: ({ projectId, bundle }) => getJson(projectKey(projectId, bundle)),
+  upsertProjectArtifact: (i) =>
+    redis.set(projectKey(i.projectId, i.bundle), JSON.stringify(i), "EX", ttlSeconds(i.expiresAt)),
+  deleteProjectArtifact: ({ projectId, bundle }) => redis.del(projectKey(projectId, bundle)),
+
+  readPluginData: ({ pluginName, key }) => getJson(pluginKey(pluginName, key)),
+  writePluginData: ({ pluginName, key, value }) => redis.set(pluginKey(pluginName, key), JSON.stringify(value)),
+  deletePluginData: ({ pluginName, key }) => redis.del(pluginKey(pluginName, key)),
+  async listPluginData({ pluginName, prefix = "" }) {
+    const head = pluginKey(pluginName, "");
+    const out = [];
     let cursor = "0";
     do {
-      const [nextCursor, keys] = await redis.scan(cursor, "MATCH", `${prefix}*`, "COUNT", 200);
-      cursor = nextCursor;
-      const pageKeys = keys.filter((key) => !key.includes(":_project:"));
-      if (pageKeys.length > 0) await redis.del(pageKeys);
+      const [next, keys] = await redis.scan(cursor, "MATCH", `${head}${prefix}*`, "COUNT", 200);
+      cursor = next;
+      for (const k of keys) out.push(k.slice(head.length));
     } while (cursor !== "0");
-  },
-  async readProjectArtifact({ projectId, bundle }) {
-    const raw = await redis.get(`rw:${projectId}:_project:${bundle}`);
-    return raw ? JSON.parse(raw) : null;
-  },
-  async upsertProjectArtifact(input) {
-    const key = `rw:${input.projectId}:_project:${input.bundle}`;
-    const ttl = Math.max(1, Math.ceil((input.expiresAt - Date.now()) / 1000));
-    await redis.set(key, JSON.stringify(input), "EX", ttl);
-  },
-  async deleteProjectArtifact({ projectId, bundle }) {
-    await redis.del(`rw:${projectId}:_project:${bundle}`);
-  },
-  async readPluginData({ pluginName, key }) {
-    const raw = await redis.get(`rw:plugin:${pluginName}:${key}`);
-    return raw ? JSON.parse(raw) : null;
-  },
-  async writePluginData({ pluginName, key, value }) {
-    await redis.set(`rw:plugin:${pluginName}:${key}`, JSON.stringify(value));
-  },
-  async deletePluginData({ pluginName, key }) {
-    await redis.del(`rw:plugin:${pluginName}:${key}`);
-  },
-  async listPluginData({ pluginName, prefix = "" }) {
-    // For large keyspaces, prefer SCAN over KEYS.
-    const keys = await redis.keys(`rw:plugin:${pluginName}:${prefix}*`);
-    return keys.map((fullKey) => fullKey.slice(`rw:plugin:${pluginName}:`.length));
+    return out;
   }
 };
+
+const core = await createCore({ cacheStore });
 ```
 
-### Filesystem
+The interface and rules are in [cacheStore](runtime-spec.html#cachestore). Implement the three delete methods if plugins call `ctx.purgePage` or `ctx.purgeProject`.
+
+## Filesystem cacheStore
+
+The repo ships one. Options and defaults are documented at the top of `plugins/cache-store-fs/index.js`.
 
 ```js
-import fs from "node:fs/promises";
-import path from "node:path";
+import { createCore } from "rich-wind";
+import { createFsCacheStore } from "rich-wind/plugins/cache-store-fs";
 
-const DIR = path.resolve(".rw-cache");
-const safe = (v) => String(v).replace(/[^a-zA-Z0-9._-]/g, "_");
-const readJson = async (f) => { try { return JSON.parse(await fs.readFile(f, "utf8")); } catch { return null; } };
-const writeJson = async (f, d) => { await fs.mkdir(path.dirname(f), { recursive: true }); await fs.writeFile(f, JSON.stringify(d), "utf8"); };
-
-const cacheStore = {
-  readPageArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`)),
-  upsertPageArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`), i),
-  deletePageArtifact: async (i) => {
-    try {
-      await fs.unlink(path.join(DIR, safe(i.projectId), `${safe(i.pageId)}.${safe(i.bundle)}.json`));
-    } catch {}
-  },
-  deleteProjectPageArtifacts: async ({ projectId }) => {
-    const projectDir = path.join(DIR, safe(projectId));
-    let names = [];
-    try {
-      names = await fs.readdir(projectDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    await Promise.all(
-      names
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".json") && !entry.name.startsWith("_project."))
-        .map(async (entry) => {
-          try {
-            await fs.unlink(path.join(projectDir, entry.name));
-          } catch {}
-        })
-    );
-  },
-  readProjectArtifact: (i) => readJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`)),
-  upsertProjectArtifact: (i) => writeJson(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`), i),
-  deleteProjectArtifact: async (i) => {
-    try {
-      await fs.unlink(path.join(DIR, safe(i.projectId), `_project.${safe(i.bundle)}.json`));
-    } catch {}
-  },
-  readPluginData: ({ pluginName, key }) =>
-    readJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`)),
-  writePluginData: ({ pluginName, key, value }) =>
-    writeJson(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`), value),
-  deletePluginData: async ({ pluginName, key }) => {
-    try {
-      await fs.unlink(path.join(DIR, "_plugins", safe(pluginName), `${safe(key)}.json`));
-    } catch {}
-  },
-  async listPluginData({ pluginName, prefix = "" }) {
-    const dir = path.join(DIR, "_plugins", safe(pluginName));
-    let names = [];
-    try {
-      names = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    return names
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name.slice(0, -5))
-      .filter((key) => key.startsWith(prefix));
-  },
-};
-```
-
-### Wiring it up
-
-```js
-import http from "node:http";
-
-const core = await createCore({ cacheStore, cacheStoreTimeoutMs: 150 });
-http.createServer(core.handler).listen(3001);
-```
-
-### Error visibility
-
-The store is [fail-open](runtime-spec.html#failure-behavior) — if your backend is slow or down, Rich Wind continues working with in-memory cache only. To monitor store health, use the [`onError` plugin hook](plugin-system.html#error-handling) with `stage: "cache-store"`:
-
-```js
 const core = await createCore({
-  cacheStore,
-  cacheStoreTimeoutMs: 150,
+  cacheStore: createFsCacheStore({ dir: "./rw-cache", maxPageArtifacts: 5000, maxAgeDays: 30 })
+});
+```
+
+## Error visibility
+
+The store is fail-open. To see failures, handle `onError` with `stage: "cache-store"`:
+
+```js
+import { createCore } from "rich-wind";
+
+const core = await createCore({
+  cacheStore, // from the sections above
   plugins: [{
     name: "store-monitor",
-    onError({ error, stage, op, timedOut, context }) {
-      if (stage === "cache-store") {
-        console.warn(
-          `cacheStore ${op} failed (timeout: ${timedOut})`,
-          `project: ${context.projectId}`,
-          error.message
-        );
-      }
+    onError({ error, stage, op, timedOut }) {
+      if (stage === "cache-store") console.warn(`cacheStore ${op} failed (timedOut: ${timedOut})`, error.message);
     }
   }]
 });
