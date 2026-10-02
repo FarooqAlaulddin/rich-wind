@@ -673,6 +673,125 @@ test.describe('examples and rejected classes', () => {
   });
 });
 
+test.describe('containers', () => {
+  const insert = (page) => page.getByRole('combobox', { name: 'Insert' });
+  const panel = (page) => page.getByRole('region', { name: 'Selected element' });
+  const action = (page, name) => panel(page).getByRole('toolbar', { name: 'Element actions' }).getByRole('button', { name, exact: true });
+  /** The outermost container that holds `text`. */
+  const grid = (page, text) => editor(page).locator('> [data-rw-box]', { hasText: text }).first();
+  const cards = (page, text) => grid(page, text).locator(':scope > [data-rw-box]');
+
+  test('Insert adds a metrics row: four styled cards, a number over a label, ready to type in', async ({ page }) => {
+    await openDemo(page);
+    await block(page, 'Runtime Tailwind CSS compiler').click();
+    await insert(page).selectOption('metrics');
+
+    await expect(cards(page, 'Visitors')).toHaveCount(4);
+    await expect(insert(page)).toHaveValue('');
+    // Rich Wind compiled the new classes: a four-track grid of rounded cards.
+    await expect.poll(async () => (await styles(grid(page, 'Visitors'), 'grid-template-columns'))['grid-template-columns'].split(' ').length).toBe(4);
+    const card = cards(page, 'Visitors').first();
+    await expect.poll(async () => (await styles(card, 'border-top-left-radius'))['border-top-left-radius']).toBe('12px');
+    const number = card.locator('p').first();
+    await expect.poll(async () => (await styles(number, 'font-size'))['font-size']).toBe('30px');
+    // The number sits above the label inside the card.
+    const [nBox, lBox] = [await number.boundingBox(), await card.locator('p').nth(1).boundingBox()];
+    expect(lBox.y).toBeGreaterThan(nBox.y + nBox.height - 1);
+
+    // The caret was put in the first card.
+    await page.keyboard.type('~');
+    await expect(number).toHaveText('~12.4k');
+
+    // Survives a reload.
+    await savedState(page, '~12.4k');
+    await page.reload();
+    await expect(cards(page, 'Visitors')).toHaveCount(4);
+    await expect(cards(page, 'Visitors').first().locator('p').first()).toHaveText('~12.4k');
+  });
+
+  test('the export and the compiled HTML keep the nesting', async ({ page }) => {
+    await openDemo(page);
+    await page.getByRole('button', { name: 'Examples' }).click();
+    await page.getByRole('menuitem', { name: /Metrics dashboard/ }).click();
+    await expect(cards(page, 'Visitors')).toHaveCount(4);
+    await page.getByRole('button', { name: 'Export', exact: true }).first().click();
+    const code = strip(page).locator('.rw-code');
+    await expect(code).toContainText('<div class="mt-4 grid grid-cols-2 gap-4 md:grid-cols-4">');
+    await expect(code).toContainText('    <div class="rounded-xl border');
+  });
+
+  test('pick a card, its container, duplicate, delete and restyle it from the panel', async ({ page }) => {
+    await openDemo(page);
+    await page.getByRole('button', { name: 'Examples' }).click();
+    await page.getByRole('menuitem', { name: /Metrics dashboard/ }).click();
+    await expect(cards(page, 'Visitors')).toHaveCount(4);
+
+    // Clicking the number picks the innermost block, the paragraph.
+    await cards(page, 'Visitors').first().locator('p').first().click();
+    await expect(panel(page).locator('.shelf-tag')).toHaveText('<p>');
+    await expect(action(page, 'Container')).toBeEnabled();
+    await action(page, 'Container').click();
+    await expect(panel(page).locator('.shelf-tag')).toHaveText('<div>');
+    await expect(panel(page).locator('.crow', { hasText: 'rounded-xl' })).toContainText('border-radius');
+
+    await action(page, 'Duplicate').click();
+    await expect(cards(page, 'Visitors')).toHaveCount(5);
+    await action(page, 'Delete').click();
+    await expect(cards(page, 'Visitors')).toHaveCount(4);
+    await expect(page.locator('.editor-input [data-rw-box] p', { hasText: '12.4k' })).toHaveCount(1);
+
+    // Clicking a card's padding picks the card itself; restyle it.
+    const card = cards(page, 'Visitors').nth(2);
+    const box = await card.boundingBox();
+    await page.mouse.click(box.x + 4, box.y + 4);
+    await expect(panel(page).locator('.shelf-tag')).toHaveText('<div>');
+    const field = makeItField(page);
+    await field.fill('background rose');
+    await expect(page.getByRole('group', { name: 'Matches' }).locator('.card-cls').first()).toHaveText('bg-rose-500');
+    await field.press('Enter');
+    await expect.poll(() => classesOf(card)).toContain('bg-rose-500');
+    await expect.poll(async () => {
+      const [r, g] = await rgba(page, (await styles(card, 'background-color'))['background-color']);
+      return r > g;
+    }).toBe(true);
+  });
+
+  test('wrap puts a block in a new container and selects it; Container is off outside one', async ({ page }) => {
+    await openDemo(page);
+    const p = block(page, 'Runtime Tailwind CSS compiler');
+    await p.click();
+    await expect(action(page, 'Container')).toBeDisabled();
+    await action(page, 'Wrap').click();
+    const wrapper = editor(page).locator('> [data-rw-box]', { hasText: 'Runtime Tailwind CSS compiler' });
+    await expect(wrapper).toHaveCount(1);
+    await expect(panel(page).locator('.shelf-tag')).toHaveText('<div>');
+    await expect.poll(async () => (await styles(wrapper, 'border-top-left-radius'))['border-top-left-radius']).toBe('12px');
+    // Undo restores the flat block.
+    await wrapper.locator('p').click();
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+    await expect(wrapper).toHaveCount(0);
+    await expect(block(page, 'Runtime Tailwind CSS compiler')).toBeVisible();
+  });
+
+  test('every container example compiles with nothing rejected', async ({ page }) => {
+    await openDemo(page);
+    await block(page, 'Runtime Tailwind CSS compiler').click();
+    await page.keyboard.press('Escape');
+    await expect(panel(page)).toHaveCount(1);
+    for (const name of ['Metrics dashboard', 'Feature grid', 'Pricing tiers']) {
+      await page.getByRole('button', { name: 'Examples' }).click();
+      await page.getByRole('menuitem', { name: new RegExp(name) }).click();
+      await expect(editor(page).locator('[data-rw-box] [data-rw-box]').first()).toBeVisible();
+      await expect(page.locator('.rw-status')).toHaveText(/Compiled|Cached/);
+      await expect(strip(page).locator('.rw-rejected')).toHaveCount(0);
+      // The panel does not keep pointing at an element of the replaced content.
+      await expect(panel(page)).toHaveCount(0);
+      const first = editor(page).locator('[data-rw-box] [data-rw-box]').first();
+      await expect.poll(async () => (await styles(first, 'border-top-left-radius'))['border-top-left-radius']).toBe('12px');
+    }
+  });
+});
+
 test.describe('theme', () => {
   test('dark mode toggles the theme, the button label and the dark: styles, and persists', async ({ page }) => {
     await openDemo(page);

@@ -1,26 +1,10 @@
 // Sample content for the "Try an example" menu. Each example is a Lexical
-// editor state built from the demo's styled nodes. Some include classes that
+// editor state built from the demo's styled nodes (see blocks.js). Some include classes that
 // Tailwind does not know, so the compiler's rejected[] feedback is visible.
 
-function textNode(text) {
-  return { type: 'text', text, format: 0, detail: 0, mode: 'normal', style: '' };
-}
+import { textNode, spanNode, heading, para, box, editorState, metric, CARD } from './blocks';
 
-function spanNode(text, classes) {
-  return { type: 'tailwind-span', text, tailwindClasses: classes, format: 0, detail: 0, mode: 'normal', style: '' };
-}
-
-function heading(tag, classes, children) {
-  return { type: 'styled-heading', tag, tailwindClasses: classes, children, direction: 'ltr', format: '', indent: 0, version: 1 };
-}
-
-function para(classes, children) {
-  return { type: 'styled-paragraph', tailwindClasses: classes, children, direction: 'ltr', format: '', indent: 0, version: 1 };
-}
-
-function editorState(children) {
-  return { root: { children, direction: 'ltr', format: '', indent: 0, type: 'root', version: 1 } };
-}
+const DARK = '[.theme-dark_&]:';
 
 export const EXAMPLES = [
   {
@@ -80,6 +64,58 @@ export const EXAMPLES = [
         spanNode('shadow-glow', 'font-mono shadow-glow'),
         textNode('. None exist in Tailwind, so the compiler reports them instead of guessing.'),
       ]),
+    ]),
+  },
+  {
+    id: 'metrics',
+    label: 'Metrics dashboard',
+    hint: 'Containers: a grid of cards, number over label',
+    hasRejected: false,
+    state: editorState([
+      heading('h2', `text-2xl font-bold tracking-tight text-slate-900 ${DARK}text-white`, [textNode('This week')]),
+      box('mt-4 grid grid-cols-2 gap-4 md:grid-cols-4', [
+        metric('12.4k', 'Visitors', [spanNode(' +12%', 'ml-1 text-sm font-semibold text-emerald-600')]),
+        metric('3.2%', 'Conversion', [spanNode(' -0.4%', 'ml-1 text-sm font-semibold text-rose-600')]),
+        metric('$8,140', 'Revenue'),
+        metric('214', 'Orders'),
+      ]),
+      para(`mt-4 text-sm text-slate-500 ${DARK}text-slate-400`, [textNode('Each card is a container. Click its border to style the card, or its text to style the number.')]),
+    ]),
+  },
+  {
+    id: 'features',
+    label: 'Feature grid',
+    hint: 'Three columns of cards with headings',
+    hasRejected: false,
+    state: editorState([
+      heading('h2', `text-center text-3xl font-extrabold tracking-tight text-slate-900 ${DARK}text-white`, [textNode('Why runtime styling')]),
+      box('mt-6 grid grid-cols-1 gap-5 md:grid-cols-3', [
+        ['No build step', 'Markup written after deploy is styled the moment it arrives.', 'bg-sky-100 text-sky-700'],
+        ['Shared bundles', 'Classes many pages use move to one cached stylesheet.', 'bg-violet-100 text-violet-700'],
+        ['Honest feedback', 'Unknown classes come back in rejected[] instead of failing silently.', 'bg-amber-100 text-amber-800'],
+      ].map(([title, text, badge]) => box(CARD, [
+        para(`w-fit rounded-md px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${badge}`, [textNode('Feature')]),
+        heading('h3', `mt-3 text-lg font-semibold text-slate-900 ${DARK}text-white`, [textNode(title)]),
+        para(`mt-1 text-slate-600 ${DARK}text-slate-300`, [textNode(text)]),
+      ]))),
+    ]),
+  },
+  {
+    id: 'tiers',
+    label: 'Pricing tiers',
+    hint: 'Three plans, the middle one highlighted',
+    hasRejected: false,
+    state: editorState([
+      box('grid grid-cols-1 gap-5 md:grid-cols-3', [
+        ['Hobby', '$0', 'One project, community support', false],
+        ['Team', '$24', 'Unlimited pages and shared bundles', true],
+        ['Scale', '$99', 'Replicas, cache store and priority support', false],
+      ].map(([name, price, text, best]) => box(`${CARD} flex flex-col gap-2 ${best ? 'ring-2 ring-indigo-500' : ''}`.trim(), [
+        para(`text-sm font-semibold uppercase tracking-wider ${best ? 'text-indigo-600' : 'text-slate-500'}`, [textNode(name)]),
+        para(`text-4xl font-extrabold text-slate-900 ${DARK}text-white`, [textNode(price), spanNode('/mo', 'text-base font-medium text-slate-500')]),
+        para(`text-slate-600 ${DARK}text-slate-300`, [textNode(text)]),
+        para(`mt-2 rounded-lg px-4 py-2 text-center font-semibold ${best ? 'bg-indigo-600 text-white' : `bg-slate-100 text-slate-900 ${DARK}bg-slate-700 ${DARK}text-white`}`, [textNode('Choose plan')]),
+      ]))),
     ]),
   },
 ];

@@ -599,14 +599,20 @@ body {
   outline: none;
 }
 
-.editor-input p,
-.editor-input h1,
-.editor-input h2,
-.editor-input h3,
-.editor-input h4,
-.editor-input h5,
-.editor-input h6 {
+/* Kept at one class of specificity, so compiled Tailwind margins override it. */
+.editor-input :where(p, h1, h2, h3, h4, h5, h6, [data-rw-box]) {
   margin-bottom: 12px;
+}
+
+/* Inside a container, layout comes from its classes (gap, padding), not from block spacing. */
+.editor-input :where([data-rw-box] > *) {
+  margin-bottom: 0;
+}
+
+/* A container without classes is invisible otherwise; outline it (outlines take no space). */
+.editor-input [data-rw-box]:is(:not([class]), [class=""]) {
+  outline: 1px dashed var(--border-strong);
+  outline-offset: 2px;
 }
 
 /* Preflight makes unstyled headings look like body text; keep a hint of
@@ -1466,6 +1472,12 @@ body {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
+}
+
+.block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
 }
 
 .block-meta {
