@@ -10,6 +10,7 @@ import { splitClasses } from './classEdit';
 import { $isStyledParagraphNode } from './nodes/StyledParagraphNode';
 import { $isStyledHeadingNode } from './nodes/StyledHeadingNode';
 import { $isTailwindSpanNode } from './nodes/TailwindSpanNode';
+import { captureStyle, animateFrom } from './animateStyle';
 
 function hasClasses(node) {
   return $isStyledParagraphNode(node) || $isStyledHeadingNode(node) || $isTailwindSpanNode(node);
@@ -79,13 +80,16 @@ function $nodeForTarget(spec) {
  * a new styled span (and stays selected, so the next edit finds it). `onKey`
  * receives the edited node's key once the update has been committed.
  */
-export function editTargetClasses(editor, spec, transform, onKey) {
+export function editTargetClasses(editor, spec, transform, onKey, { from } = {}) {
   if (!editor || !spec) return;
   let editedKey = null;
   let created = false;
+  // How the element looked before the change (the DOM is not reconciled yet inside update()).
+  let look = from || null;
   editor.update(() => {
     const node = $nodeForTarget(spec);
     if (node) {
+      if (!look) look = captureStyle(editor.getElementByKey(node.getKey()));
       const before = splitClasses(node.getTailwindClasses());
       const after = transform(before);
       if (after.join(' ') !== before.join(' ')) node.setTailwindClasses(after.join(' '));
@@ -98,6 +102,8 @@ export function editTargetClasses(editor, spec, transform, onKey) {
     const after = transform([]);
     if (after.length === 0) return;
     const text = selection.getTextContent();
+    // A new span starts out looking like the text it wraps.
+    if (!look) look = captureStyle(editor.getElementByKey(selection.anchor.getNode().getKey()));
     const span = $createTailwindSpanNode(text);
     span.setTailwindClasses(after.join(' '));
     selection.insertNodes([span]);
@@ -107,6 +113,7 @@ export function editTargetClasses(editor, spec, transform, onKey) {
   }, {
     onUpdate: () => {
       if (onKey) onKey(editedKey);
+      if (editedKey) animateFrom(look, editor.getElementByKey(editedKey));
       // Replacing the text node makes the browser collapse its selection once
       // the editor is not focused (the shelf has it); select the new span again.
       if (created) requestAnimationFrame(() => reselectSpan(editor, editedKey));

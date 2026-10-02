@@ -530,6 +530,87 @@ test.describe('style panel', () => {
   });
 });
 
+test.describe('editor animation', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  // Records every Element.animate() call on editor content as { tag, props: { prop: [from, to] } }.
+  const record = (page) => page.evaluate(() => {
+    window.__anims = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (frames, opts) {
+      if (this.closest('.editor-input') && Array.isArray(frames) && frames.length === 2) {
+        const props = {};
+        for (const k of Object.keys(frames[0])) props[k] = [frames[0][k], frames[1][k]];
+        window.__anims.push({ text: this.textContent.slice(0, 40), props });
+      }
+      return animate.call(this, frames, opts);
+    };
+  });
+  const anims = (page) => page.evaluate(() => window.__anims);
+  const settled = (loc) => loc.evaluate((e) => e.getAnimations().length === 0);
+
+  test('hovering, applying and removing a class each ease the block into its new look', async ({ page }) => {
+    await openDemo(page);
+    const chip = block(page, 'Runtime Tailwind CSS compiler');
+    await chip.click();
+    const startPad = (await styles(chip, 'padding-top'))['padding-top'];
+    await page.getByRole('button', { name: 'Browse' }).click();
+    await page.getByRole('tab', { name: 'Space' }).click();
+    await record(page);
+
+    const p8 = page.getByRole('group', { name: 'Padding' }).getByRole('button', { name: 'p-8', exact: true });
+    await p8.hover();
+    await expect.poll(async () => (await anims(page)).some((a) => a.props.paddingTop?.[1] === '32px')).toBe(true);
+    await expect.poll(() => settled(chip)).toBe(true);
+    expect((await styles(chip, 'padding-top'))['padding-top']).toBe('32px');
+
+    await p8.click();
+    await expect.poll(() => classesOf(chip)).toContain('p-8');
+    await page.mouse.move(5, 5);
+    await expect.poll(() => settled(chip)).toBe(true);
+    expect((await styles(chip, 'padding-top'))['padding-top']).toBe('32px');
+    // The click commits what the hover showed: nothing plays back to the old padding first.
+    expect((await anims(page)).filter((a) => a.props.paddingTop?.[1] === startPad)).toEqual([]);
+
+    await page.evaluate(() => { window.__anims = []; });
+    // Sample padding-top every frame while removing: it passes through values between the two ends.
+    await page.evaluate((text) => {
+      window.__pads = [];
+      const t0 = performance.now();
+      const tick = () => {
+        // Found again each frame: Lexical may re-create the element on a class change.
+        const el = [...document.querySelectorAll('.editor-input > *')].find((e) => e.textContent.includes(text));
+        window.__pads.push(parseFloat(getComputedStyle(el).paddingTop));
+        if (performance.now() - t0 < 800) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }, 'Runtime Tailwind CSS compiler');
+    await page.getByRole('region', { name: 'Selected element' }).getByRole('button', { name: 'Remove p-8' }).click();
+    await expect.poll(() => classesOf(chip)).not.toContain('p-8');
+    await expect.poll(async () => (await anims(page)).some((a) => a.props.paddingTop?.[0] === '32px')).toBe(true);
+    await expect.poll(() => settled(chip)).toBe(true);
+    expect((await styles(chip, 'padding-top'))['padding-top']).toBe(startPad);
+    const end = parseFloat(startPad);
+    const pads = await page.evaluate(() => window.__pads);
+    expect(pads.some((v) => v > end && v < 32), `padding-top per frame: ${pads.join(' ')}`).toBe(true);
+  });
+
+  test('with reduced motion the change is immediate', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openDemo(page);
+    const chip = block(page, 'Runtime Tailwind CSS compiler');
+    await chip.click();
+    await page.getByRole('button', { name: 'Browse' }).click();
+    await page.getByRole('tab', { name: 'Space' }).click();
+    await record(page);
+    const p8 = page.getByRole('group', { name: 'Padding' }).getByRole('button', { name: 'p-8', exact: true });
+    await p8.hover();
+    await p8.click();
+    await expect.poll(() => classesOf(chip)).toContain('p-8');
+    expect(await anims(page)).toEqual([]);
+  });
+});
+
 test.describe('examples and rejected classes', () => {
   test('loading an example replaces the content and it is styled', async ({ page }) => {
     await openDemo(page);

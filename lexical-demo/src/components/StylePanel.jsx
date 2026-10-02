@@ -6,6 +6,7 @@ import { editTargetClasses, loadEditorState } from '../editorActions';
 import { addClass, removeClass, removeGroup } from '../classEdit';
 import { splitToken, normalizePrefix } from '../classCatalog';
 import { hold } from '../stylePreview';
+import { captureStyle } from '../animateStyle';
 import { search, readVariants } from '../classSearch';
 import { resolveReference } from '../search/reference';
 import { loadFullCatalog, onCatalogChange } from '../search/catalogStore';
@@ -232,7 +233,9 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
     const inPanel = !!rootRef.current && rootRef.current.contains(document.activeElement);
     const id = target.id;
     let moved = null;
-    clear();
+    // Taken before the hover preview is cleared, so the change eases from what was on screen.
+    const from = captureStyle(target.getEl());
+    clear({ instant: true });
     previewing.current = false;
     setPending([]);
     editTargetClasses(
@@ -260,6 +263,7 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
           if (again) again.focus({ preventScroll: true });
         }
       },
+      { from },
     );
     setQuery('');
     setNote(null);
