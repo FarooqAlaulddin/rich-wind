@@ -1076,10 +1076,24 @@ body {
   outline-offset: 1px;
 }
 
-.shelf-scrub {
+.shelf-status {
+  height: 18px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.shelf-status.is-scrub {
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--accent-text);
+}
+
+.shelf-status.is-warn {
+  color: var(--warn);
 }
 
 .shelf-note {
@@ -1475,11 +1489,6 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
-}
-
-.shelf-fine {
-  font-size: 11px;
-  color: var(--muted);
 }
 
 .cards-more {

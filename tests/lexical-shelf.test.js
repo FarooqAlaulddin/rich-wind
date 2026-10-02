@@ -44,7 +44,7 @@ describe('chip labels', () => {
   });
   it('joins class and word', () => {
     expect(chipLabel('p-6')).toBe('p-6 roomy');
-    expect(chipLabel('md:rounded-xl')).toBe('rounded-xl soft');
+    expect(chipLabel('md:rounded-xl')).toBe('md:rounded-xl soft');
   });
   it('falls back to the group label, then to nothing', () => {
     expect(chipWord('w-64')).toBe('width');

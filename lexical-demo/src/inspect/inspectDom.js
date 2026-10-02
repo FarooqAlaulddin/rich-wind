@@ -7,7 +7,9 @@ const THEME_CLASS = /^(editor-|selection-preserve)/;
 export function isUserElement(el, root) {
   if (!el || el === root || el.nodeType !== 1) return false;
   if (el.parentElement === root) return true;
-  return el.tagName === 'SPAN' && !el.hasAttribute('data-lexical-text');
+  // A styled inline span renders its classes on Lexical's text span itself, so a
+  // text span counts when it carries classes; bare text spans are only noise.
+  return el.tagName === 'SPAN' && (!el.hasAttribute('data-lexical-text') || classesOf(el).length > 0);
 }
 
 /** Ancestor chain from the outermost block down to `el` (inclusive). */
@@ -53,7 +55,8 @@ export function classesOf(el) {
 export function describe(el) {
   if (!el) return null;
   const isBlock = el.parentElement?.getAttribute('contenteditable') === 'true';
-  const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+  // innerText keeps the breaks between laid-out items (a flex row of links); jsdom has only textContent.
+  const text = (el.innerText ?? el.textContent ?? '').replace(/\s+/g, ' ').trim();
   return {
     tag: el.tagName.toLowerCase(),
     kind: isBlock ? 'block' : 'span',

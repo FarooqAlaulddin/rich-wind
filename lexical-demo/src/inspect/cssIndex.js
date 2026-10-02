@@ -73,11 +73,38 @@ function unescapeCssIdent(value) {
 
 const CLASS_AT_START = /^\.((?:\\[0-9a-fA-F]{1,6} ?|\\.|[A-Za-z0-9_-])+)/;
 
+// Splits a selector at its last descendant/child/sibling combinator outside
+// brackets and parens, skipping escapes: ".a .b" -> [".a", ".b"].
+function lastCompound(selector) {
+  let depth = 0;
+  let cut = -1;
+  for (let i = 0; i < selector.length; i++) {
+    const c = selector[i];
+    if (c === '\\') {
+      const hex = /^[0-9a-fA-F]{1,6} ?/.exec(selector.slice(i + 1));
+      i += hex ? hex[0].length : 1;
+    } else if (c === '[' || c === '(') depth++;
+    else if (c === ']' || c === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && /[\s>+~]/.test(c)) cut = i;
+  }
+  return cut < 0 ? ['', selector] : [selector.slice(0, cut).replace(/[\s>+~]+$/, '').trim(), selector.slice(cut + 1).trim()];
+}
+
+// The class each selector part styles, and the ancestor it needs (if any).
+// A class at the start styles the element itself; arbitrary variants such as
+// [.theme-dark_&]: compile to ".theme-dark .<escaped class>", where the class is last.
 function classesOfSelector(selector) {
-  const names = new Set();
+  const names = new Map();
   for (const part of selector.split(/,(?![^(]*\))/)) {
-    const match = CLASS_AT_START.exec(part.trim());
-    if (match) names.add(unescapeCssIdent(match[1]));
+    const trimmed = part.trim();
+    const [ancestor, last] = lastCompound(trimmed);
+    let match = ancestor && CLASS_AT_START.exec(last);
+    if (match) {
+      names.set(unescapeCssIdent(match[1]), `inside ${ancestor}`);
+      continue;
+    }
+    match = CLASS_AT_START.exec(trimmed);
+    if (match) names.set(unescapeCssIdent(match[1]), null);
   }
   return names;
 }
@@ -115,9 +142,9 @@ function walk(items, context, byClass) {
       else if (at === '@media' || at === '@supports') walk(item.items, [...context, item.prelude], byClass);
       continue;
     }
-    for (const name of classesOfSelector(item.prelude)) {
+    for (const [name, inside] of classesOfSelector(item.prelude)) {
       if (!byClass.has(name)) byClass.set(name, []);
-      byClass.get(name).push({ selector: item.prelude, context, items: item.items });
+      byClass.get(name).push({ selector: item.prelude, context: inside ? [...context, inside] : context, items: item.items });
     }
   }
 }

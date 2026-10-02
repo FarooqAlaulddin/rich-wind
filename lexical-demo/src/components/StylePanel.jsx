@@ -370,6 +370,9 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
   };
 
   const showCards = intent !== 'anything' && candidates.length > 0;
+  const status = note
+    || (scrub ? `${scrub.from || 'none'} -> ${scrub.to}` : null)
+    || (hasTarget ? 'Hover a value to preview it on the page. Click to apply.' : 'Click text in the page to style it.');
   const previewOf = (it) => onPreview(it.bundle || [it.cls], null, it.removed);
 
   return (
@@ -402,8 +405,8 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
           onMore={setMoreOpen}
         />
 
-        {scrub && <div className="shelf-scrub" aria-live="polite">{scrub.from || 'none'} -&gt; {scrub.to}</div>}
-        {note && <div className="shelf-note" role="status">{note}</div>}
+        {/* One line that is always there, so hover text never moves the controls under the pointer. */}
+        <div className={`shelf-status${note ? ' is-warn' : scrub ? ' is-scrub' : ''}`} role="status" title={status}>{status}</div>
         {result?.ambiguity && <div className="shelf-note" role="status">{result.ambiguity.note}</div>}
         {ask && <Ambiguity ask={ask} onPick={setQuery} />}
         {showCards && (

@@ -21,16 +21,12 @@ nav:
         url: /
       - title: Agent Quickstart
         url: /agent-quickstart.html
-      - title: AI Runtime Styling
-        url: /ai-runtime-styling.html
   - title: Guides
     items:
       - title: Integration Cookbook
         url: /integration-cookbook.html
       - title: Plugin System
         url: /plugin-system.html
-      - title: FAQ
-        url: /faq.html
   - title: Reference
     items:
       - title: API Reference

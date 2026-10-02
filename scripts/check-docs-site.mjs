@@ -2,6 +2,8 @@
 // the docs layout, and every internal link, script, stylesheet and #anchor
 // resolves. Usage: node scripts/check-docs-site.mjs <site-dir> [base-path]
 // The base path defaults to the prefix of the stylesheet link in index.html.
+// It also checks that README.md links to the docs through the Pages site
+// (absolute URLs, so they work on GitHub and npm) and that those URLs resolve.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -58,6 +60,20 @@ for (const page of pages) {
       problems.push(`${rel}: missing anchor ${attr}`);
     }
   }
+}
+
+const PAGES_URL = 'https://farooqalaulddin.github.io/rich-wind';
+const readme = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'README.md'), 'utf8');
+for (const [, url] of readme.matchAll(/\]\(([^)\s]+)\)/g)) {
+  if (/^(\.\/)?docs\//.test(url)) {
+    problems.push(`README.md: ${url} must link to the Pages site (${PAGES_URL}/...)`);
+    continue;
+  }
+  if (!url.startsWith(`${PAGES_URL}/`)) continue;
+  const [target, anchor] = url.slice(PAGES_URL.length + 1).split('#');
+  const file = path.join(siteDir, target || 'index.html');
+  if (!fs.existsSync(file)) problems.push(`README.md: broken docs link ${url}`);
+  else if (anchor && !idsOf(file).has(decodeURIComponent(anchor))) problems.push(`README.md: missing anchor ${url}`);
 }
 
 if (pages.length === 0) problems.push(`no HTML pages found in ${siteDir}`);

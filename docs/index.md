@@ -1,99 +1,53 @@
 # Rich Wind
 
-Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step. It is for markup that did not exist when your app was built. The main use is AI-driven UI, where a model writes the HTML after deploy ([AI Runtime Styling](ai-runtime-styling.html)). CMS pages, editors and previews use it the same way.
+Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step.
 
-V1 compiles against Tailwind's default design system. Core compiles explicit classes or HTML and serves CSS. Authentication, tenant isolation, rate limiting, and HTML-parsing workflows belong to the host app or a wrapper.
+Tailwind's static build only compiles classes it finds in source files. Markup produced after deploy (AI-generated UI, CMS pages, editors, previews) did not exist at build time, so its classes have no CSS. Rich Wind compiles them on demand and serves the CSS, cached and scoped per project and page.
 
-## Include it in an app
+V1 compiles against Tailwind's default design system. Core compiles explicit classes or the class attributes of HTML and serves CSS. Authentication, tenant mapping, rate limiting, and TLS belong to the host app or a proxy.
+
+## Quick start
 
 ```bash
 npm install rich-wind
 ```
 
 ```js
-import http from "node:http";
 import { createCore } from "rich-wind";
 
 const core = await createCore();
-http.createServer(core.handler).listen(3001);
-```
-
-`createCore()` returns `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`. Mount `handler` (Node-style hosts such as Express) or `fetch` (Next.js, Hono), call the functions directly, or run the bundled server behind a proxy. See [Including Rich Wind in an App](runtime-spec.html#including-rich-wind-in-an-app).
-
-```bash
-curl -X POST http://localhost:3001/api/compile \
-  -H "Content-Type: application/json" \
-  -d '{"projectId":"my-app","pageId":"hero","html":"<div class=\"text-red-500 p-4\">Hello</div>"}'
-```
-
-The response has the compiled CSS, the classes compiled, `rejected` explicit classes, and a content hash.
-
-## Mental Model
-
-Rich Wind organizes CSS around **projects** and **pages**.
-
-A **project** is a namespace — your app, your tenant, your site. A **page** is a unit within that project — a landing page, an email template, a component preview. You pick the IDs; Rich Wind just uses them to scope its cache.
-
-When you compile a page, Rich Wind extracts every valid Tailwind class from your input, compiles them into CSS, and caches the result. If you compile the same page again with the same classes, it returns the cached output instantly. If the classes change, it recompiles.
-
-You can also ask for a **project-level stylesheet** — the union of every class across all cached pages in that project, compiled into one CSS file.
-
-## Quick Start
-
-```bash
-npm install rich-wind
-```
-
-Create an HTTP service in your app:
-
-```js
-import http from "node:http";
-import { createCore } from "rich-wind";
-
-const core = await createCore();
-const server = http.createServer(core.handler);
-server.listen(3001, () => {
-  console.log("Rich Wind running on http://localhost:3001");
+const { css, classes, rejected, hash } = await core.compile({
+  projectId: "my-app",
+  pageId: "hero",
+  html: '<div class="text-red-500 p-4">Hello</div>',
 });
 ```
 
-Compile a page:
+To serve it over HTTP, mount `core.handler` or `core.fetch`; see [Embedding](integration-cookbook.html#embedding) for Express, `node:http`, Next.js, Hono, and Fastify.
 
-```bash
-curl -X POST http://localhost:3001/api/compile \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectId": "my-app",
-    "pageId": "hero",
-    "html": "<div class=\"text-red-500 p-4\">Hello</div>"
-  }'
-```
+## How it works
 
-The response includes the compiled CSS, the list of classes found, and a content hash you can use for cache invalidation on your end.
-
-`createCore()` is async and returns `{ handler, fetch, compile, getCss, getProjectCss, invalidate, suggest, close }`. `handler` is a plain Node request listener: pass it to `http.createServer()` or mount it in Express with `app.use("/rw", core.handler)`. `fetch` takes a Web `Request` and returns a `Response`, for Next.js App Router, Hono, and other Fetch-style hosts. The remaining functions call the core directly without HTTP. Express is not a dependency of Rich Wind.
+- You choose a `projectId` (an app, tenant, or site) and a `pageId` (a page, template, or preview) to scope the cache.
+- Each compile is for one page. The result is cached in memory with a sliding TTL and an LRU cap.
+- The same class set produces the same `hash`.
+- The project CSS is the union of the project's cached pages.
+- `GET` CSS endpoints never compile new classes: after expiry they return 404, and only a new compile rebuilds. Details in [Caching](runtime-spec.html#caching).
 
 ## Bundles
 
-By default, Rich Wind compiles everything into one stylesheet (`full` bundle). But you can split the output into layers:
+| Bundle | Contains |
+| --- | --- |
+| `full` | Preflight, theme variables, and utilities (the default) |
+| `base` | Tailwind preflight only; the same for every page |
+| `theme` | Only the CSS variables the page's classes use |
+| `utilities` | The utility class rules |
 
-| Bundle | What it contains | When to use it |
-| --- | --- | --- |
-| `full` | Preflight reset + theme variables + utility rules | Simplest option — one `<link>` tag covers everything |
-| `base` | Just the preflight reset (Tailwind's CSS normalize) | Load once globally, shared across all pages |
-| `theme` | CSS custom properties (colors, spacing, fonts, etc.) | Load once globally — these are the design tokens |
-| `utilities` | The actual utility class rules (`bg-red-500`, `p-4`, etc.) | Load per-page — this is the part that changes |
+To share CSS across pages, load `base` once, the project theme (`GET /api/projects/:projectId/css?bundle=theme`, the union across the project's cached pages), and each page's `utilities`. The bundled loader script does this for you; see the [API Reference](api-reference.html).
 
-Splitting makes sense when many pages share the same design tokens but have different utility classes. You load `base` and `theme` once, then swap `utilities` per page. If you split, always load `theme` before `utilities` — the utility rules reference the CSS custom properties that `theme` defines.
+## When not to use it
 
-## Docs
+Code committed to a repo should use the normal Tailwind build. Rich Wind is for markup that appears after deploy.
 
-- **[Agent Quickstart](agent-quickstart.html)** - the compile, `rejected`, recompile loop for models
-- **[AI Runtime Styling](ai-runtime-styling.html)** - why runtime styling for AI-generated UI
-- **[API Reference](api-reference.html)** - endpoints, functions, errors, config
-- **[OpenAPI Contract](openapi.json)** - machine-readable API schema
-- **[Runtime Spec](runtime-spec.html)** - caching, `cacheStore`, embedding, threat model
-- **[Plugin System](plugin-system.html)** - hooks, setup context, custom routes
-- **[Integration Cookbook](integration-cookbook.html)** - multi-tenant wrappers, editors, CMS pipelines
-- **[Compatibility Policy (1.x)](api-reference.html#compatibility-policy-1x)** - what stays stable within 1.x
-- **[FAQ](faq.html)**
+Persist your source content and ids (`projectId`, `pageId`, the HTML), not generated CSS: compile recreates it.
+
+Next: [Agent Quickstart](agent-quickstart.html) and [API Reference](api-reference.html).

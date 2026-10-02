@@ -1,6 +1,6 @@
 # Plugin System
 
-Plugins extend Rich Wind with custom behavior — log requests, transform CSS, enforce class allowlists, serve CSS from Redis, register admin endpoints. A plugin is an object with hook methods and an optional `setup()` lifecycle function. You pass plugins to `createCore()` and they're called automatically at the right moments.
+A plugin is an object with an optional `setup()`, optional `teardown()` and any of the hook methods below. Pass one or an array to `createCore({ plugins })`. Hooks you do not implement are skipped. Exact types for everything on this page: `services/index.d.ts` (`RichWindPlugin`, `PluginContext`, `PluginSetupContext` and one context type per hook).
 
 ```js
 import http from "node:http";
@@ -18,441 +18,182 @@ const core = await createCore({
 http.createServer(core.handler).listen(3001);
 ```
 
-You only implement the hooks you care about. If a plugin doesn't have a method for a particular hook, it's skipped.
+## Plugin Shape
 
-## Plugin Lifecycle
-
-Plugins have an optional `setup()` and `teardown()` lifecycle.
-
-### setup(context)
-
-Called once during `createCore()`, before routes are registered. Receives the full [plugin context](#plugin-context) including query functions, mutation functions, plugin storage, and `addRoute()` for registering custom HTTP routes. Can be async.
-
-```js
-const dashboard = {
-  name: "dashboard",
-  async setup({ addRoute, getCacheStats, compile }) {
-    // Register a custom endpoint
-    addRoute("get", "/stats", () => ({ body: getCacheStats() }));
-
-    // Warm the cache on startup
-    await compile({ projectId: "main", pageId: "home", classes: "text-red-500 p-4" });
-  },
-  teardown() {
-    console.log("Dashboard plugin shutting down");
-  }
-};
-```
-
-If `setup()` throws or exceeds its timeout, the plugin is marked as failed — its hooks are permanently skipped and its routes are not mounted. Other plugins and the server itself are unaffected.
-
-### teardown()
-
-Called when `close()` is invoked. Plugins are torn down in reverse order (last registered, first torn down). Teardown errors are silently suppressed so all plugins get a chance to clean up.
-
-### Shutdown
-
-`createCore()` returns `{ handler, fetch, ..., close }`. The correct shutdown sequence:
-
-```js
-const core = await createCore({ plugins: [myPlugin] });
-const server = http.createServer(core.handler);
-server.listen(3001);
-
-// On shutdown:
-await new Promise(resolve => server.close(resolve));  // 1. stop accepting requests
-await core.close();                                    // 2. teardown plugins
-```
-
-`close()` is idempotent — calling it multiple times is safe.
-
-## Plugin Context
-
-Every plugin's `setup()` receives a context object with query functions, mutation functions, plugin storage, and `addRoute()`. The same query and mutation functions are also available in hook contexts. Storage is setup-scoped (not injected into hook context objects), so plugins should keep a local reference if hooks or teardown need it.
-
-### Query Functions (read-only)
-
-All query functions return copies or frozen snapshots — never live references. They read directly from in-memory cache without refreshing TTLs or triggering computation.
-
-| Function | Returns | Description |
-| --- | --- | --- |
-| `getProjectIds()` | `string[]` | All project IDs in cache |
-| `getClassCounts(projectId)` | `{ class: count }` or `null` | Frozen class frequency map |
-| `getPageIds(projectId)` | `string[]` or `null` | All page IDs for a project |
-| `getPageClasses(projectId, pageId)` | sorted `string[]` or `null` | Class set for a page |
-| `getPageMeta(projectId, pageId)` | `{ hash, updatedAt, expiresAt }` or `null` | Page cache metadata |
-| `getCss(projectId, pageId, bundle?)` | `string` or `null` | Cached CSS for a page (pure peek) |
-| `getProjectCss(projectId, bundle?)` | `string` or `null` | Cached project aggregate CSS (pure peek) |
-| `getCacheStats()` | `{ totalPages, maxPages, projectCount }` | Current cache utilization |
-| `getConfig()` | frozen config object | Current configuration |
-| `validateClasses(classes)` | `string[]` | Filter input to valid Tailwind utilities (async) |
-
-### Mutation Functions
-
-| Function | Effect |
+| Member | Meaning |
 | --- | --- |
-| `evictPage(projectId, pageId)` | Remove a page from cache (updates class counts, LRU, project aggregates) |
-| `evictProject(projectId)` | Remove an entire project and all its pages |
-| `purgePage(projectId, pageId)` | Evict a page from memory and delete persisted page artifacts (`full`/`utilities`/`theme`) via `cacheStore` |
-| `purgeProject(projectId)` | Evict a project from memory and delete persisted project artifacts plus page artifacts via `cacheStore` |
-| `compile({ projectId, pageId?, html?, classes?, bundle? })` | Compile and cache a page programmatically |
-| `hydratePageArtifact({ projectId, pageId, bundle, css, classes?, ... })` | Inject a pre-built artifact into cache without compilation |
-| `hydrateProjectArtifact({ projectId, bundle, css, hash?, ... })` | Inject a pre-built project aggregate into cache |
+| `name` | Letters, digits, `_` and `-`, at most 64 characters. Defaults to `plugin-1`, `plugin-2`, ... Two names that lowercase to the same string collide, and an invalid or colliding name throws from `createCore()`. |
+| `setup(ctx)` | Runs once during `createCore()`, in plugin order. May be async. |
+| `teardown()` | Runs from `core.close()`. May be async. |
+| `defer`, `deferHooks` | Run observer hooks as fire-and-forget (see below). |
+| `timeoutMs` | Per-hook time limit; defaults to the `pluginTimeoutMs` option of `createCore()`. |
+| `setupTimeoutMs` | Time limit for `setup()`; defaults to the `setupTimeoutMs` option of `createCore()`. |
 
-**`evictPage()` / `evictProject()` are memory-only.** They intentionally do not mutate remote persistence.
+Timeouts stop core from waiting; they do not cancel the hook, which keeps running. A timeout of `0` disables the limit. Defaults: [Configuration](api-reference.html#configuration).
 
-**`purgePage()` / `purgeProject()` remove from memory and then try to remove from `cacheStore`.** For full shared cleanup, implement `deletePageArtifact` and `deleteProjectArtifact`. For project purges on cold replicas (no local page list), also implement `deleteProjectPageArtifacts`.
+### Setup and teardown
 
-**`compile()`** is the same function as `core.compile()`: it validates inputs, runs the full compilation pipeline (including transform hooks from other plugins), and caches the result. It takes the same input as `POST /api/compile` (`pageId` defaults to `"default"`) and resolves to the same body as its 200 response (`success`, `projectId`, `pageId`, `bundle`, `hash`, `classes`, `rejected`, `cached`, `css`). On failure it throws a `RichWindError` (exported by the package) whose `status`, `code` and `message` match the HTTP error envelope for the same input:
+`setup(ctx)` receives the plugin context (query and mutation functions, `compile`, `storage`) plus `addRoute`. If it throws or times out, the plugin is marked failed: `console.error` logs it, `onError` is not fired, its hooks never run and its routes are not mounted. Other plugins and the server are unaffected.
 
-```js
-import { RichWindError } from "rich-wind";
-
-try {
-  const { css } = await ctx.compile({ projectId: "main", pageId: "promo", classes: "p-4" });
-} catch (err) {
-  if (err instanceof RichWindError) console.warn(err.status, err.code, err.message);
-}
-```
-
-When called from inside a hook, it skips hook execution to avoid recursive loops. A call from a hook that its parent compile awaits runs inside the parent's concurrency slot. A call from a deferred hook or a plugin route takes its own slot and can throw `RichWindError` with status `503` and code `SERVER_BUSY` when every slot is in use. Hook events it fires carry `source: "plugin"` and `request: null`.
-
-When `nodeRole` is `reader`, mutation helpers are blocked:
-- `compile()` throws a `RichWindError` with status `409` and code `READ_ONLY_REPLICA`
-- `purge*` and `hydrate*` return `false`
-- `evict*` are no-ops
-
-**`hydratePageArtifact()`** is useful for fast restart from persistence — a plugin reads artifacts from Redis/DB in `setup()` and populates the cache without recompilation. Returns `true` if hydrated, `false` if rejected. New pages require `classes`; existing pages can update CSS only.
-
-**`hydrateProjectArtifact()`** injects project-level aggregate CSS. The project must already exist (hydrate pages first). Returns `true` if hydrated, `false` if rejected.
-
-### Plugin Storage
-
-`setup()` also receives `storage`, a plugin-scoped key/value API backed by `cacheStore` when available.
-
-| Function | Returns | Effect |
-| --- | --- | --- |
-| `storage.get(key)` | `value` or `null` | Read a plugin-owned key |
-| `storage.set(key, value)` | `true` or `false` | Write a plugin-owned key |
-| `storage.delete(key)` | `true` or `false` | Delete a plugin-owned key |
-| `storage.list(prefix?)` | `string[]` | List plugin-owned keys (optionally filtered by prefix) |
-
-- Keys must match `[a-zA-Z0-9._:-]{1,128}`
-- `list(prefix)` prefixes must match `[a-zA-Z0-9._:-]{0,128}`
-- Namespacing is automatic per plugin route name (lowercased plugin name)
-- Storage methods are always available (even without `cacheStore`) and fail open: `get` returns `null`, `set/delete` return `false`, `list` returns `[]`
-- Adapters are responsible for value serialization; JSON-serializable values are recommended for portability
-- On `nodeRole: "reader"`, `storage.set/delete` are blocked. They return `false` and trigger `onError` with `stage: "replica-role"` and code `READ_ONLY_REPLICA`.
+`teardown()` runs from `close()` after pending `cacheStore` writes drain, in reverse plugin order, bounded by the plugin's `timeoutMs` (not `setupTimeoutMs`). It runs even for plugins whose setup failed, and its errors are swallowed so every plugin gets to clean up. `close()` is idempotent; close your HTTP server first, then call `core.close()` ([Functions](api-reference.html#functions)).
 
 ```js
-function createAnalyticsPlugin() {
+function counterPlugin() {
   let storage;
-  let metrics = { compileCount: 0 };
-
+  let count = 0;
   return {
-    name: "analytics",
+    name: "counter",
     async setup(ctx) {
       storage = ctx.storage;
-      const saved = await storage.get("metrics_v1");
-      if (saved && typeof saved === "object") metrics = saved;
+      count = (await storage.get("count_v1"))?.count ?? 0;
     },
     onCompileResult() {
-      metrics.compileCount += 1;
-      storage.set("metrics_v1", metrics); // fail-open fire-and-forget is fine
+      count += 1;
     },
     async teardown() {
-      await storage.set("metrics_v1", metrics);
+      await storage.set("count_v1", { count });
     }
   };
 }
 ```
 
-### Route Registration
+### The plugin context
 
-`addRoute(method, path, handler)` registers a route under `/plugins/<plugin-name>/`. Only available during `setup()`. Route `"/"` is served at `/plugins/<plugin-name>`.
+The context holds read helpers (`getCss`, `getPageClasses`, `getCacheStats`, `getConfig`, `validateClasses`, ...), mutation helpers (`evictPage`, `purgePage`, `compile`, `hydratePageArtifact`, ...) and, in `setup` only, `storage` and `addRoute`. Hooks receive the same helpers but not `storage` or `addRoute`, so keep a reference from `setup`. Signatures: `PluginContext` in `services/index.d.ts`.
+
+Three facts the types do not show:
+
+- Reads never refresh a TTL and never build CSS.
+- `evict*` is memory-only. `purge*` also deletes from the `cacheStore` (implement the delete methods listed under [cacheStore](runtime-spec.html#cachestore)).
+- On a `reader` node, mutation helpers do nothing useful: [Replica Roles](runtime-spec.html#replica-roles).
+
+`compile()` is `core.compile()`: same input as `POST /api/compile` (`pageId` defaults to `"default"`), same result body, and it throws a `RichWindError` whose `status` and `code` match the HTTP error for the same input. Called outside a parent compile it can throw `503 SERVER_BUSY` when every compile slot is in use; on a reader it throws `409 READ_ONLY_REPLICA`.
+
+A `compile()` called from a non-deferred hook skips all hooks. From `setup`, plugin routes and deferred hooks it runs hooks with `source: "plugin"` and `request: null`, bounded by `maxPluginCompileChainDepth`. Past the bound it throws `500 INTERNAL` and `onError` receives `code: "PLUGIN_COMPILE_CHAIN_LIMIT"`.
+
+## Hooks
+
+Hooks run in plugin order. A hook that throws or times out never fails the request: the error goes to `onError` (`error`, `hook`, `plugin`, `timedOut`) and processing continues. `onError` itself is never deferred and its own errors are dropped.
+
+Order for `POST /api/compile`:
+
+```
+onRequestStart
+  onCompileStart
+  transformClasses
+  cache miss: transformCss, onCacheMiss
+  cache hit:  onCacheHit            (transformCss does not run)
+  onCompileResult
+onResponseSent
+```
+
+The `base` bundle runs no transform hooks. `GET /api/css` runs `onCacheHit` or `onCacheMiss` (and `resolvePageCss` on a miss) between the request hooks. `POST /api/suggest` runs `transformSuggestions`, then `onSuggest`.
+
+### Observers
+
+Return values are ignored. Fields on each context: the matching `On*Context` type in `services/index.d.ts`.
+
+| Hook | Fires | Notes |
+| --- | --- | --- |
+| `onRequestStart` / `onResponseSent` | Around a built-in route handler | Carry `action` and `request`; `onResponseSent` adds `status`, `durationMs`. Not fired for plugin routes. |
+| `onCompileStart` / `onCompileResult` | Around a compile | `onCompileResult` carries `css`, `hash`, `cached`. |
+| `onCacheHit` / `onCacheMiss` | Cache lookup during a compile or `GET /api/css` | During a compile `source` is the caller; on `GET /api/css` it is `"page"` or `"page-store"`, the cache layer that answered. |
+| `onProjectCss` | Project CSS compiled or served | |
+| `onSuggest` | Suggestions returned | |
+| `onError` | Anything fails | Fields vary by `stage` (table below). |
+
+`source` is `"http"`, `"core"` (a direct core call) or `"plugin"` (`ctx.compile`) where the hook has a caller, and `request` is `{ ip, method, path }` for HTTP and `null` otherwise. Do not assume either is present on every hook.
+
+### Pipelines
+
+`transformClasses`, `transformCss` and `transformSuggestions` run in sequence. Each receives the previous output as `value` and returns a replacement. Only `undefined` means "no change": `null` is passed on as the value. A throw or timeout skips that plugin.
+
+| Hook | `value` | Core then |
+| --- | --- | --- |
+| `transformClasses` | sorted `string[]` | De-duplicates, re-validates and re-sorts. An empty result is a 400 for the `full` bundle only (`utilities` and `theme` accept it); over `maxClassCount` is 413. Invalid output is silently ignored. |
+| `transformCss` | CSS string | Output over `maxCssChars` is rejected, the previous CSS is kept, and `onError` fires with `stage: "transform"`. |
+| `transformSuggestions` | `string[]` | Filtered to strings, de-duplicated, capped to the request limit. |
+
+### Resolvers
+
+`resolvePageCss` and `resolveProjectCss` run on a `GET` cache miss. The first plugin returning `{ css }` wins; return `null` to pass. The CSS is served as is and not cached in memory, so call `hydratePageArtifact()` yourself if you want it cached. CSS over `maxCssChars` is skipped and reported with `stage: "resolve"`.
+
+### Guard
+
+`guard` runs on every HTTP request before route lookup, so it covers plugin routes, `/health` and unknown paths. It does not run for `OPTIONS` preflight (when `corsOrigin` is set), for paths outside `basePath`, or for requests rejected with 415, and it never sees direct core calls or `ctx.compile()`. It receives the context plus `{ ip, method, path }` (no body). Return `null`/`undefined` to allow, or `{ blocked: true, status, error, retryAfter }` to stop. `status` defaults to `429`; `401`, `403` and `429` map to `UNAUTHORIZED`, `FORBIDDEN` and `RATE_LIMITED`, anything else to `REQUEST_BLOCKED`. The first blocking plugin wins. A guard that throws or times out fails open: the error goes to `onError` and the request proceeds.
+
+### Deferred hooks
+
+`defer: true` runs all observer hooks fire-and-forget via a microtask; `deferHooks: ["onCompileResult"]` defers only those. Use it for I/O (databases, webhooks). `guard`, `onError`, the transform hooks and the resolvers are never deferred because they affect the response.
+
+### onError stages
+
+| `stage` | Raised by |
+| --- | --- |
+| `compile` | A compile failure: unexpected errors, validation outcomes (no valid classes, too many classes) and the plugin chain limit |
+| `cache` | `GET /api/css` failed unexpectedly |
+| `project-css` | `GET /api/projects/:projectId/css` failed unexpectedly |
+| `suggest` | `POST /api/suggest` failed unexpectedly |
+| `invalidate` | `POST /api/invalidate` failed unexpectedly |
+| `transform` | `transformCss` output exceeded `maxCssChars` |
+| `resolve` | A resolver returned CSS over `maxCssChars` |
+| `body` | Any request-body read error: invalid JSON, length mismatch, 413 |
+| `http` | The HTTP layer failed unexpectedly |
+| `plugin-route` | A plugin route handler threw something other than a `RichWindError` |
+| `replica-role` | A write was blocked on a reader node (`READ_ONLY_REPLICA`) |
+| `cache-store` | A `cacheStore` call failed or timed out. Has `op`, `timedOut` and `context`, and no `source`. |
+
+A hook that throws or times out produces an `onError` with `hook`, `plugin` and `timedOut`, and no `stage`, `source` or `request`.
+
+## Plugin Routes
+
+`addRoute(method, path, handler)` is available during `setup()` only; calling it later throws.
 
 ```js
 setup({ addRoute, getCacheStats }) {
-  addRoute("get", "/stats", () => ({ body: getCacheStats() }));
-  // Accessible at: GET /plugins/my-plugin/stats
-
+  addRoute("get", "/stats", () => ({ body: getCacheStats() }));      // GET /plugins/my-plugin/stats
   addRoute("post", "/echo", async (req) => ({ status: 201, body: await req.json() }));
 }
 ```
 
-- `method` must be `get`, `post`, `put`, `delete`, or `patch`
-- `path` must start with `/` and may use `:param` segments
-- Calling `addRoute` after `setup()` returns throws an error
-- The same handler runs under `core.handler` and `core.fetch`
+- Routes live under `/plugins/<lowercased-name>/`; `"/"` is served at `/plugins/<lowercased-name>`. Routing is case-sensitive, which is why names that lowercase to the same segment collide.
+- `method` is `get`, `post`, `put`, `delete` or `patch`. `path` starts with `/` and may use `:param` segments.
+- The same handler runs under `core.handler` and `core.fetch`.
+- The handler gets a neutral request (`method`, `path`, `params`, `query`, `headers.get()`, `ip`, `json()`, `text()`), not Express `req`/`res`. `json()` and `text()` are capped at `maxBodyBytes` and throw a `RichWindError` (400 or 413). See `PluginRouteRequest`.
+- It returns `{ status, headers, body }`. `status` defaults to `200`; an object or array body is JSON; a string body is `text/plain` unless `Content-Type` is set; returning nothing answers `204`; an `{ error }` body at status 400 or above gets the default code for that status.
+- A thrown `RichWindError` keeps its status and code. Any other throw answers `500 INTERNAL` and reaches `onError` with `stage: "plugin-route"`.
+- Guards apply to plugin routes.
 
-The handler receives a neutral request object, not Express `req`/`res`:
+## Plugin Storage
 
-| Field | Description |
-| --- | --- |
-| `method` | HTTP method |
-| `path` | Request path |
-| `params` | Values for `:param` segments |
-| `query` | A `URLSearchParams` |
-| `headers.get(name)` | Header lookup, or `null` |
-| `ip` | Client address (see `trustProxy`) |
-| `json()` | Async. Parses the body as JSON. |
-| `text()` | Async. Reads the body as UTF-8 text. |
+`setup()` receives `storage`: `get(key)`, `set(key, value)`, `delete(key)`, `list(prefix?)`, backed by the `cacheStore` plugin-data methods ([cacheStore](runtime-spec.html#cachestore)).
 
-`json()` and `text()` are capped at `maxBodyBytes` and throw a `RichWindError` with status 400 or 413.
+- Keys match `[a-zA-Z0-9._:-]{1,128}`; `list` prefixes match the same set and may be empty. An invalid key or prefix throws.
+- Data is namespaced by the lowercased plugin name.
+- Without a `cacheStore`, or when it fails or times out, calls fail open: `get` returns `null`, `set` and `delete` return `false`, `list` returns `[]`.
+- On a `reader` node `set` and `delete` return `false` and fire `onError` with `stage: "replica-role"`.
+- Values are passed to the adapter as is; use JSON objects (the filesystem store reads back only objects).
 
-The handler returns `{ status, headers, body }`:
+## Auto-Promote
 
-- `status` defaults to `200`
-- an object or array `body` is sent as JSON
-- a string `body` is sent as `text/plain` unless you set `Content-Type` in `headers`
-- returning nothing answers `204`
-- an error body `{ error }` at status 400 or above without a `code` gets the default code for that status
+`createAutoPromotePlugin` is exported as `rich-wind/plugins/auto-promote`. It is a reference plugin and may change before 1.0. It moves classes used on many pages into one shared bundle.
 
-A thrown `RichWindError` keeps its status and code. Any other thrown error answers `500 INTERNAL` and reaches `onError` with `stage: "plugin-route"`.
-
-## Request Lifecycle
-
-Here's the order hooks fire during a typical compile request:
-
-```
-Request arrives
-  → onRequestStart
-
-  POST /api/compile:
-    → onCompileStart
-    → transformClasses (pipeline — each plugin can modify the class list)
-    → (compilation happens)
-    → transformCss (pipeline — each plugin can modify the CSS output)
-    → onCacheHit or onCacheMiss
-    → onCompileResult
-
-  Response sent
-    → onResponseSent
-```
-
-For `GET /api/css`, the flow is: request hooks → cache lookup → `onCacheHit`/`onCacheMiss` → `resolvePageCss` (on miss) → response. For `GET /api/projects/:id/css`, similar but with `resolveProjectCss`. For `/api/suggest`: request hooks → collect suggestions → `transformSuggestions` → `onSuggest` → response.
-
-## Hook Reference
-
-### Observer Hooks
-
-These fire at specific moments. Return values are ignored.
-
-| Hook | When it fires | Key context fields |
-| --- | --- | --- |
-| `onRequestStart` | A built-in route handler begins | `action`, `request` |
-| `onResponseSent` | A built-in route handler finishes | `action`, `request`, `status`, `durationMs` |
-| `onCompileStart` | Before compilation begins | `projectId`, `pageId`, `bundle`, `html`, `classes`, `source`, `request` |
-| `onCompileResult` | After compilation finishes | `projectId`, `pageId`, `bundle`, `css`, `classes`, `hash`, `cached`, `source`, `request` |
-| `onCacheHit` | Cached CSS found | `projectId`, `pageId`, `bundle`, `source`, `request` |
-| `onCacheMiss` | Cached CSS not found | `projectId`, `pageId`, `bundle`, `source`, `request` |
-| `onProjectCss` | Project CSS compiled or served | `projectId`, `bundle`, `css`, `hash`, `cached`, `source`, `request` |
-| `onSuggest` | Suggestions returned | `projectId`, `prefix`, `suggestions`, `source`, `request` |
-| `onError` | When something fails | `error`, `hook`, `plugin`, `timedOut`, `stage`, `source` |
-
-### Enrichment Hooks (Pipeline)
-
-### HTTP Guard
-
-`guard` runs before a request reaches any built-in route handler. It receives the
-plugin context plus `{ ip, method, path }` and applies only to HTTP requests, never
-direct calls to the core functions (`core.compile()` and the others) or `ctx.compile()`:
-a direct caller is the host, which has already decided who may call. Return `null`/`undefined` to allow the request, or
-`{ blocked: true, status, error, retryAfter }` to stop it. Status `401`, `403`, and
-`429` map to `UNAUTHORIZED`, `FORBIDDEN`, and `RATE_LIMITED`; other blocking statuses
-map to `REQUEST_BLOCKED`.
-
-These run sequentially — each plugin receives the previous plugin's output as `value` and can return a modified version. Return `undefined` to skip (pass through unchanged). Errors/timeouts skip that plugin.
-
-| Hook | When | Input `value` | Expected return |
-| --- | --- | --- | --- |
-| `transformClasses` | After class resolution, before CSS generation | `string[]` (sorted classes) | `string[]` or `undefined` |
-| `transformCss` | After CSS generation, before caching | `string` (CSS) | `string` or `undefined` |
-| `transformSuggestions` | After suggestions collected, before response | `string[]` (suggestions) | `string[]` or `undefined` |
-
-**Post-validation:** `transformClasses` output is de-duplicated, re-validated against Tailwind, and re-sorted. If the result is empty → 400 error. If it exceeds `maxClassCount` → 413 error. `transformCss` output exceeding `maxCssChars` is rejected (previous value used). `transformSuggestions` output is filtered to strings, de-duped, and capped to the request limit.
+- Each page votes for its classes. A class is promoted once `threshold` pages (default `5`) use it; votes follow the live cache, so evicted or invalidated pages stop counting.
+- The promoted bundle is served from the plugin's own route, from plugin memory.
+- `transformClasses` strips a class from a page only when it is both promoted and already served in the bundle. For bundles other than `utilities`, if stripping would remove every class it returns `undefined` and the page keeps its list.
+- When the set of classes the bundle must serve changes, a deferred `onCompileResult` recompiles the bundle through `ctx.compile()`.
+- State is saved in `ctx.storage` under `state_v2` and restored at `setup()` when the core cache holds no pages.
+- It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult"]`.
 
 ```js
-const themeEnforcer = {
-  name: "theme-enforcer",
-  transformClasses({ value }) {
-    // Remove any bg-* classes not in the approved palette
-    return value.filter(c => !c.startsWith("bg-") || approvedColors.has(c));
-  }
-};
-```
-
-### Resolve Hooks (First-Wins)
-
-These run when the cache misses. The first plugin to return a non-null result short-circuits — the CSS is served directly. Return `null` to pass to the next plugin.
-
-| Hook | When | Expected return |
-| --- | --- | --- |
-| `resolvePageCss` | `GET /api/css` cache miss | `{ css }` or `null` |
-| `resolveProjectCss` | `GET /api/projects/:id/css` cache miss | `{ css }` or `null` |
-
-Resolved CSS is served directly and not cached in memory. If the plugin wants caching, it can call `hydratePageArtifact()` separately.
-
-```js
-const redisResolver = {
-  name: "redis-cache",
-  async resolvePageCss({ projectId, pageId, bundle }) {
-    const css = await redis.get(`css:${projectId}:${pageId}:${bundle}`);
-    return css ? { css } : null;
-  }
-};
-```
-
-### Source and Request Fields
-
-All hooks include `source` and `request` fields so plugins know where the action originated:
-
-- **`source`**: `"http"` for HTTP requests, `"core"` for direct calls to the core functions (`core.compile()` and the others), `"plugin"` for `compile()` calls from plugin code, `"cache-store"` for cacheStore errors
-- **`request`**: `{ ip, method, path }` for HTTP requests, `null` for plugin-initiated actions
-
-## Plugin Options
-
-| Option | Type | Default | What it does |
-| --- | --- | --- | --- |
-| `name` | string | `"plugin-1"`, `"plugin-2"`, etc. | Identifies the plugin in errors and route paths |
-| `defer` | boolean | `false` | All observer hooks run async via microtask (fire-and-forget) |
-| `deferHooks` | string[] | — | Defer only specific hooks (e.g. `["onCompileResult"]`) |
-| `timeoutMs` | number | inherited from `pluginTimeoutMs` | Max time a hook can run before `onError` fires |
-| `setupTimeoutMs` | number | inherited from global `setupTimeoutMs` | Max time `setup()` can run |
-
-### Plugin Name Rules
-
-Names must match `[a-zA-Z0-9_-]+` and be at most 64 characters. Names are checked for case-insensitive collisions (`Foo` and `foo` collide because routes are case-insensitive). Invalid or colliding names throw during `createCore()`.
-
-### Deferred Hooks
-
-Setting `defer: true` makes observer hooks fire-and-forget via `queueMicrotask`. This is the right choice for I/O-heavy plugins (database logging, webhooks). You can defer individual hooks with `deferHooks`.
-
-`onError` is never deferred. Transform and resolve hooks (`transformClasses`, `transformCss`, `transformSuggestions`, `resolvePageCss`, `resolveProjectCss`) are also never deferred — they affect the response.
-
-## Error Handling
-
-Plugins are sandboxed. A hook that throws or times out will never crash the server or fail the HTTP request:
-
-1. The error is caught
-2. `onError` fires with the details (`error`, `hook`, `plugin`, `timedOut`)
-3. Processing continues normally
-
-`onError` itself is immune — if it throws, the error is silently dropped.
-
-The `stage` field in `onError` tells you where the error originated:
-
-| `stage` | Source |
-| --- | --- |
-| `"compile"` | Error during compilation |
-| `"cache"` | Error during `GET /api/css` |
-| `"project-css"` | Error during project CSS route |
-| `"suggest"` | Error during suggestions |
-| `"transform"` | A transform hook returned invalid output |
-| `"resolve"` | A resolve hook returned invalid output |
-| `"cache-store"` | A cacheStore operation failed or timed out |
-| `"body"` | Request body too large |
-
-## Reentrancy Guard
-
-When a plugin calls `compile()` from inside a hook (e.g., `onCompileResult` triggers a related page recompile), the inner compile skips all hooks to prevent infinite recursion. The inner compile still caches the result and writes to cacheStore — only hook execution is skipped.
-
-Plugin compile chains are bounded by `maxPluginCompileChainDepth` (default `2`). If exceeded, `compile()` throws a `RichWindError` with status `500` and code `INTERNAL` (message `"Plugin compile chain depth exceeded."`), since it signals a plugin recursion bug; `onError` receives `code: "PLUGIN_COMPILE_CHAIN_LIMIT"` with the `projectId`, `pageId` and `bundle` in its `context`.
-
-## createCore Options
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `plugins` | `[]` | Array of plugin objects |
-| `pluginTimeoutMs` | `200` | Default hook timeout |
-| `setupTimeoutMs` | computed | Setup timeout (min 1000ms) |
-| `maxPluginCompileChainDepth` | `2` | Max depth for plugin-initiated compile chains |
-
-## Example: Persistence Bridge
-
-```js
-const persistenceBridge = {
-  name: "persistence",
-  deferHooks: ["onCompileResult", "onProjectCss"],
-
-  async setup({ hydratePageArtifact }) {
-    // Restore cached artifacts from database on startup
-    const artifacts = await db.getAllPageArtifacts();
-    for (const a of artifacts) {
-      hydratePageArtifact(a);
-    }
-  },
-
-  async onCompileResult({ projectId, pageId, bundle, css, classes, hash }) {
-    await db.upsertPageArtifact({ projectId, pageId, bundle, css, classes, hash });
-  },
-
-  async onProjectCss({ projectId, bundle, css, hash }) {
-    await db.upsertProjectArtifact({ projectId, bundle, css, hash });
-  }
-};
-```
-
-## Example: Theme Enforcer
-
-```js
-const themeEnforcer = {
-  name: "theme-enforcer",
-  transformClasses({ value }) {
-    const allowed = new Set(["bg-brand", "bg-white", "bg-black", "bg-gray-100"]);
-    return value.filter(c => !c.startsWith("bg-") || allowed.has(c));
-  }
-};
-```
-
-## Example: Metrics
-
-```js
-const metrics = {
-  name: "metrics",
-  defer: true,
-
-  onCompileResult({ projectId, classes, cached, bundle }) {
-    classCountHistogram.record(classes.length, { projectId, bundle, cached });
-  },
-
-  onResponseSent({ status, durationMs, action }) {
-    requestLatency.record(durationMs, { status, action });
-  },
-
-  onError({ error, hook, plugin, timedOut }) {
-    console.error(`[${plugin}] ${hook} failed (timeout: ${timedOut}):`, error.message);
-  }
-};
-```
-
-## Example: Auto-Promote (Reference Plugin)
-
-The repository includes an auto-promote reference plugin used by tests and example wiring. It tracks which CSS classes appear across pages. When a class is used on enough pages (default: 5), it's "promoted" to a shared stylesheet — reducing per-page CSS duplication. This reference plugin exercises nearly every plugin capability: `setup` seeding, `transformClasses` pipeline, deferred `onCompileResult`, custom routes, and `ctx.compile()`.
-
-For the first pre-release, built-in plugin exports are not part of the public package contract. Treat this as reference code to copy or adapt until plugin exports are stabilized.
-
-```js
-import http from "node:http";
 import { createCore } from "rich-wind";
 import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote";
 
 const core = await createCore({
-  plugins: [createAutoPromotePlugin({ threshold: 5 })],
-  maxPluginCompileChainDepth: 3
+  plugins: [createAutoPromotePlugin({ threshold: 5 })]
 });
-
-http.createServer(core.handler).listen(3001);
-// GET /plugins/auto-promote/css/:projectId  → promoted CSS bundle
-// GET /plugins/auto-promote/stats            → usage statistics
+// GET /plugins/auto-promote/css/:projectId  promoted bundle
+// GET /plugins/auto-promote/stats           tracked and promoted classes
 ```
 
-**How it works:**
-
-1. **`setup()`** seeds tracking state from any pages already in cache, and registers two custom routes (promoted CSS bundle, usage stats).
-2. **`transformClasses`** runs on every compile. It records which classes appear on which pages (before stripping), then removes promoted classes from the output so per-page CSS only contains unique utilities. If all classes would be stripped, it returns `[]` and the core keeps the original list, avoiding a 400 error.
-3. **`onCompileResult`** (deferred) recalculates the promoted set after each compile. When the set changes, it calls `ctx.compile()` to pre-generate CSS for a synthetic `__auto_promote__` page, caching the result for the custom route.
-
-The plugin uses `deferHooks: ["onCompileResult"]` so the promoted-CSS regeneration happens asynchronously and doesn't slow down the HTTP response. The synthetic `__auto_promote__` page ID is excluded from stripping logic, so the promoted CSS compile always receives the full class list.
-
-See `plugins/auto-promote/index.js` for the full implementation and `plugins/auto-promote/auto-promote.test.js` for test coverage.
+Source: [plugins/auto-promote/index.js](https://github.com/FarooqAlaulddin/rich-wind/blob/main/plugins/auto-promote/index.js).
