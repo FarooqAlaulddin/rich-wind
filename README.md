@@ -1,6 +1,6 @@
 # Rich Wind
 
-Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step. It is for markup that did not exist when your app was built. The main use is AI-driven UI, where a model writes the HTML after deploy ([AI Runtime Styling](docs/ai-runtime-styling.md)). CMS pages, editors and previews use it the same way.
+Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step. It is for markup that did not exist when your app was built. The main use is AI-driven UI, where a model writes the HTML after deploy ([AI Runtime Styling](https://farooqalaulddin.github.io/rich-wind/ai-runtime-styling.html)). CMS pages, editors and previews use it the same way.
 
 V1 compiles against Tailwind's default design system. Core compiles explicit classes or HTML and serves CSS. Authentication, rate limiting, and HTML-parsing workflows belong to the host app or a wrapper.
 
@@ -29,7 +29,7 @@ const result = await core.compile({
 });
 ```
 
-You can also run the bundled server (`npm start`) as a separate service behind a proxy. See [Including Rich Wind in an App](docs/runtime-spec.md#including-rich-wind-in-an-app) for each pattern.
+You can also run the bundled server (`npm start`) as a separate service behind a proxy. See [Including Rich Wind in an App](https://farooqalaulddin.github.io/rich-wind/runtime-spec.html#including-rich-wind-in-an-app) for each pattern.
 
 ## API
 
@@ -46,7 +46,7 @@ The same operations are available as `core.compile`, `core.getCss`, `core.getPro
 
 ## Configuration
 
-All options can be set via `createCore({ config: { ... } })` or environment variables. See the [API Reference](docs/api-reference.md#configuration) for the full table.
+All options can be set via `createCore({ config: { ... } })` or environment variables. See the [API Reference](https://farooqalaulddin.github.io/rich-wind/api-reference.html#configuration) for the full table.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -60,15 +60,15 @@ All options can be set via `createCore({ config: { ... } })` or environment vari
 
 ## Docs
 
-- **[Overview](docs/index.md)**
-- **[Agent Quickstart](docs/agent-quickstart.md)** - the compile, `rejected`, recompile loop for models
-- **[AI Runtime Styling](docs/ai-runtime-styling.md)** - why runtime styling for AI-generated UI
-- **[API Reference](docs/api-reference.md)** - endpoints, functions, errors, config
-- **[Runtime Spec](docs/runtime-spec.md)** - caching, `cacheStore`, replica roles, embedding, threat model
-- **[Plugin System](docs/plugin-system.md)** - hooks, setup context, custom routes
-- **[Integration Cookbook](docs/integration-cookbook.md)** - multi-tenant wrappers, editors, CMS pipelines
-- **[Compatibility Policy (1.x)](docs/api-reference.md#compatibility-policy-1x)** - what stays stable within 1.x
-- **[FAQ](docs/faq.md)**
+- **[Overview](https://farooqalaulddin.github.io/rich-wind/)**
+- **[Agent Quickstart](https://farooqalaulddin.github.io/rich-wind/agent-quickstart.html)** - the compile, `rejected`, recompile loop for models
+- **[AI Runtime Styling](https://farooqalaulddin.github.io/rich-wind/ai-runtime-styling.html)** - why runtime styling for AI-generated UI
+- **[API Reference](https://farooqalaulddin.github.io/rich-wind/api-reference.html)** - endpoints, functions, errors, config
+- **[Runtime Spec](https://farooqalaulddin.github.io/rich-wind/runtime-spec.html)** - caching, `cacheStore`, replica roles, embedding, threat model
+- **[Plugin System](https://farooqalaulddin.github.io/rich-wind/plugin-system.html)** - hooks, setup context, custom routes
+- **[Integration Cookbook](https://farooqalaulddin.github.io/rich-wind/integration-cookbook.html)** - multi-tenant wrappers, editors, CMS pipelines
+- **[Compatibility Policy (1.x)](https://farooqalaulddin.github.io/rich-wind/api-reference.html#compatibility-policy-1x)** - what stays stable within 1.x
+- **[FAQ](https://farooqalaulddin.github.io/rich-wind/faq.html)**
 
 ## Development
 
