@@ -48,8 +48,8 @@ export default function VariantBar({ scope, typed, onToggle, onBase, moreOpen, o
           </div>
         )}
       </div>
-      <span className="shelf-applies" aria-live="polite">{appliesAs(scope)}</span>
-      <span className="shelf-fine">md/lg/dark follow the browser window</span>
+      {/* When md/lg/dark cannot preview in this window, the status line says so. */}
+      <span className="shelf-applies" aria-live="polite" title="md, lg and dark follow the browser window">{appliesAs(scope)}</span>
     </div>
   );
 }

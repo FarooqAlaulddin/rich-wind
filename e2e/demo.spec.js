@@ -467,37 +467,66 @@ test.describe('style panel', () => {
     expect(await classesOf(chip)).toEqual(before);
   });
 
-  // BUG (real demo bug, left unfixed): isUserElement() in src/inspect/inspectDom.js
-  // rejects every span that has data-lexical-text, but TailwindSpanNode renders its
-  // classes on exactly such an outer span, so inline styled spans can never be
-  // targeted: clicking one selects the parent block instead.
-  test.fail('clicking an inline span targets it and shows its classes', async ({ page }) => {
+  test('clicking an inline span targets it and shows its classes', async ({ page }) => {
     await openDemo(page);
-    await span(page, 'AI-written UI').click();
+    const inline = span(page, 'AI-written UI');
+    await inline.click();
     const rows = page.getByRole('region', { name: 'Selected element' });
     await expect(rows.locator('.shelf-tag')).toHaveText('<span>');
-    await expect(rows.locator('.crow')).toHaveCount(2);
+    await expect(rows.locator('.crow')).toHaveCount((await classesOf(inline)).length);
     await expect(rows.locator('.crow', { hasText: 'font-semibold' })).toContainText('font-weight');
   });
 
-  // BUG (real demo bug, left unfixed): hovering a strip button shows the "pending"
-  // preview rows, which push the strip down by about 26px at 1440x900. The pointer
-  // is then no longer over the button, the preview clears, the strip moves back,
-  // and so on: the button oscillates under a stationary pointer and mouse clicks miss.
-  test.fail('Browse strip buttons hold still under the pointer', async ({ page }) => {
+  // Hover text sits on one fixed line, so previews never reflow the panel and
+  // move a control out from under a still pointer (which made it flicker).
+  test('no Browse control moves when the pointer rests on it, in any tab', async ({ page }) => {
+    await openDemo(page);
+    await block(page, 'Runtime Tailwind CSS compiler').click();
+    await page.getByRole('button', { name: 'Browse' }).click();
+    const moved = [];
+    for (const tab of await page.getByRole('tab').allTextContents()) {
+      await page.getByRole('tab', { name: tab, exact: true }).click();
+      const controls = page.locator('.browse-body [data-nav]');
+      const n = await controls.count();
+      for (let i = 0; i < n; i++) {
+        const control = controls.nth(i);
+        const box = await control.boundingBox();
+        if (!box || box.y < 0 || box.y + box.height > page.viewportSize().height) continue;
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForTimeout(60);
+        const y = await control.evaluate((e) => e.getBoundingClientRect().y);
+        if (Math.round(y - box.y) !== 0) moved.push(`${tab}: ${(await control.textContent()).trim()} moved ${Math.round(y - box.y)}px`);
+      }
+      await page.mouse.move(5, 5);
+    }
+    expect(moved).toEqual([]);
+  });
+
+  test('hovering a value shows from -> to on the status line', async ({ page }) => {
     await openDemo(page);
     await block(page, 'Runtime Tailwind CSS compiler').click();
     await page.getByRole('button', { name: 'Browse' }).click();
     await page.getByRole('tab', { name: 'Space' }).click();
-    const btn = page.getByRole('group', { name: 'Padding' }).getByRole('button', { name: 'p-8', exact: true });
-    const box = await btn.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    const ys = new Set();
-    for (let i = 0; i < 10; i++) {
-      await page.waitForTimeout(100);
-      ys.add(await btn.evaluate((e) => Math.round(e.getBoundingClientRect().y)));
-    }
-    expect([...ys]).toHaveLength(1);
+    const status = page.locator('.make-it .shelf-status');
+    await expect(status).toContainText('Hover a value');
+    await page.getByRole('group', { name: 'Padding' }).getByRole('button', { name: 'p-8', exact: true }).hover();
+    await expect(status).toHaveText(/-> p-8$/);
+    await page.mouse.move(5, 5);
+    await expect(status).toContainText('Hover a value');
+  });
+
+  test('the selected element shows readable text, variant prefixes, and the CSS of dark-theme classes', async ({ page }) => {
+    await openDemo(page);
+    const nav = block(page, 'Rich Wind');
+    const box = await nav.boundingBox();
+    // Its bottom padding: the middle of the row would land on an inline span.
+    await nav.click({ position: { x: 4, y: box.height - 3 } });
+    const rows = page.getByRole('region', { name: 'Selected element' });
+    await expect(rows.locator('.shelf-snippet')).toHaveText(/^Rich Wind Overview How it works Use it/);
+    const dark = rows.locator('.crow', { hasText: '[.theme-dark_&]:border-slate-700' });
+    await expect(dark).toContainText('inside .theme-dark');
+    await expect(dark).toContainText('border-color');
+    await expect(rows.locator('.crow-msg')).toHaveCount(0);
   });
 });
 

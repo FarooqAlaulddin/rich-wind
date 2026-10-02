@@ -101,7 +101,8 @@ export function chipWord(cls) {
 /** "p-6 roomy": the class and its plain word, for a chip. */
 export function chipLabel(cls) {
   const word = chipWord(cls);
-  return word ? `${splitTokenSimple(cls).base} ${word}` : splitTokenSimple(cls).base;
+  // The variant stays: "md:rounded-xl" and "rounded-xl" are different classes.
+  return word ? `${cls} ${word}` : cls;
 }
 
 // ---------- Which intent a class belongs to ----------
