@@ -192,7 +192,7 @@ details, 1.8 as two PRs, and the order around 1.8.
   2026-10-01: repo public; Pages from main /docs (built); description, homepage and
   topics set from package.json; rich-wind-archive stays private
   2026-10-01: made private again the same day pending review (Pages off, ruleset not
-  enforced). 2026-10-02: public again; ruleset enforced; Pages to be re-enabled
+  enforced). 2026-10-02: public again; ruleset enforced; Pages re-enabled from main /docs
 
 ## Phase 6 — Release and go-live
 
