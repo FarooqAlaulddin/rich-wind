@@ -125,7 +125,10 @@ details, 1.8 as two PRs, and the order around 1.8.
   with npm 10 installs it cleanly; npm audit and npm audit --omit=dev both report 0
   (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#32)
 - [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#33)
-- [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge — IN PROGRESS
+- [x] 3.7 Release pipeline readiness: version input, npm credential, back-merge — DONE 2026-10-03 (#34)
+  2026-10-03: trusted publisher created by the owner with `npm trust github` for
+  @thinkly/rich-wind (repo FarooqAlaulddin/rich-wind, workflow release-npm.yml); confirmed
+  with `npm trust list`. The first workflow publish is 1.0.0 (6.4).
   2026-10-03: release-npm.yml no longer pushes to main: the version is bumped by a pull
   request, the `version` input must equal package.json, the tag and GitHub release are
   created on the tested commit, and the back-merge step is gone (nothing to merge back).
