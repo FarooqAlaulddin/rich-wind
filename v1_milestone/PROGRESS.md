@@ -130,6 +130,10 @@ details, 1.8 as two PRs, and the order around 1.8.
   request, the `version` input must equal package.json, the tag and GitHub release are
   created on the tested commit, and the back-merge step is gone (nothing to merge back).
   Node 22 in the job (engines >=22). Steps in CONTRIBUTING.md "Releasing".
+  2026-10-03: owner does not want a 90-day npm token; publishing switched to npm trusted
+  publishing (OIDC, npm >=11.5.1 in the job, no NPM_TOKEN). Open: the first publish is
+  manual (`npm login`, then `npm publish --tag next`), then the trusted publisher is set
+  on npmjs.com
   2026-10-01: release-npm.yml takes an explicit semver `version` input (prerelease never
   to `latest`, dist_tag default `next`), inputs passed via env, final step merges main
   back into dev without --force; npm name still unclaimed. Open: NPM_TOKEN (owner: "no
