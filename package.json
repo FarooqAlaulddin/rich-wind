@@ -23,7 +23,8 @@
   "files": [
     "services/",
     "plugins/auto-promote/",
-    "plugins/cache-store-fs/"
+    "plugins/cache-store-fs/",
+    "!**/*.test.js"
   ],
   "workspaces": [
     "lexical-demo"
@@ -59,7 +60,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/FarooqAlaulddin/rich-wind.git"
+    "url": "git+https://github.com/FarooqAlaulddin/rich-wind.git"
   },
   "dependencies": {
     "@tailwindcss/node": "^4.3.3",
