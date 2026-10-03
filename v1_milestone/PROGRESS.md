@@ -126,6 +126,10 @@ details, 1.8 as two PRs, and the order around 1.8.
   (evidence/npm-audit-2026-10-01.txt); full tests, pack smoke and demo build pass (#32)
 - [x] 3.6 Supported Node versions: engines >=22, CI matrix 22/24, lockfile-free job — DONE 2026-09-30 (#33)
 - [ ] 3.7 Release pipeline readiness: version input, npm credential, back-merge — IN PROGRESS
+  2026-10-03: release-npm.yml no longer pushes to main: the version is bumped by a pull
+  request, the `version` input must equal package.json, the tag and GitHub release are
+  created on the tested commit, and the back-merge step is gone (nothing to merge back).
+  Node 22 in the job (engines >=22). Steps in CONTRIBUTING.md "Releasing".
   2026-10-01: release-npm.yml takes an explicit semver `version` input (prerelease never
   to `latest`, dist_tag default `next`), inputs passed via env, final step merges main
   back into dev without --force; npm name still unclaimed. Open: NPM_TOKEN (owner: "no
@@ -175,7 +179,9 @@ details, 1.8 as two PRs, and the order around 1.8.
   this file refer to rich-wind-archive
 - [x] 5.3 Execute parked-demos decision — DONE 2026-09-26: tag `archive/parked-demos`
   pushed; `parked-demos` branch deleted (remote and local)
-- [ ] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot (#25)
+- [x] 5.4 SECURITY.md, CONTRIBUTING.md, templates, branch protection, Dependabot — DONE 2026-10-03 (#25)
+  - 2026-10-03: with the release job no longer pushing to main, the "main protection"
+    ruleset also requires a pull request and the five CI checks
   - 2026-10-01: SECURITY.md, CONTRIBUTING.md, issue forms, PR template and
     dependabot.yml (npm + github-actions, weekly, target dev) added; branch protection
     follows 5.5

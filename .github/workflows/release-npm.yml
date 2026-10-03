@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact version to release (semver, e.g. 1.0.0-rc.1 or 1.0.0)
+        description: Version to release; must equal package.json on main (e.g. 1.0.0-rc.1)
         required: true
         type: string
       dist_tag:
@@ -29,7 +29,7 @@ concurrency:
 
 jobs:
   release:
-    name: Test, tag, and publish
+    name: Test, publish, and tag
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.ref == 'refs/heads/main'
@@ -46,7 +46,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7.0.0
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -62,12 +62,7 @@ jobs:
       - name: Build lexical demo production bundle
         run: npm run build:lexical-demo
 
-      - name: Configure git author
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump package version and create tag
+      - name: Check version
         id: version
         shell: bash
         env:
@@ -76,9 +71,22 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The version is set in package.json by a normal pull request; this
+          # input only confirms it, so the job never pushes to main.
+          current="$(node -p "require('./package.json').version")"
+          if [ "$VERSION" != "$current" ]; then
+            echo "package.json on main is $current, not $VERSION. Bump it in a pull request first."
+            exit 1
+          fi
+
           semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
           if ! [[ "$VERSION" =~ $semver ]]; then
             echo "Not a valid semver version: $VERSION"
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists."
             exit 1
           fi
 
@@ -91,13 +99,8 @@ jobs:
             fi
           fi
 
-          npm version "$VERSION" -m "release: %s"
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-
-      - name: Push release commit and tag
-        run: git push origin HEAD:main --follow-tags
 
       - name: Publish to npm
         # Reads the NPM_TOKEN repository secret (owner creates it; not in the repo).
@@ -115,18 +118,9 @@ jobs:
           version="${{ steps.version.outputs.version }}"
           prerelease="${{ steps.version.outputs.prerelease }}"
 
-          args=(release create "v$version" --title "v$version" --generate-notes)
+          args=(release create "v$version" --target "$GITHUB_SHA" --title "v$version" --generate-notes)
           if [ "$prerelease" = "true" ]; then
             args+=(--prerelease)
           fi
 
           gh "${args[@]}"
-
-      - name: Merge main back into dev
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch origin main dev
-          git checkout -b dev origin/dev
-          git merge --no-ff origin/main -m "Merge main into dev after release v${{ steps.version.outputs.version }}"
-          git push origin dev
