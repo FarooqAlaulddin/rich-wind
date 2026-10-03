@@ -45,7 +45,8 @@ export function previewDeclsOf(tokens, classes) {
 export function useClassPreview(target, editor) {
   const { spec, getEl, classes } = target;
 
-  const clear = useCallback(() => revertPreview(), []);
+  // clear({ instant: true }) skips the ease back, for a preview that is about to be committed.
+  const clear = useCallback((opts) => revertPreview(opts), []);
 
   const preview = useCallback((token) => {
     const el = getEl();

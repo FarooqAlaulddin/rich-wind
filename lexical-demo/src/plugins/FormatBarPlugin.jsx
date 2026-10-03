@@ -4,6 +4,8 @@ import { $getSelection, $isRangeSelection } from 'lexical';
 import { $setBlocksType, $copyBlockFormatIndent } from '@lexical/selection';
 import { $createStyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { $createStyledHeadingNode, $isStyledHeadingNode } from '../nodes/StyledHeadingNode';
+import { PRESETS } from '../blocks';
+import { insertBlock } from '../editorActions';
 
 // Changing the block type replaces the node; carry its Tailwind classes over
 // so a styled heading keeps its look when it becomes a paragraph, and back.
@@ -57,6 +59,14 @@ export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSw
     });
   }, [editor]);
 
+  const handleInsert = useCallback((e) => {
+    const preset = PRESETS.find((p) => p.id === e.target.value);
+    e.target.value = '';
+    if (!preset) return;
+    insertBlock(editor, preset.node());
+    editor.focus();
+  }, [editor]);
+
   const canDelete = pageOrder && pageOrder.length > 1;
 
   return (
@@ -99,6 +109,17 @@ export default function FormatBarPlugin({ pages, pageOrder, activePage, onPageSw
         <select className="block-select" value={blockType} onChange={handleBlockFormat} aria-label="Block format">
           {BLOCK_FORMATS.map(f => (
             <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+        <svg className="block-select-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 6l4 4 4-4" />
+        </svg>
+      </span>
+      <span className="block-select-wrap">
+        <select className="block-select" value="" onChange={handleInsert} aria-label="Insert" title="Add a container, columns or cards after the block at the caret">
+          <option value="" disabled>Insert</option>
+          {PRESETS.map(p => (
+            <option key={p.id} value={p.id} title={p.hint}>{p.label}</option>
           ))}
         </select>
         <svg className="block-select-chevron" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

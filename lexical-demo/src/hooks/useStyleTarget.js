@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { $getSelection, $isRangeSelection } from 'lexical';
+import { $getSelection, $isRangeSelection, $getNodeByKey } from 'lexical';
 import { $isStyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { $isStyledHeadingNode } from '../nodes/StyledHeadingNode';
 import { $isTailwindSpanNode } from '../nodes/TailwindSpanNode';
@@ -69,7 +69,16 @@ export function useStyleTarget(editor) {
     if (!editor) return undefined;
     return editor.registerUpdateListener(({ editorState }) => {
       const next = editorState.read(readEditor);
-      if (!next) return;
+      if (!next) {
+        // No selection (a new document was loaded): drop a target whose node is gone.
+        setSel((prev) => {
+          const gone = (key) => key && !editorState.read(() => $getNodeByKey(key));
+          if (!gone(prev.block?.key) && !gone(prev.inline?.spanKey)) return prev;
+          lastInlineSig.current = '';
+          return { ...EMPTY, selSeq: prev.selSeq };
+        });
+        return;
+      }
       setSel((prev) => {
         let selSeq = prev.selSeq;
         if (next.inline) {
@@ -109,7 +118,7 @@ export function useStyleTarget(editor) {
         kind: 'element',
         source: 'selected',
         tag: info.tag,
-        label: info.kind === 'block' ? 'Selected block' : 'Selected span',
+        label: info.box ? 'Selected container' : info.kind === 'block' ? 'Selected block' : 'Selected span',
         text: info.text,
         classes: classesOf(pinnedEl),
         spec: { kind: 'element', el: pinnedEl },

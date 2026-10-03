@@ -11,6 +11,7 @@
 
 import { inspectStore } from './inspect/inspectStore';
 import { VARIANTS, DARK_VARIANT } from './classCatalog';
+import { captureStyle, animateFrom } from './animateStyle';
 
 const HOLD_MAX_MS = 3000;
 const STYLE_TAG_ID = 'rw-editor-css';
@@ -60,23 +61,31 @@ export function showHighlightPreview(range, decls) {
   return true;
 }
 
-export function revertPreview() {
+export function revertPreview(opts) {
   clearHighlight();
   if (!preview) return;
-  restore(preview.el, preview.style);
+  const { el, style } = preview;
+  const before = opts && opts.instant === true ? null : captureStyle(el);
+  restore(el, style);
   preview = null;
+  animateFrom(before, el);
   inspectStore.layout();
 }
 
 export function showPreview(el, decls) {
+  const before = captureStyle(el);
   if (preview && preview.el === el) {
     restore(el, preview.style);
+    preview = null;
   } else {
     revertPreview();
   }
-  if (!el || !el.isConnected || !decls || decls.length === 0) return;
-  preview = { el, style: snapshot(el) };
-  write(el, decls);
+  if (!el || !el.isConnected) return;
+  if (decls && decls.length > 0) {
+    preview = { el, style: snapshot(el) };
+    write(el, decls);
+  }
+  animateFrom(before, el);
   inspectStore.layout();
 }
 
@@ -87,7 +96,10 @@ function releaseHold() {
   // A hover preview may be drawn over the held style: when it ends it must
   // restore the un-held original, not the held declarations.
   if (preview && preview.el === held.el) preview.style = held.style;
+  // The compiled rule should match the held declarations; if it does not, ease into it.
+  const before = captureStyle(held.el);
   restore(held.el, held.style);
+  animateFrom(before, held.el);
   held = null;
   inspectStore.layout();
 }

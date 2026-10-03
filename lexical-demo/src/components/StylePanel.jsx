@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useStyleTarget } from '../hooks/useStyleTarget';
 import { useClassPreview, previewDeclsOf } from '../hooks/useClassPreview';
 import { useRoving } from '../hooks/useRoving';
-import { editTargetClasses, loadEditorState } from '../editorActions';
+import { editTargetClasses, loadEditorState, parentBox, selectParent, wrapTarget, duplicateTarget, deleteTarget } from '../editorActions';
 import { addClass, removeClass, removeGroup } from '../classEdit';
 import { splitToken, normalizePrefix } from '../classCatalog';
 import { hold } from '../stylePreview';
+import { captureStyle } from '../animateStyle';
 import { search, readVariants } from '../classSearch';
 import { resolveReference } from '../search/reference';
 import { loadFullCatalog, onCatalogChange } from '../search/catalogStore';
@@ -98,6 +99,18 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
   const rejectedSet = useMemo(() => new Set(rejected), [rejected]);
   const promotedSet = useMemo(() => new Set(promoted), [promoted]);
   const hasTarget = target.kind !== 'none';
+
+  // Structure edits for the selected block or container. The set never
+  // changes, so the header does not move; what does not apply is disabled.
+  const targetEl = target.getEl();
+  const isBlock = target.kind === 'block' || (target.kind === 'element' && target.tag !== 'span');
+  const inBox = !!parentBox(targetEl);
+  const blockActions = [
+    { id: 'parent', label: 'Container', title: inBox ? 'Select the container around this' : 'Not inside a container', disabled: !inBox, onClick: () => selectParent(editor, targetEl) },
+    { id: 'wrap', label: 'Wrap', title: 'Put this inside a new container', disabled: !isBlock, onClick: () => wrapTarget(editor, target.spec) },
+    { id: 'duplicate', label: 'Duplicate', title: 'Add a copy after this', disabled: !isBlock, onClick: () => duplicateTarget(editor, target.spec) },
+    { id: 'delete', label: 'Delete', title: 'Remove this', disabled: !isBlock, onClick: () => deleteTarget(editor, target.spec) },
+  ];
 
   const rootRef = useRef(null);
   const fieldRef = useRef(null);
@@ -232,7 +245,9 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
     const inPanel = !!rootRef.current && rootRef.current.contains(document.activeElement);
     const id = target.id;
     let moved = null;
-    clear();
+    // Taken before the hover preview is cleared, so the change eases from what was on screen.
+    const from = captureStyle(target.getEl());
+    clear({ instant: true });
     previewing.current = false;
     setPending([]);
     editTargetClasses(
@@ -260,6 +275,7 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
           if (again) again.focus({ preventScroll: true });
         }
       },
+      { from },
     );
     setQuery('');
     setNote(null);
@@ -462,6 +478,7 @@ export default function StylePanel({ editor, used, css, rejected = [], promoted 
       {hasTarget ? (
         <ElementRows
           target={target}
+          actions={blockActions}
           css={css}
           rejected={rejectedSet}
           promoted={promotedSet}

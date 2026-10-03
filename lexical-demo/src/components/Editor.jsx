@@ -10,6 +10,7 @@ import { HeadingNode } from '@lexical/rich-text';
 import { StyledParagraphNode } from '../nodes/StyledParagraphNode';
 import { StyledHeadingNode } from '../nodes/StyledHeadingNode';
 import { TailwindSpanNode } from '../nodes/TailwindSpanNode';
+import { StyledBoxNode } from '../nodes/StyledBoxNode';
 import FormatBarPlugin from '../plugins/FormatBarPlugin';
 import TailwindClassPlugin from '../plugins/TailwindClassPlugin';
 import SelectionPreservePlugin from '../plugins/SelectionPreservePlugin';
@@ -71,6 +72,7 @@ export default function Editor({
       StyledParagraphNode,
       StyledHeadingNode,
       TailwindSpanNode,
+      StyledBoxNode,
       {
         replace: ParagraphNode,
         with: () => new StyledParagraphNode(),

@@ -24,6 +24,9 @@ export default defineConfig({
     baseURL: `http://localhost:${DEMO_PORT}`,
     trace: 'on-first-retry',
     colorScheme: 'light',
+    // Class changes ease in over a few hundred ms; tests read computed styles, so
+    // they run without motion. The 'editor animation' tests turn it back on.
+    reducedMotion: 'reduce',
     viewport: { width: 1440, height: 900 },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } }],

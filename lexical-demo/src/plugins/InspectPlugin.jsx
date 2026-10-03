@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { inspectStore } from '../inspect/inspectStore';
-import { chainOf, pathOf, resolvePath, describe, targetFor } from '../inspect/inspectDom';
+import { blockFor, pathOf, resolvePath, targetFor } from '../inspect/inspectDom';
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Escape']);
 const EDIT_SHORTCUTS = new Set(['v', 'x', 'z', 'y']);
@@ -202,7 +202,7 @@ function InspectOverlay({ root }) {
     place(hoverRef.current, hoverEl, live && !!hoverEl);
     place(selectedRef.current, selectedEl, live && !!selectedEl);
     // The caret block is the target when nothing was picked; skip it when it is the picked one.
-    const caretBlock = s.caret ? chainOf(root, s.caret.el)[0] : null;
+    const caretBlock = s.caret ? blockFor(root, s.caret.el) : null;
     place(caretRef.current, caretBlock !== selectedEl ? caretBlock : null, live && !!caretBlock);
   }, [root]);
 

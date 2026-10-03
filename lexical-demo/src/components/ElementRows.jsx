@@ -63,7 +63,7 @@ function ClassRow({ cls, index, status, flash, loading, onOpen, onRemove }) {
  * Hovering a card adds preview rows from the class catalog. After an apply,
  * the new rows flash once the compiled rule for them is in the CSS.
  */
-export default function ElementRows({ target, css, rejected, promoted, loading, pending, awaiting, onFlashed, onOpen, onRemove }) {
+export default function ElementRows({ target, actions = [], css, rejected, promoted, loading, pending, awaiting, onFlashed, onOpen, onRemove }) {
   const roving = useRoving();
   const index = useMemo(() => buildCssIndex(css), [css]);
   const [flashing, setFlashing] = useState(() => new Set());
@@ -93,6 +93,15 @@ export default function ElementRows({ target, css, rejected, promoted, loading, 
         <span className="shelf-snippet">{head}</span>
         <span className="block-meta">{target.classes.length} class{target.classes.length === 1 ? '' : 'es'}{bad > 0 ? `, ${bad} skipped` : ''}</span>
       </div>
+      {actions.length > 0 && (
+        <div className="block-actions" role="toolbar" aria-label="Element actions">
+          {actions.map((a) => (
+            <button key={a.id} type="button" className="btn btn-sm" disabled={a.disabled} title={a.title} onClick={a.onClick}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      )}
       {target.classes.length === 0 ? (
         <p className="shelf-now-empty">No classes yet. Pick something above.</p>
       ) : (
