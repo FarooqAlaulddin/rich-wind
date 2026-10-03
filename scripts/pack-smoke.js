@@ -29,6 +29,12 @@ try {
   }
 
   tarballPath = path.join(repoRoot, tarballName);
+
+  const shipped = packResult[0].files.map((f) => f.path);
+  const tests = shipped.filter((f) => f.endsWith('.test.js'));
+  if (tests.length) {
+    throw new Error(`Test files must not ship in the package: ${tests.join(', ')}`);
+  }
   tempDir = mkdtempSync(path.join(os.tmpdir(), 'rich-wind-pack-smoke-'));
 
   run('npm', ['init', '-y'], tempDir);
