@@ -208,7 +208,10 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 - [ ] 6.0 Restore deploy target: host-key check, tunnel, deploy/ templates,
   rollback, VM config (#36)
-- [ ] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next (#27)
+- [x] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next — DONE 2026-10-03 (#27)
+  2026-10-03: first publish done by the owner from main 9328544 (manual, since trusted
+  publishing needs the package to exist); npm also points `latest` at 1.0.0-rc.1 as the
+  first version. Tag and prerelease v1.0.0-rc.1. Install from npm verified
 - [ ] 6.2 Deploy rc to VM (owner picks the moment) (#28)
 - [ ] 6.3 Soak + test:load (#29)
 - [ ] 6.4 Promote 1.0.0 to latest; CHANGELOG; GitHub Release (#30)
