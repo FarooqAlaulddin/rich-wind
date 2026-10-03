@@ -214,7 +214,7 @@ details, 1.8 as two PRs, and the order around 1.8.
   first version. Tag and prerelease v1.0.0-rc.1. Install from npm verified.
   2026-10-03: owner: the package belongs under the npm org `thinkly`. Renamed to
   `@thinkly/rich-wind` (imports, docs, tests, pack smoke) at 1.0.0-rc.2; the unscoped
-  `rich-wind@1.0.0-rc.1` is to be unpublished
+  `rich-wind@1.0.0-rc.1` was unpublished the same day. `@thinkly/rich-wind@1.0.0-rc.2` published from main 9029d0b (npm also set latest, as the first version); release v1.0.0-rc.2; install verified
 - [ ] 6.2 Deploy rc to VM (owner picks the moment) (#28)
 - [ ] 6.3 Soak + test:load (#29)
 - [ ] 6.4 Promote 1.0.0 to latest; CHANGELOG; GitHub Release (#30)
