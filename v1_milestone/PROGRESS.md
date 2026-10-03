@@ -208,6 +208,10 @@ details, 1.8 as two PRs, and the order around 1.8.
 
 - [ ] 6.0 Restore deploy target: host-key check, tunnel, deploy/ templates,
   rollback, VM config (#36)
+  2026-10-03: repo side done: `deploy/` (release.sh with rollback, systemd unit, nginx
+  template with real-IP rate-limit zones, env example kept in sync by
+  tests/deploy-templates.test.js). Open, owner/VM only: host-key check, tunnel, public
+  /health, VM startup script, install the templates, `nginx -t`.
 - [x] 6.1 dev -> main; release-npm.yml -> 1.0.0-rc.1 on dist-tag next — DONE 2026-10-03 (#27)
   2026-10-03: first publish done by the owner from main 9328544 (manual, since trusted
   publishing needs the package to exist); npm also points `latest` at 1.0.0-rc.1 as the
@@ -217,4 +221,11 @@ details, 1.8 as two PRs, and the order around 1.8.
   `rich-wind@1.0.0-rc.1` was unpublished the same day. `@thinkly/rich-wind@1.0.0-rc.2` published from main 9029d0b (npm also set latest, as the first version); release v1.0.0-rc.2; install verified
 - [ ] 6.2 Deploy rc to VM (owner picks the moment) (#28)
 - [ ] 6.3 Soak + test:load (#29)
+  2026-10-03: `test:load` now reports PASS/FAIL (2xx only, 503 only on compile, heap
+  under 512 MB). Local 10 min soak found readers 404ing project CSS once the stored copy
+  expired (writer never refreshed it); fixed in core with a test. Rerun: 1.6M requests,
+  0 x 404, peak heap 301.7 MB, PASS. Open: the soak behind demo traffic on the VM over a
+  RuntimeMaxSec cycle (needs 6.0/6.2).
 - [ ] 6.4 Promote 1.0.0 to latest; CHANGELOG; GitHub Release (#30)
+  2026-10-03: CHANGELOG entries for rc.1, rc.2 and Unreleased. Open: 6.3, then the
+  1.0.0 bump and the release workflow (needs the npm trusted publisher, #34).

@@ -1,0 +1,29 @@
+# Install as /etc/systemd/system/rich-wind.service, then:
+#   systemctl daemon-reload && systemctl enable --now rich-wind
+[Unit]
+Description=Rich Wind runtime Tailwind compiler
+After=network.target
+
+[Service]
+User=rich-wind
+Group=rich-wind
+WorkingDirectory=/opt/rich-wind/current
+EnvironmentFile=/etc/rich-wind/rich-wind.env
+# Runs what `npm start` runs (http.createServer(core.handler)) without npm,
+# which would need a writable home directory for its logs.
+ExecStart=/usr/bin/env node ./services/index.js
+Restart=always
+RestartSec=2
+
+# Scheduled restart bounds memory growth. The pre-release soak test must span
+# at least one full cycle of this value.
+RuntimeMaxSec=86400
+MemoryMax=768M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
