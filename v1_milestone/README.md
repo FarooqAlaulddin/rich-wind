@@ -521,12 +521,6 @@ auth-agnostic core a tenant-isolation boundary.
    `npm audit --omit=dev` clean (3.5); then merge `main` back into `dev`.
 2. Deploy the rc to the VM with the `deploy/` release script from 6.0 (owner picks
    the moment).
-3. Soak behind demo traffic; `npm run test:load`. Pass criteria: the soak spans at
-   least one full `RuntimeMaxSec` restart cycle; no 5xx other than intentional 503
-   `SERVER_BUSY`; heap stays under the 512 MB cap; normal typing in one demo editor
-   never draws a 429; `test:load` passes.
-4. Promote `1.0.0` to `latest`; CHANGELOG; GitHub Release presenting the library and
-   the AI-driven UI vision.
 
 ## Out of V1
 
