@@ -32,7 +32,7 @@ describe("Docs examples", () => {
   });
 
   it("docs import snippet works with package self-reference", async () => {
-    const mod = await import("rich-wind");
+    const mod = await import("@thinkly/rich-wind");
     expect(typeof mod.createCore).toBe("function");
   });
 
@@ -346,7 +346,7 @@ describe("Docs examples", () => {
   });
 
   it("plugin-system ctx.compile result and RichWindError example works", async () => {
-    const { RichWindError, createCore: createPackageCore } = await import("rich-wind");
+    const { RichWindError, createCore: createPackageCore } = await import("@thinkly/rich-wind");
     let ctx;
     const warnings = [];
     const plugin = { name: "docs-compile", setup(c) { ctx = c; } };

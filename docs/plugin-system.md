@@ -4,7 +4,7 @@ A plugin is an object with an optional `setup()`, optional `teardown()` and any 
 
 ```js
 import http from "node:http";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore({
   plugins: [{
@@ -186,8 +186,8 @@ setup({ addRoute, getCacheStats }) {
 - It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult"]`.
 
 ```js
-import { createCore } from "rich-wind";
-import { createAutoPromotePlugin } from "rich-wind/plugins/auto-promote";
+import { createCore } from "@thinkly/rich-wind";
+import { createAutoPromotePlugin } from "@thinkly/rich-wind/plugins/auto-promote";
 
 const core = await createCore({
   plugins: [createAutoPromotePlugin({ threshold: 5 })]

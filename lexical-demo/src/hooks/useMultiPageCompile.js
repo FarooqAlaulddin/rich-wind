@@ -144,7 +144,7 @@ const DEFAULT_CONTENT = {
     heading('h2', `mt-4 text-4xl ${SHARED.title}`, [textNode('Mount it, or call it directly')]),
     para(`mt-4 ${SHARED.body}`, [textNode('Rich Wind is a Node library (Node 22 or later). Mount its handler on your server, or call core.compile from your own code.')]),
     para('mt-6 grid gap-0.5 overflow-x-auto rounded-2xl bg-slate-950 p-5 font-mono text-sm leading-6 text-slate-100 shadow-2xl shadow-slate-900/30 ring-1 ring-white/10', [
-      code('import { createCore } from "rich-wind";', 'text-sky-300'),
+      code('import { createCore } from "@thinkly/rich-wind";', 'text-sky-300'),
       code('const core = await createCore();'),
       code(''),
       code('const { css, rejected } = await core.compile({'),

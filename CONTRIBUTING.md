@@ -17,7 +17,7 @@ npm run build:lexical-demo
 ## Releasing
 
 Releases publish with npm trusted publishing, so no npm token is stored. One-time setup,
-after the first manual publish: on npmjs.com, package `rich-wind`, Settings, Trusted
+after the first manual publish: on npmjs.com, package `@thinkly/rich-wind`, Settings, Trusted
 Publisher, GitHub Actions, repository `FarooqAlaulddin/rich-wind`, workflow
 `release-npm.yml`.
 

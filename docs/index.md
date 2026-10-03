@@ -9,11 +9,11 @@ V1 compiles against Tailwind's default design system. Core compiles explicit cla
 ## Quick start
 
 ```bash
-npm install rich-wind
+npm install @thinkly/rich-wind
 ```
 
 ```js
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const { css, classes, rejected, hash } = await core.compile({
