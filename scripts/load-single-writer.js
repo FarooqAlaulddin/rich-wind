@@ -226,20 +226,25 @@ async function seedData({
       const current = jobs[idx];
       idx += 1;
       const classes = randomClasses(classPool, 3, 6);
-      await timedRequest(
-        'seed.compile',
-        `${writerUrl}/api/compile`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            projectId: current.projectId,
-            pageId: current.pageId,
-            classes
-          })
-        },
-        metrics
-      );
+      // A compile shed with 503 SERVER_BUSY is retried, so every page exists before the load phase.
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        const result = await timedRequest(
+          'seed.compile',
+          `${writerUrl}/api/compile`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              projectId: current.projectId,
+              pageId: current.pageId,
+              classes
+            })
+          },
+          metrics
+        );
+        if (result.status !== 503) break;
+        await sleep(20);
+      }
     }
   }
 
@@ -382,6 +387,26 @@ async function probePropagation({
   return { ok: false, propagationMs: null };
 }
 
+// The production heap cap (--max-old-space-size=512).
+const HEAP_LIMIT_MB = 512;
+
+// 503 SERVER_BUSY on a compile is the concurrency cap shedding load on purpose.
+// Any other non-2xx status, or a request that never got a response, fails the run.
+function findFailures(summary, propagation) {
+  const failures = [];
+  for (const row of summary) {
+    if (row.name === 'overall') continue;
+    const sheddable = row.name.endsWith('compile') && !row.name.startsWith('probe.');
+    for (const [status, count] of row.statuses) {
+      if (status.startsWith('2')) continue;
+      if (status === '503' && sheddable) continue;
+      failures.push(`${row.name}: ${count} x ${status}`);
+    }
+  }
+  if (!propagation?.ok) failures.push('writer->reader update not visible within 5000ms');
+  return failures;
+}
+
 function printReport({
   startedAt,
   finishedAt,
@@ -405,7 +430,8 @@ function printReport({
     console.log(
       `${row.name.padEnd(18)} requests=${String(row.requests).padStart(6)} ok=${String(row.ok).padStart(6)} ` +
       `errors=${String(row.errors).padStart(6)} errorRate=${pct(row.errorRate).padStart(8)} ` +
-      `rps=${rps.toFixed(1).padStart(8)} p95=${row.p95Ms.toFixed(1).padStart(7)}ms p99=${row.p99Ms.toFixed(1).padStart(7)}ms`
+      `rps=${rps.toFixed(1).padStart(8)} p95=${row.p95Ms.toFixed(1).padStart(7)}ms p99=${row.p99Ms.toFixed(1).padStart(7)}ms ` +
+      `statuses=${row.statuses.map(([status, count]) => `${status}:${count}`).join(',')}`
     );
   }
 
@@ -480,6 +506,11 @@ async function main() {
     });
 
     console.log('Running mixed load scenario...');
+    // In local mode the cores run in this process, so its heap is theirs.
+    let peakHeap = process.memoryUsage().heapUsed;
+    const heapTimer = setInterval(() => {
+      peakHeap = Math.max(peakHeap, process.memoryUsage().heapUsed);
+    }, 1000);
     const startedAt = Date.now();
     await runScenario({
       durationMs,
@@ -493,6 +524,7 @@ async function main() {
       metrics
     });
     const finishedAt = Date.now();
+    clearInterval(heapTimer);
 
     const propagation = await probePropagation({
       writerUrl,
@@ -518,6 +550,20 @@ async function main() {
       },
       propagation
     });
+
+    const failures = findFailures(summary, propagation);
+    if (mode === 'local') {
+      const peakMb = peakHeap / 1024 / 1024;
+      console.log(`\npeak heap: ${peakMb.toFixed(1)} MB`);
+      if (peakMb > HEAP_LIMIT_MB) failures.push(`peak heap ${peakMb.toFixed(1)} MB over ${HEAP_LIMIT_MB} MB`);
+    }
+    if (failures.length) {
+      console.log('\nFAIL');
+      for (const failure of failures) console.log(`  ${failure}`);
+      process.exitCode = 1;
+    } else {
+      console.log('\nPASS (503 on compile is the concurrency cap shedding load)');
+    }
   } finally {
     await Promise.all([
       ...(writer ? [writer.close()] : []),

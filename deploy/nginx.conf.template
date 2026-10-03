@@ -1,0 +1,32 @@
+# Place in the http context (for example /etc/nginx/conf.d/rich-wind.conf).
+# Replace example.com. The app listens on 127.0.0.1:3001 (PORT in the env file).
+
+# The server sits behind a Cloudflare tunnel, which connects to nginx from the
+# local machine. Without realip, every request would appear to come from that
+# local address and all clients would share one limit_req bucket. With realip,
+# $binary_remote_addr is the real client taken from CF-Connecting-IP.
+set_real_ip_from 127.0.0.1;
+real_ip_header CF-Connecting-IP;
+
+limit_req_zone $binary_remote_addr zone=rw_compile:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=rw_general:10m rate=30r/s;
+limit_req_status 429;
+
+server {
+    listen 127.0.0.1:80;
+    server_name example.com;
+
+    client_max_body_size 200k;
+
+    location = /api/compile {
+        limit_req zone=rw_compile burst=10 nodelay;
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/rich-wind-proxy.inc;
+    }
+
+    location / {
+        limit_req zone=rw_general burst=60 nodelay;
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/rich-wind-proxy.inc;
+    }
+}

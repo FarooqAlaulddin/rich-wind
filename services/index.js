@@ -286,7 +286,12 @@ function getProject(state, projectId) {
             classCounts: new Map(),
             cssCache: null,
             utilitiesCssCache: null,
-            themeCssCache: null
+            themeCssCache: null,
+            // Bundles of project CSS this writer has put in the cache store, by
+            // bundle -> write time. Compiles keep them fresh (see runCompile).
+            storedBundles: new Map(),
+            storeDirty: false,
+            storeRefreshPending: false
         };
         state.projects.set(projectId, project);
     }
@@ -360,6 +365,7 @@ function updateClassCounts(project, prev = new Set(), next = new Set()) {
 }
 
 function clearProjectAggregateCache(project) {
+    project.storeDirty = true;
     project.cssCache = null;
     project.utilitiesCssCache = null;
     project.themeCssCache = null;
@@ -1805,6 +1811,38 @@ function createCoreFunctions({
         );
     };
 
+    // Readers serve project CSS from the cache store only, so the writer rewrites
+    // every bundle it stored when the project's classes change or when half the
+    // TTL has passed. One refresh per project runs at a time.
+    const refreshStoredProjectCss = (projectId) => {
+        if (!cacheStoreRunner?.enabled || !isWriteAllowed()) return;
+        const project = state.projects.get(projectId);
+        if (!project || project.storedBundles.size === 0 || project.storeRefreshPending) return;
+        const now = Date.now();
+        const stale = Array.from(project.storedBundles.values())
+            .some((writtenAt) => now - writtenAt >= config.projectCacheTtlMs / 2);
+        if (!project.storeDirty && !stale) return;
+        project.storeRefreshPending = true;
+        project.storeDirty = false;
+        queueStoreWrite(async () => {
+            try {
+                for (const bundle of project.storedBundles.keys()) {
+                    const result = await getProjectCss(state, config, projectId, bundle);
+                    if (!result) continue;
+                    const writtenAt = Date.now();
+                    project.storedBundles.set(bundle, writtenAt);
+                    await cacheStoreRunner.upsertProjectArtifact({
+                        projectId, bundle, css: result.css, hash: result.hash ?? null,
+                        cached: result.cached, updatedAt: writtenAt,
+                        expiresAt: writtenAt + config.projectCacheTtlMs
+                    });
+                }
+            } finally {
+                project.storeRefreshPending = false;
+            }
+        });
+    };
+
     const runCompile = async (input, meta) => {
         const body = readInput(input);
         const { projectId, html, classes } = body;
@@ -1861,6 +1899,7 @@ function createCoreFunctions({
         if (result.error) {
             throw new RichWindError(result.status || 400, result.status === 413 ? 'PAYLOAD_TOO_LARGE' : 'INVALID_BODY', result.error);
         }
+        refreshStoredProjectCss(projectId);
 
         return {
             success: true,
@@ -1967,6 +2006,7 @@ function createCoreFunctions({
             isWriteAllowed()
         ) {
             const now = Date.now();
+            state.projects.get(projectId)?.storedBundles.set(bundle, now);
             queueStoreWrite(() =>
                 cacheStoreRunner.upsertProjectArtifact({
                     projectId,

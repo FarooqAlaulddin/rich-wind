@@ -550,4 +550,44 @@ describe('Node role behavior (single writer, many readers)', () => {
       await Promise.all([writer.close(), reader.close()]);
     }
   });
+
+  it('writer keeps stored project CSS current and alive for readers while it compiles', async () => {
+    const store = createSharedStore();
+    const config = { cacheTtlMs: 60_000, projectCacheTtlMs: 600 };
+    const writer = await startCore({ cacheStore: store, config: { ...config, nodeRole: 'writer' } });
+    const reader = await startCore({ cacheStore: store, config: { ...config, nodeRole: 'reader' } });
+    const compile = (pageId, classes) => fetch(`${writer.baseUrl}/api/compile`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId: 'live', pageId, classes })
+    });
+    const readerProjectCss = () => fetch(`${reader.baseUrl}/api/projects/live/css`);
+
+    try {
+      expect((await compile('home', 'bg-red-500')).status).toBe(200);
+      expect((await fetch(`${writer.baseUrl}/api/projects/live/css`)).status).toBe(200);
+      await sleep(20);
+
+      // A new class on another page reaches the reader without a writer project read.
+      expect((await compile('about', 'text-cyan-500')).status).toBe(200);
+      await sleep(20);
+      const updated = await readerProjectCss();
+      expect(updated.status).toBe(200);
+      const css = await updated.text();
+      expect(css).toContain('bg-red-500');
+      expect(css).toContain('text-cyan-500');
+
+      // Compiles with no new classes keep the artifact from expiring.
+      const until = Date.now() + 1500;
+      while (Date.now() < until) {
+        expect((await compile('home', 'bg-red-500')).status).toBe(200);
+        await sleep(100);
+      }
+      const alive = await readerProjectCss();
+      expect(alive.status).toBe(200);
+      expect(await alive.text()).toContain('text-cyan-500');
+    } finally {
+      await Promise.all([writer.close(), reader.close()]);
+    }
+  });
 });
