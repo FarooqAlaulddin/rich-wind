@@ -50,6 +50,10 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
+      # Trusted publishing (OIDC, no npm token) needs npm 11.5.1 or newer.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
+
       - name: Install dependencies
         run: npm ci
 
@@ -103,9 +107,9 @@ jobs:
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Publish to npm
-        # Reads the NPM_TOKEN repository secret (owner creates it; not in the repo).
+        # Trusted publishing: npm accepts this workflow's OIDC identity, so no
+        # token is stored. Set up once on npmjs.com (CONTRIBUTING.md "Releasing").
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ inputs.dist_tag }}
         run: npm publish --provenance --access public --tag "$DIST_TAG"
 
