@@ -12,7 +12,7 @@ The loop for a model that writes styled HTML:
 ## Node
 
 ```js
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const projectId = "agent-demo";

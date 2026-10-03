@@ -75,7 +75,7 @@ jobs:
         run: npm install --package-lock=false --ignore-scripts
 
       - name: Verify package import
-        run: node --input-type=module -e "import('rich-wind')"
+        run: node --input-type=module -e "import('@thinkly/rich-wind')"
 
       - name: Run test suite against the latest allowed versions
         run: npm test

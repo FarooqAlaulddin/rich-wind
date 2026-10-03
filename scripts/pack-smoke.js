@@ -41,9 +41,9 @@ try {
   run('npm', ['install', '--no-package-lock', '--ignore-scripts', tarballPath], tempDir);
 
   const smokeCode = `
-import { createCore } from 'rich-wind';
-import { createAutoPromotePlugin } from 'rich-wind/plugins/auto-promote';
-import { createFsCacheStore } from 'rich-wind/plugins/cache-store-fs';
+import { createCore } from '@thinkly/rich-wind';
+import { createAutoPromotePlugin } from '@thinkly/rich-wind/plugins/auto-promote';
+import { createFsCacheStore } from '@thinkly/rich-wind/plugins/cache-store-fs';
 
 if (typeof createAutoPromotePlugin !== 'function' || typeof createFsCacheStore !== 'function') {
   throw new Error('Plugin subpath exports are unavailable.');

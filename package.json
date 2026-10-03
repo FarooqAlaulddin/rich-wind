@@ -1,6 +1,6 @@
 {
-  "name": "rich-wind",
-  "version": "1.0.0-rc.1",
+  "name": "@thinkly/rich-wind",
+  "version": "1.0.0-rc.2",
   "description": "Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step.",
   "type": "module",
   "main": "./services/index.js",
@@ -72,5 +72,8 @@
     "ajv": "^8.20.0",
     "express": "^5.2.1",
     "vitest": "^5.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

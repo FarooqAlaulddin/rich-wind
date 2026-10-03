@@ -10,7 +10,7 @@ Everything starts here. `createCore()` is async and returns `{ handler, fetch, c
 
 ```js
 import http from "node:http";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore({
   config: {
@@ -68,7 +68,7 @@ Each function takes the same fields as its route and returns the route's 200 bod
 | `core.close()` | none | `Promise<void>`; tears down plugins, idempotent |
 
 ```js
-import { RichWindError } from "rich-wind";
+import { RichWindError } from "@thinkly/rich-wind";
 
 try {
   await core.compile({ projectId: "my-app" });
@@ -82,7 +82,7 @@ try {
 Module-level functions with no cache, plugins or project state: the same input always gives byte-identical CSS, so a host can store source and rebuild CSS on demand.
 
 ```js
-import { scanHtml, exportCss, exportSet } from "rich-wind";
+import { scanHtml, exportCss, exportSet } from "@thinkly/rich-wind";
 ```
 
 | Function | Returns |

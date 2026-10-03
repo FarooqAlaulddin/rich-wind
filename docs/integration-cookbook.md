@@ -11,7 +11,7 @@ How-to recipes for putting Rich Wind into an app. Core has no authentication and
 ```js
 import express from "express";
 import expressRateLimit from "express-rate-limit";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const limiter = expressRateLimit({ windowMs: 60_000, limit: 120 });
@@ -30,7 +30,7 @@ Strip the prefix from `req.url` before calling the handler, keeping any query st
 
 ```js
 import http from "node:http";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 
@@ -53,7 +53,7 @@ To serve core at the root, pass `core.handler` straight to `http.createServer`.
 
 ```js
 // app/rw/[...path]/route.js
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const handle = (req) => core.fetch(req, { basePath: "/rw" });
@@ -71,7 +71,7 @@ export const HEAD = handle;
 ```js
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const app = new Hono();
@@ -94,7 +94,7 @@ Call the core functions directly and map `RichWindError` to a reply. Direct call
 
 ```js
 import Fastify from "fastify";
-import { createCore, RichWindError } from "rich-wind";
+import { createCore, RichWindError } from "@thinkly/rich-wind";
 
 const core = await createCore();
 const app = Fastify();
@@ -122,7 +122,7 @@ Derive `projectId` server-side from the authenticated identity, so callers never
 ```js
 import express from "express";
 import crypto from "node:crypto";
-import { createCore, RichWindError } from "rich-wind";
+import { createCore, RichWindError } from "@thinkly/rich-wind";
 
 const core = await createCore();
 
@@ -179,7 +179,7 @@ Separate prefixes for pages, projects and plugin data keep the key spaces from c
 
 ```js
 import Redis from "ioredis";
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const redis = new Redis();
 const ttlSeconds = (expiresAt) => Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
@@ -237,8 +237,8 @@ The interface and rules are in [cacheStore](runtime-spec.html#cachestore). Imple
 The repo ships one. Options and defaults are documented at the top of `plugins/cache-store-fs/index.js`.
 
 ```js
-import { createCore } from "rich-wind";
-import { createFsCacheStore } from "rich-wind/plugins/cache-store-fs";
+import { createCore } from "@thinkly/rich-wind";
+import { createFsCacheStore } from "@thinkly/rich-wind/plugins/cache-store-fs";
 
 const core = await createCore({
   cacheStore: createFsCacheStore({ dir: "./rw-cache", maxPageArtifacts: 5000, maxAgeDays: 30 })
@@ -250,7 +250,7 @@ const core = await createCore({
 The store is fail-open. To see failures, handle `onError` with `stage: "cache-store"`:
 
 ```js
-import { createCore } from "rich-wind";
+import { createCore } from "@thinkly/rich-wind";
 
 const core = await createCore({
   cacheStore, // from the sections above
