@@ -64,7 +64,7 @@ describe('POST /api/compile', () => {
     expect(body.rejected).toEqual(['definitely-not-a-tailwind-class']);
   });
 
-  it('rejects brace-expansion syntax before it can enter an inline source directive', async () => {
+  it('reports brace-expansion syntax as rejected and never expands it', async () => {
     const response = await fetch(`${baseUrl}/api/compile`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
