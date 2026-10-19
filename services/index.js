@@ -105,10 +105,6 @@ const VALID_ID_RE = /^[a-zA-Z0-9._-]+$/;
 const CSS_HEADER_RE = /^\/\*![\s\S]*?\*\/\n@layer[^;]*;\n/;
 const THEME_BLOCK_RE = /:root, :host\s*\{[\s\S]*?\}\n?/g;
 const LAYER_DECL_RE = /@layer[^;]*;/;
-const ESCAPE_BACKSLASH_RE = /\\/g;
-const ESCAPE_QUOTE_RE = /"/g;
-// Reject characters that could break out of @source inline("...") directives
-const UNSAFE_CLASS_CHAR_RE = /[(){};,\n\r\0]/;
 
 function normalizeNodeRole(value) {
     if (typeof value !== 'string') return 'hybrid';
@@ -774,7 +770,7 @@ async function validateExplicitClasses(classes) {
     const rejected = [];
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
-        if (UNSAFE_CLASS_CHAR_RE.test(token) || cssResults[index] === null) rejected.push(token);
+        if (cssResults[index] === null) rejected.push(token);
         else valid.push(token);
     }
     return {
@@ -788,7 +784,12 @@ function stampCss(css) {
     return css.replace(/(\/\*! tailwindcss[^*]*\*\/)/, `$1\n${stamp}`);
 }
 
-// Generate CSS for a set of classes
+// Generate CSS for a set of classes. The classes reach Tailwind only as
+// build() candidates, which it takes literally. They were once also written
+// into the input CSS as @source inline("...") directives; that repeated them
+// as CSS text, which needed a character ban to stay inside the string and
+// opened brace expansion, and the ban then reported classes like
+// text-(--ink) as rejected while build() emitted their CSS.
 async function generateCssForClasses(classes) {
     const parts = [
         '@layer theme, base, components, utilities;',
@@ -796,11 +797,6 @@ async function generateCssForClasses(classes) {
         '@import "tailwindcss/utilities";',
         '@import "tailwindcss/theme.css";'
     ];
-    for (const className of classes) {
-        if (UNSAFE_CLASS_CHAR_RE.test(className)) continue;
-        const escaped = className.replace(ESCAPE_BACKSLASH_RE, '\\\\').replace(ESCAPE_QUOTE_RE, '\\"');
-        parts.push(`@source inline("${escaped}");`);
-    }
     const inputCss = parts.join('\n') + '\n';
 
     const compiled = await compile(inputCss, {
@@ -836,11 +832,6 @@ async function generateThemeUtilitiesForClasses(classes) {
         '@import "tailwindcss/utilities";',
         '@import "tailwindcss/theme.css";'
     ];
-    for (const className of classes) {
-        if (UNSAFE_CLASS_CHAR_RE.test(className)) continue;
-        const escaped = className.replace(ESCAPE_BACKSLASH_RE, '\\\\').replace(ESCAPE_QUOTE_RE, '\\"');
-        parts.push(`@source inline("${escaped}");`);
-    }
     const inputCss = parts.join('\n') + '\n';
 
     const compiled = await compile(inputCss, {

@@ -111,7 +111,7 @@ export interface CompileSuccessResult {
   pageId: string;
   css: string;
   classes: string[];
-  /** Invalid or unsafe normalized tokens supplied through `classes`, never HTML scanner candidates. */
+  /** Tokens from `classes` and from class attributes that Tailwind could not compile: exactly those the CSS has no rule for. Never other HTML scanner candidates. */
   rejected: string[];
   hash: string;
   cached: boolean;
