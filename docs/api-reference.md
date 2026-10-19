@@ -144,7 +144,7 @@ If you provide both `html` and `classes`, they are merged, de-duplicated and sor
 - `hash` — SHA-256 of the sorted class list; the same classes give the same hash. For `base` it is the literal `"base"`.
 - `cached` — `true` if this result came from cache without recompilation. Always `true` for `base`.
 - `classes` — the sorted list of classes that were compiled (after any plugin `transformClasses`).
-- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input and from `class` / `className` attributes in `html` that Tailwind could not compile or that Rich Wind withheld as unsafe. Other words the HTML scanner finds (prose, attribute values) are never listed. Always an array, `[]` when nothing was rejected. Explicit `classes` are validated even for the `base` bundle.
+- `rejected` — sorted, de-duplicated tokens from the explicit `classes` input and from `class` / `className` attributes in `html` that Tailwind could not compile. A token is listed exactly when the CSS carries no rule for it, so a class with parentheses, commas or brackets such as `text-(--ink)` or `grid-cols-[repeat(2,minmax(0,1fr))]` is listed only if Tailwind rejects it. Other words the HTML scanner finds (prose, attribute values) are never listed. Always an array, `[]` when nothing was rejected. Explicit `classes` are validated even for the `base` bundle.
 
 Errors: see [Errors](#errors).
 

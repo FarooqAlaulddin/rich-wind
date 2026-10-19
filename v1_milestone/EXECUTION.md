@@ -44,7 +44,7 @@ STOP and get explicit owner approval before:
 - `git filter-repo` / any history rewrite / any force-push (Phase 5.2). Also
   requires: no open PRs at the time.
 - Flipping the repo public, enabling Pages, changing branch protection (Phase 5.4-5.5).
-- Running `release-npm.yml`, promoting dist-tags, or any npm publish (Phase 6.1, 6.4).
+- Running `release-npm.yml`, promoting dist-tags, or any npm publish (Phase 6.1).
 - Deleting a branch or tag.
 - Creating, renaming or deleting a repository, or transferring issues (Phase 5.2
   under decision D1).
@@ -60,7 +60,7 @@ STOP and get explicit owner approval before:
 
 Some steps cannot run from a fresh clone or a cloud environment:
 
-- **VM deployment (Phase 6.0 owner steps, 6.2-6.3):** the deploy runbook (rsync
+- **VM deployment (Phase 6.0 owner steps, 6.2):** the deploy runbook (rsync
   release script, service restart) lives in the owner's untracked local notes
   (`.claude/CLAUDE.md` on the owner's machine — untracked after Phase 0.1) until 6.0
   moves a placeholder-only version into `deploy/`. Running it requires the owner's

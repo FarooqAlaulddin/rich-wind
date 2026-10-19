@@ -703,7 +703,7 @@
           },
           "rejected": {
             "type": "array",
-            "description": "Sorted, de-duplicated tokens Tailwind cannot compile or that were withheld as unsafe: from explicit classes input and from class/className attributes in html. Other words in html are never listed. [] when nothing was rejected.",
+            "description": "Sorted, de-duplicated tokens Tailwind cannot compile, from explicit classes input and from class/className attributes in html. Other words in html are never listed. [] when nothing was rejected. A token is listed exactly when the css carries no rule for it.",
             "items": {
               "type": "string"
             }
