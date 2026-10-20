@@ -641,6 +641,13 @@ export interface ExportSetResult {
   rejected: Record<string, string[]>;
 }
 
+/** A theme's normalized form. Both are `""` for the stock theme. */
+export interface ParsedTheme {
+  readonly text: string;
+  readonly hash: string;
+}
+/** Checks a theme string as core will; throws `INVALID_THEME` for one core would refuse. */
+export declare function parseTheme(text: string | null | undefined): ParsedTheme;
 /** Valid classes in the HTML, and class-attribute tokens that compile to nothing. */
 export declare function scanHtml(
   html: string,

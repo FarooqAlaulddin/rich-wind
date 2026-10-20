@@ -218,3 +218,28 @@ const core = await createCore({
 ```
 
 Source: [plugins/auto-promote/index.js](https://github.com/FarooqAlaulddin/rich-wind/blob/main/plugins/auto-promote/index.js).
+
+## Design Tokens
+
+`createDesignTokensPlugin` is exported as `rich-wind/plugins/design-tokens`. It answers [`resolveTheme`](#theme) from a project's token file: ordinary Tailwind v4 CSS whose `@theme { ... }` blocks hold the tokens.
+
+- `tokensFor(projectId, ctx)` returns the file's text, or `null` for the stock theme. It runs on every request for the project, so answer from memory. A throw or a non-string fails the request closed, as any theme plugin does.
+- A namespace the file declares replaces Tailwind's. `--color-ink` brings `--color-*: initial` with it, so `bg-red-500` is rejected rather than quietly off-palette; namespaces the file does not name keep Tailwind's values. Pass `replaceDefaults: false` to extend Tailwind instead.
+- Spacing is never reset. `--spacing-*: initial` also clears the `--spacing` multiplier every `p-4` is computed from, so `--spacing-gutter` adds `px-gutter` and leaves the numeric scale alone.
+- One bad line costs that line. A declaration core would refuse, or a block nested in `@theme` (`@keyframes`), is dropped; each declaration is checked with core's own `parseTheme`. The exception is a file past core's length limit, which is passed on whole and fails closed.
+- Everything outside `@theme` is ignored, so the same file can carry the rules a page loads.
+
+```js
+import { createCore } from "@thinkly/rich-wind";
+import { createDesignTokensPlugin, readTokens, plainCss } from "@thinkly/rich-wind/plugins/design-tokens";
+
+const tokens = new Map([["acme", "@theme { --color-ink: #111; --radius-card: 6px; }"]]);
+const core = await createCore({
+  plugins: [createDesignTokensPlugin({ tokensFor: (projectId) => tokens.get(projectId) ?? null })]
+});
+
+readTokens(tokens.get("acme")); // { theme, declarations, issues }: what was dropped, and why
+plainCss(tokens.get("acme"));   // the file with @theme as :root, for a page loaded without Tailwind
+```
+
+Source: [plugins/design-tokens/index.js](https://github.com/FarooqAlaulddin/rich-wind/blob/main/plugins/design-tokens/index.js).

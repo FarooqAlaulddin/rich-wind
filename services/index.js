@@ -732,7 +732,12 @@ function invalidTheme(message) {
 
 // Declarations are normalized before hashing, so whitespace and comments in
 // the source never make two copies of one theme compile twice.
-function parseTheme(text) {
+/**
+ * Checks a theme string and returns its normalized form: `{ text, hash }`, or
+ * the stock theme for null or empty. Throws INVALID_THEME for anything core
+ * would refuse, so a host or plugin can test a theme before serving it.
+ */
+export function parseTheme(text) {
     if (text === null || text === undefined) return STOCK_THEME;
     if (typeof text !== 'string') throw invalidTheme('A theme is a string of CSS custom-property declarations.');
     if (text.length > MAX_THEME_CHARS) throw invalidTheme(`A theme is limited to ${MAX_THEME_CHARS} chars.`);

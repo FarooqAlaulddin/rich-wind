@@ -18,12 +18,17 @@
     "./plugins/cache-store-fs": {
       "import": "./plugins/cache-store-fs/index.js",
       "default": "./plugins/cache-store-fs/index.js"
+    },
+    "./plugins/design-tokens": {
+      "import": "./plugins/design-tokens/index.js",
+      "default": "./plugins/design-tokens/index.js"
     }
   },
   "files": [
     "services/",
     "plugins/auto-promote/",
     "plugins/cache-store-fs/",
+    "plugins/design-tokens/",
     "!**/*.test.js"
   ],
   "workspaces": [

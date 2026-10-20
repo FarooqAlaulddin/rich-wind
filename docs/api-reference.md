@@ -82,13 +82,14 @@ try {
 Module-level functions with no cache, plugins or project state: the same input always gives byte-identical CSS, so a host can store source and rebuild CSS on demand.
 
 ```js
-import { scanHtml, exportCss, exportSet } from "@thinkly/rich-wind";
+import { scanHtml, exportCss, exportSet, parseTheme } from "@thinkly/rich-wind";
 ```
 
 | Function | Returns |
 | --- | --- |
 | `scanHtml(html, { theme }?)` | `{ classes, rejected }`: valid classes found in the HTML, and class-attribute tokens that compile to nothing |
 | `exportCss({ html?, classes?, theme? })` | `{ css, classes, rejected }`: one complete sheet (preflight, theme variables, utilities) |
+| `parseTheme(theme)` | `{ text, hash }`: the theme as core will compile it (both `""` for stock); throws `INVALID_THEME` for one core would refuse |
 | `exportSet(pages, { minPages = 2, theme }?)` | `{ shared, pages, classes, rejected }` for `pages` = `[{ id, html?, classes? }]`; `pages`, `classes` and `rejected` are keyed by id |
 
 `theme` is the declaration string a [`resolveTheme`](plugin-system.html#theme) plugin returns; omitted or `null` is the stock theme, and an invalid one throws `INVALID_THEME`.

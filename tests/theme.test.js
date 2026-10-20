@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
-import { createCore, exportCss, exportSet, scanHtml } from '../services/index.js';
+import { createCore, exportCss, exportSet, parseTheme, scanHtml } from '../services/index.js';
 
 const INK = '--color-*: initial; --color-ink: #111111; --radius-card: 6px;';
 const PAPER = '--color-*: initial; --color-ink: #222222; --color-paper: #fafafa;';
@@ -391,6 +391,26 @@ describe('cache-store-fs keeps the theme an artifact was built for', () => {
       await changed.close();
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('parseTheme checks a theme as compile does', async () => {
+    expect(parseTheme(null)).toEqual({ text: '', hash: '' });
+    expect(parseTheme('  ')).toEqual({ text: '', hash: '' });
+    const ink = parseTheme(INK);
+    expect(ink.text.split('\n')).toEqual(['--color-*: initial;', '--color-ink: #111111;', '--radius-card: 6px;']);
+    expect(ink.hash).toMatch(/^[0-9a-f]{64}$/);
+    for (const bad of ['--x: 1; } body {', '@import "x";', '--color-*: red;', 'color: red;']) {
+      expect(() => parseTheme(bad)).toThrow(expect.objectContaining({ code: 'INVALID_THEME' }));
+    }
+    // What parseTheme refuses, compile refuses too.
+    const t = themes({ p: '@import "x";' });
+    const core = await createCore({ plugins: t.plugin });
+    try {
+      const err = await failure(core.compile({ projectId: 'p', pageId: 'home', classes: 'p-4' }));
+      expect(err.code).toBe('INVALID_THEME');
+    } finally {
+      await core.close();
     }
   });
 });
