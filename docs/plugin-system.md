@@ -69,7 +69,7 @@ Three facts the types do not show:
 
 `compile()` is `core.compile()`: same input as `POST /api/compile` (`pageId` defaults to `"default"`), same result body, and it throws a `RichWindError` whose `status` and `code` match the HTTP error for the same input. Called outside a parent compile it can throw `503 SERVER_BUSY` when every compile slot is in use; on a reader it throws `409 READ_ONLY_REPLICA`.
 
-A `compile()` called from a non-deferred hook skips all hooks. From `setup`, plugin routes and deferred hooks it runs hooks with `source: "plugin"` and `request: null`, bounded by `maxPluginCompileChainDepth`. Past the bound it throws `500 INTERNAL` and `onError` receives `code: "PLUGIN_COMPILE_CHAIN_LIMIT"`.
+A `compile()` called from a non-deferred hook skips all hooks except `resolveTheme`, which every compile needs. From `setup`, plugin routes and deferred hooks it runs hooks with `source: "plugin"` and `request: null`, bounded by `maxPluginCompileChainDepth`. Past the bound it throws `500 INTERNAL` and `onError` receives `code: "PLUGIN_COMPILE_CHAIN_LIMIT"`.
 
 ## Hooks
 
@@ -116,7 +116,28 @@ Return values are ignored. Fields on each context: the matching `On*Context` typ
 
 ### Resolvers
 
-`resolvePageCss` and `resolveProjectCss` run on a `GET` cache miss. The first plugin returning `{ css }` wins; return `null` to pass. The CSS is served as is and not cached in memory, so call `hydratePageArtifact()` yourself if you want it cached. CSS over `maxCssChars` is skipped and reported with `stage: "resolve"`.
+`resolvePageCss` and `resolveProjectCss` run on a `GET` cache miss. The first plugin returning `{ css }` wins; return `null` to pass. The context carries `themeHash`, the theme the answer must be built against (`""` for stock). The CSS is served as is and not cached in memory, so call `hydratePageArtifact()` yourself if you want it cached. CSS over `maxCssChars` is skipped and reported with `stage: "resolve"`.
+
+### Theme
+
+`resolveTheme({ projectId, source, request })` names a project's theme: a string of CSS custom-property declarations that core compiles as an `@theme` block after Tailwind's own, so the project's classes are the ones those tokens make.
+
+```js
+const brand = {
+  name: "brand",
+  resolveTheme: ({ projectId }) =>
+    projectId === "acme" ? "--color-*: initial; --color-ink: #111; --radius-card: 6px;" : null
+};
+```
+
+With that theme `bg-ink` and `rounded-card` compile, `bg-red-500` is `rejected`, and `p-4`, `text-sm` and `rounded-lg` still work, because `--color-*: initial` switches off only the colour namespace. Return `null` for the stock theme.
+
+- Every route that builds or serves a project's CSS asks first: compile, `GET /api/css`, project CSS, suggest, and `ctx.validateClasses(classes, { projectId })`. The `base` bundle never asks; it holds no theme.
+- Declarations only. Braces, at-rules (`@import`, `@plugin`), backslashes and unclosed comments are refused with `500 INVALID_THEME`, as is a `--name-*` set to anything but `initial`, or a theme Tailwind cannot compile.
+- It fails closed. A throw, a timeout, or a theme plugin whose `setup` failed fails the call with `500 INTERNAL` and reports to `onError` with `hook: "resolveTheme"`. Falling back to stock would answer with CSS for a theme the project does not have.
+- The first plugin to answer wins. It is never deferred, and it cannot call back into core: `ctx.validateClasses` or `ctx.compile` from inside `resolveTheme` throws.
+- Answer from memory. It runs on every request for the project, so read the token source in `setup` or on change, not per call.
+- A changed answer rebuilds that project only: its pages keep the classes the new theme still has, and their CSS and ETags change. Other projects are untouched. A stored artifact carries the `themeHash` it was built for and is never served for another theme.
 
 ### Guard
 
@@ -124,7 +145,7 @@ Return values are ignored. Fields on each context: the matching `On*Context` typ
 
 ### Deferred hooks
 
-`defer: true` runs all observer hooks fire-and-forget via a microtask; `deferHooks: ["onCompileResult"]` defers only those. Use it for I/O (databases, webhooks). `guard`, `onError`, the transform hooks and the resolvers are never deferred because they affect the response.
+`defer: true` runs all observer hooks fire-and-forget via a microtask; `deferHooks: ["onCompileResult"]` defers only those. Use it for I/O (databases, webhooks). `guard`, `onError`, the transform hooks, the resolvers and `resolveTheme` are never deferred because they affect the response.
 
 ### onError stages
 

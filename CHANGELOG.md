@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Project themes. A `resolveTheme({ projectId })` plugin hook returns a project's design tokens as CSS custom-property declarations, compiled as an `@theme` block after Tailwind's own, so `--color-*: initial; --color-ink: #111;` makes `bg-ink` a class and `bg-red-500` a rejection for that project alone. Every route that builds or serves a project's CSS resolves the theme first; the hook fails closed, never falls back to stock, and is never deferred. A theme holds declarations only and anything else is `500 INVALID_THEME`. The theme is part of the page hash and the ETag; stock hashes are unchanged. Artifacts carry `themeHash`, and one built for another theme is never served. `scanHtml`, `exportCss` and `exportSet` take a `theme` option, and `ctx.validateClasses(classes, { projectId })` validates against the project's theme. `cache-store-fs` persists `themeHash`.
+
 ## [1.0.0-rc.3] - 2026-10-19
 
 ### Fixed
