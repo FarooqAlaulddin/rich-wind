@@ -209,9 +209,10 @@ export function plainCss(css) {
 /**
  * `tokensFor(projectId, ctx)` returns the project's token CSS, or null for
  * Tailwind's stock theme. It runs on every request for the project, so it
- * should answer from memory.
+ * should answer from memory. Without it every project is stock, so the
+ * factory can be called with no arguments as the plugin loader does.
  */
-export function createDesignTokensPlugin({ tokensFor, replaceDefaults = true, timeoutMs } = {}) {
+export function createDesignTokensPlugin({ tokensFor = () => null, replaceDefaults = true, timeoutMs } = {}) {
     if (typeof tokensFor !== 'function') throw new TypeError('createDesignTokensPlugin: tokensFor must be a function');
     const memo = new Map();
     const themeFor = (css) => {

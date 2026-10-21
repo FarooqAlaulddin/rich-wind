@@ -4,6 +4,8 @@
  * Auto-discovers plugins by scanning plugins/*\/index.js.
  * Each plugin must default-export a factory function: (options?) => pluginObject
  * The loader calls each factory with no args and returns an array of plugin instances.
+ * A module whose factory returns something without a name is not a plugin
+ * (cache-store-fs is a `cacheStore`) and is skipped.
  */
 
 import { readdirSync, statSync, existsSync } from 'node:fs';
@@ -31,6 +33,10 @@ export async function loadPlugins() {
     }
 
     const plugin = mod.default();
+    if (!plugin || typeof plugin !== 'object' || typeof plugin.name !== 'string') {
+      console.warn(`"${entry}" is not a plugin (its factory returns no named plugin) — skipping`);
+      continue;
+    }
     plugins.push(plugin);
     console.log(`Loaded plugin: ${plugin.name || entry}`);
   }

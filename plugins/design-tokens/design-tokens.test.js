@@ -137,8 +137,9 @@ describe('plainCss', () => {
 });
 
 describe('createDesignTokensPlugin', () => {
-  it('requires tokensFor', () => {
-    expect(() => createDesignTokensPlugin()).toThrow(TypeError);
+  it('is stock for every project without tokensFor, and refuses a tokensFor that is not a function', async () => {
+    expect(await createDesignTokensPlugin().resolveTheme({ projectId: 'any' })).toBeNull();
+    expect(() => createDesignTokensPlugin({ tokensFor: 'tokens.css' })).toThrow(TypeError);
   });
 
   it('gives each project the theme its token file declares', async () => {
