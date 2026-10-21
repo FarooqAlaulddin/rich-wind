@@ -23,6 +23,18 @@ for (let i = 0; i < plugins.length; i++) {
   }
 }
 
+// Design tokens answer from the demo's fixed presets, keyed by project id, so
+// the Themes view can compile one page under several design systems.
+for (let i = 0; i < plugins.length; i++) {
+  if (plugins[i].name === 'design-tokens') {
+    const { createDesignTokensPlugin } = await import('../../plugins/design-tokens/index.js');
+    const { tokensForProject } = await import('../src/themePresets.js');
+    plugins[i] = createDesignTokensPlugin({ tokensFor: tokensForProject });
+    console.log('Design-tokens plugin overridden with the demo presets');
+    break;
+  }
+}
+
 const { handler, close } = await createCore({
   plugins,
   maxPluginCompileChainDepth: 3,

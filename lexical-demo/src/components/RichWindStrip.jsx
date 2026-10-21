@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { CORE_BASE } from '../api';
+import ThemesView from './ThemesView';
 
 const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
 
@@ -79,8 +80,8 @@ function useCopy() {
 /**
  * The RICH WIND strip: always visible at the bottom of the panel. It reports
  * what the last compile did and what the page costs. Its buttons open an
- * inline view in place (compiled CSS, or the standalone export), never a
- * popup.
+ * inline view in place (compiled CSS, the page under each design system, or
+ * the standalone export), never a popup.
  */
 export default function RichWindStrip({
   view, onView, html, projectId, activePage, baseCss, themeCss, utilitiesCss, fullCss,
@@ -116,6 +117,7 @@ export default function RichWindStrip({
         )}
         <span className="rw-spacer" />
         <button type="button" className={`rw-link${view === 'css' ? ' is-on' : ''}`} aria-expanded={view === 'css'} onClick={() => onView(view === 'css' ? null : 'css')}>CSS</button>
+        <button type="button" className={`rw-link${view === 'themes' ? ' is-on' : ''}`} aria-expanded={view === 'themes'} onClick={() => onView(view === 'themes' ? null : 'themes')}>Themes</button>
         <button type="button" className={`rw-link${view === 'export' ? ' is-on' : ''}`} aria-expanded={view === 'export'} onClick={() => onView(view === 'export' ? null : 'export')}>Export</button>
       </div>
 
@@ -132,6 +134,8 @@ export default function RichWindStrip({
           <pre className="rw-code">{cssTabs[tab] || '/* nothing compiled yet */'}</pre>
         </div>
       )}
+
+      {view === 'themes' && <ThemesView html={html} projectId={projectId} activePage={activePage} />}
 
       {view === 'export' && (
         <div className="rw-view">

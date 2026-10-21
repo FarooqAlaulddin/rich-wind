@@ -837,6 +837,42 @@ test.describe('Rich Wind strip', () => {
     await expect(strip(page).locator('.rw-code')).toHaveCount(0);
   });
 
+  test('Themes compiles one page under each design system and lists what each rejects', async ({ page }) => {
+    await openDemo(page);
+    await page.getByRole('button', { name: 'Examples' }).click();
+    await page.getByRole('menuitem', { name: /Brand card/ }).click();
+    await expect(editor(page).locator('h2', { hasText: 'One page, any design system' })).toBeVisible();
+    await strip(page).getByRole('button', { name: 'Themes', exact: true }).click();
+
+    const tabs = strip(page).getByRole('tablist', { name: 'Design system' }).getByRole('tab');
+    await expect(tabs).toHaveText([/^Tailwind/, /^Ink/, /^Harbor/]);
+    const chips = (name) => strip(page).getByLabel(`Rejected under ${name}`).locator('.rw-chip');
+    const card = (name) => page.frameLocator(`iframe[title="${name} preview"]`).locator('div').first();
+    const look = (name) => card(name).evaluate((el) => {
+      const s = getComputedStyle(el);
+      return [s.backgroundColor, s.borderTopLeftRadius];
+    });
+
+    // A token theme compiles every token class and rejects Tailwind's palette.
+    await expect(chips('Ink')).toHaveText(['text-indigo-600']);
+    await expect.poll(() => look('Ink')).toEqual(['rgb(247, 243, 234)', '2px']);
+
+    await tabs.filter({ hasText: 'Harbor' }).click();
+    await expect(chips('Harbor')).toHaveText(['text-indigo-600']);
+    await expect.poll(() => look('Harbor')).toEqual(['rgb(253, 250, 244)', '18px']);
+
+    // Stock Tailwind has none of the tokens, and indigo is its own.
+    await tabs.filter({ hasText: 'Tailwind' }).click();
+    const stock = await chips('Tailwind').allTextContents();
+    expect(stock).toEqual(expect.arrayContaining(['bg-paper', 'text-ink', 'rounded-card', 'shadow-card', 'font-display']));
+    expect(stock).not.toContain('text-indigo-600');
+
+    await strip(page).getByRole('button', { name: 'Tokens' }).click();
+    await expect(strip(page).locator('.rw-code')).toContainText('none');
+    await tabs.filter({ hasText: 'Ink' }).click();
+    await expect(strip(page).locator('.rw-code')).toContainText('--color-paper: #f7f3ea;');
+  });
+
   test('Export shows a standalone page, copies the CSS and downloads the file', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await openDemo(page);
