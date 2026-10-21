@@ -1860,6 +1860,40 @@ body {
   border-radius: var(--radius-sm);
 }
 
+.rw-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.rw-count.is-bad {
+  color: var(--danger);
+}
+
+.rw-preview {
+  width: 100%;
+  height: 300px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.rw-rejects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rw-chip {
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+}
+
 @container panel (max-width: 380px) {
   .layout-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));

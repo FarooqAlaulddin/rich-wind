@@ -121,10 +121,10 @@ export function createFsCacheStore(options = {}) {
     async readPageArtifact({ projectId, pageId, bundle }) {
       const data = await readJson(pagePath(projectId, pageId, bundle));
       if (!data || typeof data.css !== 'string') return null;
-      return { css: data.css, hash: data.hash || null, classes: data.classes || null };
+      return { css: data.css, hash: data.hash || null, themeHash: data.themeHash || null, classes: data.classes || null };
     },
 
-    async upsertPageArtifact({ projectId, pageId, bundle, css, hash, classes }) {
+    async upsertPageArtifact({ projectId, pageId, bundle, css, hash, themeHash, classes }) {
       await initPromise;
       // Check whether this file already exists (update, not new entry)
       const p = pagePath(projectId, pageId, bundle);
@@ -135,7 +135,7 @@ export function createFsCacheStore(options = {}) {
         // Cap reached — compile still served from in-memory cache, just not persisted
         return;
       }
-      await writeJsonAtomic(p, { css, hash, classes });
+      await writeJsonAtomic(p, { css, hash, themeHash: themeHash || null, classes });
       if (isNew) pageArtifactCount += 1;
     },
 
@@ -162,11 +162,11 @@ export function createFsCacheStore(options = {}) {
     async readProjectArtifact({ projectId, bundle }) {
       const data = await readJson(projectPath(projectId, bundle));
       if (!data || typeof data.css !== 'string') return null;
-      return { css: data.css, hash: data.hash || null };
+      return { css: data.css, hash: data.hash || null, themeHash: data.themeHash || null };
     },
 
-    async upsertProjectArtifact({ projectId, bundle, css, hash }) {
-      await writeJsonAtomic(projectPath(projectId, bundle), { css, hash });
+    async upsertProjectArtifact({ projectId, bundle, css, hash, themeHash }) {
+      await writeJsonAtomic(projectPath(projectId, bundle), { css, hash, themeHash: themeHash || null });
     },
 
     async deleteProjectArtifact({ projectId, bundle }) {

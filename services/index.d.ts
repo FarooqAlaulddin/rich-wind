@@ -15,6 +15,7 @@ export type RichWindErrorCode =
   | 'FORBIDDEN'
   | 'REQUEST_BLOCKED'
   | 'NOT_FOUND'
+  | 'INVALID_THEME'
   | 'INTERNAL';
 
 export declare class RichWindError extends Error {
@@ -167,6 +168,8 @@ export interface PageArtifact {
   css: string;
   classes?: string | string[] | null;
   hash?: string | null;
+  /** sha256 of the normalized theme it was built against; absent or null means the stock theme. */
+  themeHash?: string | null;
   updatedAt?: number;
   expiresAt?: number;
   source?: string | null;
@@ -175,6 +178,8 @@ export interface PageArtifact {
 export interface ProjectArtifact {
   css: string;
   hash?: string | null;
+  /** sha256 of the normalized theme it was built against; absent or null means the stock theme. */
+  themeHash?: string | null;
   updatedAt?: number;
   expiresAt?: number;
   source?: string | null;
@@ -193,6 +198,8 @@ export interface UpsertPageArtifactInput {
   bundle: NormalizedBundle;
   css: string;
   hash: string;
+  /** Empty string for the stock theme. Persist it and return it on read. */
+  themeHash: string;
   classes: string[];
   cached: boolean;
   updatedAt: number;
@@ -220,6 +227,8 @@ export interface UpsertProjectArtifactInput {
   bundle: NormalizedBundle;
   css: string;
   hash: string | null;
+  /** Empty string for the stock theme. Persist it and return it on read. */
+  themeHash: string;
   cached: boolean;
   updatedAt: number;
   expiresAt: number;
@@ -288,6 +297,8 @@ export interface HydratePageArtifactInput {
   css: string;
   classes?: string | string[] | null;
   hash?: string | null;
+  /** sha256 of the normalized theme it was built against; absent or null means the stock theme. */
+  themeHash?: string | null;
   updatedAt?: number;
   expiresAt?: number;
   source?: string | null;
@@ -298,6 +309,8 @@ export interface HydrateProjectArtifactInput {
   bundle?: Bundle;
   css: string;
   hash?: string | null;
+  /** sha256 of the normalized theme it was built against; absent or null means the stock theme. */
+  themeHash?: string | null;
   updatedAt?: number;
   expiresAt?: number;
   source?: string | null;
@@ -313,7 +326,11 @@ export interface PluginContext {
   getProjectCss(projectId: string, bundle?: Bundle): string | null;
   getCacheStats(): Readonly<CacheStats>;
   getConfig(): Readonly<CoreConfig>;
-  validateClasses(classes: string | string[]): Promise<string[]>;
+  /** With a projectId, validates against that project's theme; without one, the stock theme. */
+  validateClasses(
+    classes: string | string[],
+    options?: { projectId?: string }
+  ): Promise<string[]>;
   evictPage(projectId: string, pageId: string): void;
   evictProject(projectId: string): void;
   purgePage(projectId: string, pageId: string): Promise<boolean>;
@@ -473,6 +490,8 @@ export interface ResolvePageCssContext extends PluginContext {
   projectId: string;
   pageId: string;
   bundle: Bundle;
+  /** The theme the answer must be built against; empty for the stock theme. */
+  themeHash: string;
   source: PluginSource;
   request: PluginRequestMeta | null;
 }
@@ -480,6 +499,14 @@ export interface ResolvePageCssContext extends PluginContext {
 export interface ResolveProjectCssContext extends PluginContext {
   projectId: string;
   bundle: Bundle;
+  /** The theme the answer must be built against; empty for the stock theme. */
+  themeHash: string;
+  source: PluginSource;
+  request: PluginRequestMeta | null;
+}
+
+export interface ResolveThemeContext extends PluginContext {
+  projectId: string;
   source: PluginSource;
   request: PluginRequestMeta | null;
 }
@@ -512,7 +539,8 @@ export type PluginHookName =
   | 'transformCss'
   | 'transformSuggestions'
   | 'resolvePageCss'
-  | 'resolveProjectCss';
+  | 'resolveProjectCss'
+  | 'resolveTheme';
 
 export interface RichWindPlugin {
   name?: string;
@@ -546,6 +574,14 @@ export interface RichWindPlugin {
   resolveProjectCss?(
     context: ResolveProjectCssContext
   ): MaybePromise<PluginResolveResult | null | undefined>;
+  /**
+   * The project's theme: CSS custom-property declarations compiled into an
+   * `@theme` block after Tailwind's own. `--color-*: initial` switches a
+   * namespace off. Null keeps the stock theme. Never deferred; the first
+   * plugin to answer wins, and a throw, a timeout or a plugin whose setup
+   * failed fails the call rather than falling back to stock.
+   */
+  resolveTheme?(context: ResolveThemeContext): MaybePromise<string | null | undefined>;
 }
 
 export interface CreateCoreOptions {
@@ -579,6 +615,8 @@ export declare function createCore(
 export interface ExportInput {
   html?: string;
   classes?: string | string[];
+  /** Theme declarations, as `resolveTheme` returns them. */
+  theme?: string | null;
 }
 
 export interface ScanHtmlResult {
@@ -603,12 +641,22 @@ export interface ExportSetResult {
   rejected: Record<string, string[]>;
 }
 
+/** A theme's normalized form. Both are `""` for the stock theme. */
+export interface ParsedTheme {
+  readonly text: string;
+  readonly hash: string;
+}
+/** Checks a theme string as core will; throws `INVALID_THEME` for one core would refuse. */
+export declare function parseTheme(text: string | null | undefined): ParsedTheme;
 /** Valid classes in the HTML, and class-attribute tokens that compile to nothing. */
-export declare function scanHtml(html: string): Promise<ScanHtmlResult>;
+export declare function scanHtml(
+  html: string,
+  options?: { theme?: string | null }
+): Promise<ScanHtmlResult>;
 /** One page in, complete standalone CSS out; byte-identical for the same input. */
 export declare function exportCss(input?: ExportInput): Promise<ExportCssResult>;
 /** N pages in, one shared sheet plus one sheet per page out; deterministic. */
 export declare function exportSet(
   pages: ExportSetPage[],
-  options?: { minPages?: number }
+  options?: { minPages?: number; theme?: string | null }
 ): Promise<ExportSetResult>;

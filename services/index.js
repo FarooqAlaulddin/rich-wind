@@ -69,7 +69,8 @@ const READ_ONLY_ERROR_CODE = 'READ_ONLY_REPLICA';
 export const ERROR_CODES = Object.freeze([
     'INVALID_ID', 'MISSING_INPUT', 'INVALID_BODY', 'UNSUPPORTED_MEDIA_TYPE',
     'PAYLOAD_TOO_LARGE', 'READ_ONLY_REPLICA', 'RATE_LIMITED', 'SERVER_BUSY',
-    'UNAUTHORIZED', 'FORBIDDEN', 'REQUEST_BLOCKED', 'NOT_FOUND', 'INTERNAL'
+    'UNAUTHORIZED', 'FORBIDDEN', 'REQUEST_BLOCKED', 'NOT_FOUND', 'INTERNAL',
+    'INVALID_THEME'
 ]);
 
 export class RichWindError extends Error {
@@ -273,11 +274,13 @@ function evictIfNeeded(state, config) {
     }
 }
 
-function getProject(state, projectId) {
+function getProject(state, projectId, theme = STOCK_THEME) {
     let project = state.projects.get(projectId);
     if (!project) {
         project = {
             id: projectId,
+            // The theme every CSS cache below was built against (see applyProjectTheme).
+            theme,
             pages: new Map(),
             classCounts: new Map(),
             cssCache: null,
@@ -313,8 +316,12 @@ function isValidId(value, config) {
     return VALID_ID_RE.test(value);
 }
 
-function hashClasses(classes) {
-    return crypto.createHash('sha256').update(classes.join('|')).digest('hex');
+// A page or project hash names its classes and the theme they were built
+// against, so an ETag changes when either does. The stock theme adds nothing,
+// which keeps every stock hash what it was before themes existed.
+function hashClasses(classes, themeHash = '') {
+    const key = classes.join('|');
+    return crypto.createHash('sha256').update(themeHash ? `${themeHash}#${key}` : key).digest('hex');
 }
 
 function isExpired(entry) {
@@ -375,6 +382,14 @@ function normalizeHydratedClasses(input, config) {
     return normalized;
 }
 
+// An artifact without a themeHash was built against the stock theme: every
+// artifact written before themes existed was. A themeHash that is not a string
+// makes the artifact unreadable rather than stock.
+function sanitizeThemeHash(value) {
+    if (value === undefined || value === null) return '';
+    return typeof value === 'string' ? value : null;
+}
+
 function sanitizePageArtifact(artifact, config, now = Date.now()) {
     if (!artifact || typeof artifact !== 'object') return null;
     if (typeof artifact.css !== 'string') return null;
@@ -386,14 +401,17 @@ function sanitizePageArtifact(artifact, config, now = Date.now()) {
     const classesProvided = artifact.classes !== undefined && artifact.classes !== null;
     const classes = normalizeHydratedClasses(artifact.classes, config);
     if (classesProvided && classes === null) return null;
+    const themeHash = sanitizeThemeHash(artifact.themeHash);
+    if (themeHash === null) return null;
 
     const hash = Array.isArray(classes)
-        ? hashClasses(classes)
+        ? hashClasses(classes, themeHash)
         : (typeof artifact.hash === 'string' && artifact.hash ? artifact.hash : null);
     return {
         css: artifact.css,
         classes,
         hash,
+        themeHash,
         updatedAt: normalizeTimestamp(artifact.updatedAt, now),
         expiresAt,
         source: typeof artifact.source === 'string' ? artifact.source : null
@@ -415,10 +433,13 @@ function sanitizeProjectArtifact(artifact, config, now = Date.now()) {
     if (artifact.hash !== undefined && artifact.hash !== null && hash === null) {
         return null;
     }
+    const themeHash = sanitizeThemeHash(artifact.themeHash);
+    if (themeHash === null) return null;
 
     return {
         css: artifact.css,
         hash,
+        themeHash,
         updatedAt: normalizeTimestamp(artifact.updatedAt, now),
         expiresAt,
         source: typeof artifact.source === 'string' ? artifact.source : null
@@ -430,7 +451,12 @@ function hydratePageFromArtifact(state, config, projectId, pageId, bundle, sanit
     const normalizedBundle = normalizeBundle(bundle);
     if (normalizedBundle === 'base') return false;
 
-    const project = getProject(state, projectId);
+    // An artifact built against another theme holds CSS this project does not
+    // have any more. A project not in memory yet takes the caller's theme.
+    const theme = state.projects.get(projectId)?.theme ?? options.theme ?? STOCK_THEME;
+    if (sanitizedArtifact.themeHash !== theme.hash) return false;
+
+    const project = getProject(state, projectId, theme);
     let page = project.pages.get(pageId);
     const hasClasses = Array.isArray(sanitizedArtifact.classes);
 
@@ -685,22 +711,113 @@ function getFallbackSuggestions(prefix) {
     return suggestions;
 }
 
-let cachedClassList = null;
+// =============================================================================
+// Project themes
+// =============================================================================
+// A theme is the body of a Tailwind @theme block: custom-property declarations
+// and nothing else. It is compiled after Tailwind's own theme, so it adds or
+// overrides values, and `--<namespace>-*: initial` switches a stock namespace
+// off. Anything that is not a declaration is refused rather than passed on:
+// the text lands inside the compiler's input, where a `}` or an at-rule would
+// close the block and import whatever it liked.
+const STOCK_THEME = Object.freeze({ text: '', hash: '' });
+const MAX_THEME_CHARS = 100_000;
+const THEME_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
+const THEME_FORBIDDEN_RE = /[{}@\\]|\/\*/;
+const THEME_DECL_RE = /^(--(?:\*|[a-zA-Z0-9_-]+(?:-\*)?))\s*:\s*([\s\S]+)$/;
+
+function invalidTheme(message) {
+    return new RichWindError(500, 'INVALID_THEME', message);
+}
+
+// Declarations are normalized before hashing, so whitespace and comments in
+// the source never make two copies of one theme compile twice.
+/**
+ * Checks a theme string and returns its normalized form: `{ text, hash }`, or
+ * the stock theme for null or empty. Throws INVALID_THEME for anything core
+ * would refuse, so a host or plugin can test a theme before serving it.
+ */
+export function parseTheme(text) {
+    if (text === null || text === undefined) return STOCK_THEME;
+    if (typeof text !== 'string') throw invalidTheme('A theme is a string of CSS custom-property declarations.');
+    if (text.length > MAX_THEME_CHARS) throw invalidTheme(`A theme is limited to ${MAX_THEME_CHARS} chars.`);
+    const body = text.replace(THEME_COMMENT_RE, ' ');
+    if (THEME_FORBIDDEN_RE.test(body)) {
+        throw invalidTheme('A theme holds declarations only: no braces, at-rules, backslashes or unclosed comments.');
+    }
+    const declarations = [];
+    for (const part of body.split(';')) {
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        const match = THEME_DECL_RE.exec(trimmed);
+        if (!match) throw invalidTheme(`Not a custom-property declaration: "${trimmed.slice(0, 80)}".`);
+        const name = match[1];
+        const value = match[2].trim();
+        if (name.endsWith('*') && value !== 'initial') {
+            throw invalidTheme(`${name} can only be set to initial.`);
+        }
+        declarations.push(`${name}: ${value};`);
+    }
+    if (declarations.length === 0) return STOCK_THEME;
+    const normalized = declarations.join('\n');
+    return Object.freeze({
+        text: normalized,
+        hash: crypto.createHash('sha256').update(normalized).digest('hex')
+    });
+}
+
+function themeInputCss(theme) {
+    return theme.text ? `@theme {\n${theme.text}\n}\n` : '';
+}
 
 // =============================================================================
 // Tailwind design system + compilation
 // =============================================================================
-async function getTailwindClassList() {
-    if (cachedClassList) return cachedClassList;
-    const designSystem = await getDesignSystem();
-    cachedClassList = designSystem.getClassList().map(([name]) => name);
-    return cachedClassList;
+// One design system per theme, most recently used kept. The stock one is
+// evicted like any other and reloads on its next use.
+const MAX_DESIGN_SYSTEMS = 32;
+const designSystems = new Map();
+
+function getThemeSystem(theme) {
+    const cached = designSystems.get(theme.hash);
+    if (cached) {
+        designSystems.delete(theme.hash);
+        designSystems.set(theme.hash, cached);
+        return cached;
+    }
+    const inputCss = `
+            @layer theme, base, components, utilities;
+            @import "tailwindcss/preflight";
+            @import "tailwindcss/utilities";
+            @import "tailwindcss/theme.css";
+        ` + themeInputCss(theme);
+    const loading = __unstable__loadDesignSystem(inputCss, { base: __dirname })
+        .then((designSystem) => ({ designSystem, classList: null }))
+        .catch((error) => {
+            if (designSystems.get(theme.hash) === loading) designSystems.delete(theme.hash);
+            throw theme.hash ? invalidTheme(`Tailwind refused the theme: ${error.message}`) : error;
+        });
+    designSystems.set(theme.hash, loading);
+    while (designSystems.size > MAX_DESIGN_SYSTEMS) {
+        designSystems.delete(designSystems.keys().next().value);
+    }
+    return loading;
 }
 
-async function getStaticClassSuggestions(prefix) {
+async function getDesignSystem(theme = STOCK_THEME) {
+    return (await getThemeSystem(theme)).designSystem;
+}
+
+async function getTailwindClassList(theme = STOCK_THEME) {
+    const entry = await getThemeSystem(theme);
+    if (!entry.classList) entry.classList = entry.designSystem.getClassList().map(([name]) => name);
+    return entry.classList;
+}
+
+async function getStaticClassSuggestions(prefix, theme = STOCK_THEME) {
     const { variant, base } = splitVariantPrefix(prefix);
     if (!base) return [];
-    const list = await getTailwindClassList();
+    const list = await getTailwindClassList(theme);
     const matches = [];
     for (const item of list) {
         if (item.startsWith(base)) {
@@ -718,28 +835,35 @@ function getProjectSuggestionList(state, projectId) {
         .map(([name]) => name);
 }
 
-let cachedDesignSystem = null;
 let cachedBaseCss = null;
 
-async function getDesignSystem() {
-    if (!cachedDesignSystem) {
-        const inputCss = `
-            @layer theme, base, components, utilities;
-            @import "tailwindcss/preflight";
-            @import "tailwindcss/utilities";
-            @import "tailwindcss/theme.css";
-        `;
-
-        cachedDesignSystem = await __unstable__loadDesignSystem(inputCss, {
-            base: __dirname
-        });
+// A project's CSS is always built against the theme it has now. When the theme
+// changes, every CSS cache built from the old one is dropped and the classes
+// stay, less any the new theme cannot build. Everything after the await is
+// synchronous, so two changes never interleave their writes.
+async function applyProjectTheme(state, projectId, theme) {
+    const project = state.projects.get(projectId);
+    if (!project || project.theme.hash === theme.hash) return;
+    const designSystem = await getDesignSystem(theme);
+    if (state.projects.get(projectId) !== project || project.theme.hash === theme.hash) return;
+    project.theme = theme;
+    for (const page of project.pages.values()) {
+        const before = Array.from(page.classes || []);
+        const results = before.length ? designSystem.candidatesToCss(before) : [];
+        const kept = before.filter((_, i) => results[i] !== null).sort();
+        updateClassCounts(project, page.classes || new Set(), new Set(kept));
+        page.classes = new Set(kept);
+        page.hash = hashClasses(kept, theme.hash);
+        page.css = null;
+        page.utilitiesCss = null;
+        page.themeCss = null;
     }
-    return cachedDesignSystem;
+    clearProjectAggregateCache(project);
 }
 
 // Extract classes from HTML
-async function extractClasses(html) {
-    const designSystem = await getDesignSystem();
+async function extractClasses(html, theme = STOCK_THEME) {
+    const designSystem = await getDesignSystem(theme);
     const scanner = new Scanner({ sources: [] });
     
     const allCandidates = scanner.scanFiles([{
@@ -753,18 +877,18 @@ async function extractClasses(html) {
     return validClasses;
 }
 
-async function filterValidClasses(classes) {
+async function filterValidClasses(classes, theme = STOCK_THEME) {
     if (!classes.length) return [];
-    const designSystem = await getDesignSystem();
+    const designSystem = await getDesignSystem(theme);
     const cssResults = designSystem.candidatesToCss(classes);
     return classes.filter((_, i) => cssResults[i] !== null);
 }
 
-async function validateExplicitClasses(classes) {
+async function validateExplicitClasses(classes, theme = STOCK_THEME) {
     const tokens = normalizeClassList(classes);
     if (tokens.length === 0) return { valid: [], rejected: [] };
 
-    const designSystem = await getDesignSystem();
+    const designSystem = await getDesignSystem(theme);
     const cssResults = designSystem.candidatesToCss(tokens);
     const valid = [];
     const rejected = [];
@@ -790,20 +914,23 @@ function stampCss(css) {
 // as CSS text, which needed a character ban to stay inside the string and
 // opened brace expansion, and the ban then reported classes like
 // text-(--ink) as rejected while build() emitted their CSS.
-async function generateCssForClasses(classes) {
-    const parts = [
+async function compileWithTheme(parts, theme) {
+    const inputCss = parts.join('\n') + '\n' + themeInputCss(theme);
+    try {
+        return await compile(inputCss, { base: __dirname, onDependency: () => {} });
+    } catch (error) {
+        if (theme.hash) throw invalidTheme(`Tailwind refused the theme: ${error.message}`);
+        throw error;
+    }
+}
+
+async function generateCssForClasses(classes, theme = STOCK_THEME) {
+    const compiled = await compileWithTheme([
         '@layer theme, base, components, utilities;',
         '@import "tailwindcss/preflight";',
         '@import "tailwindcss/utilities";',
         '@import "tailwindcss/theme.css";'
-    ];
-    const inputCss = parts.join('\n') + '\n';
-
-    const compiled = await compile(inputCss, {
-        base: __dirname,
-        onDependency: () => {}
-    });
-
+    ], theme);
     return stampCss(compiled.build(classes));
 }
 
@@ -826,23 +953,18 @@ function splitThemeUtilitiesCss(css = '') {
     };
 }
 
-async function generateThemeUtilitiesForClasses(classes) {
-    const parts = [
+async function generateThemeUtilitiesForClasses(classes, theme = STOCK_THEME) {
+    const compiled = await compileWithTheme([
         '@layer theme, utilities;',
         '@import "tailwindcss/utilities";',
         '@import "tailwindcss/theme.css";'
-    ];
-    const inputCss = parts.join('\n') + '\n';
-
-    const compiled = await compile(inputCss, {
-        base: __dirname,
-        onDependency: () => {}
-    });
-
+    ], theme);
     const css = stampCss(compiled.build(classes));
     return splitThemeUtilitiesCss(css);
 }
 
+// Preflight only, with Tailwind's own fallbacks: no theme reaches the base
+// bundle, so it is one sheet for every project.
 async function generateBaseCss() {
     if (cachedBaseCss) return cachedBaseCss;
     const inputCss = '@layer base;\n@import "tailwindcss/preflight";\n';
@@ -875,21 +997,25 @@ function decodeHtmlEntities(text) {
  * class-attribute tokens (sorted); `rejected` are class-attribute tokens that
  * compile to nothing. Other scanner words (prose, attribute values) are never reported.
  */
-export async function scanHtml(html) {
+export async function scanHtml(html, { theme } = {}) {
+    return scanHtmlWith(html, parseTheme(theme));
+}
+
+async function scanHtmlWith(html, theme) {
     if (typeof html !== 'string' || html.length === 0) return { classes: [], rejected: [] };
     const written = [];
     for (const match of html.matchAll(CLASS_ATTR_RE)) {
         written.push(...normalizeClassList(decodeHtmlEntities(match[1] ?? match[2])));
     }
-    const [classes, checked] = await Promise.all([extractClasses(html), validateExplicitClasses(written)]);
+    const [classes, checked] = await Promise.all([extractClasses(html, theme), validateExplicitClasses(written, theme)]);
     return {
         classes: Array.from(new Set([...classes, ...checked.valid])).sort(),
         rejected: checked.rejected
     };
 }
 
-async function resolveExportInput({ html, classes } = {}) {
-    const [fromHtml, fromInput] = await Promise.all([scanHtml(html), validateExplicitClasses(classes)]);
+async function resolveExportInput({ html, classes } = {}, theme = STOCK_THEME) {
+    const [fromHtml, fromInput] = await Promise.all([scanHtmlWith(html, theme), validateExplicitClasses(classes, theme)]);
     return {
         classes: Array.from(new Set([...fromHtml.classes, ...fromInput.valid])).sort(),
         rejected: Array.from(new Set([...fromHtml.rejected, ...fromInput.rejected])).sort()
@@ -901,8 +1027,9 @@ async function resolveExportInput({ html, classes } = {}) {
  * Depends only on the input, so the same input always gives byte-identical CSS.
  */
 export async function exportCss(input = {}) {
-    const { classes, rejected } = await resolveExportInput(input);
-    return { css: await generateCssForClasses(classes), classes, rejected };
+    const theme = parseTheme(input?.theme);
+    const { classes, rejected } = await resolveExportInput(input, theme);
+    return { css: await generateCssForClasses(classes, theme), classes, rejected };
 }
 
 /**
@@ -914,7 +1041,7 @@ export async function exportCss(input = {}) {
  * page's first class (in Tailwind order) that is not shared and repeats any
  * shared class sorting after it, so every page keeps Tailwind's cascade order.
  */
-export async function exportSet(pages, { minPages = 2 } = {}) {
+export async function exportSet(pages, { minPages = 2, theme: themeText } = {}) {
     if (!Array.isArray(pages)) throw new TypeError('exportSet: pages must be an array');
     const ids = new Set();
     for (const page of pages) {
@@ -924,9 +1051,10 @@ export async function exportSet(pages, { minPages = 2 } = {}) {
         if (ids.has(page.id)) throw new TypeError(`exportSet: duplicate page id "${page.id}"`);
         ids.add(page.id);
     }
+    const theme = parseTheme(themeText);
     const threshold = Number.isInteger(minPages) && minPages >= 1 ? minPages : 2;
     const sorted = pages.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const resolved = await Promise.all(sorted.map((page) => resolveExportInput(page)));
+    const resolved = await Promise.all(sorted.map((page) => resolveExportInput(page, theme)));
 
     const usage = new Map();
     for (const { classes } of resolved) {
@@ -935,12 +1063,12 @@ export async function exportSet(pages, { minPages = 2 } = {}) {
     const union = Array.from(usage.keys()).sort();
     const shared = union.filter((cls) => usage.get(cls) >= threshold);
 
-    const designSystem = await getDesignSystem();
+    const designSystem = await getDesignSystem(theme);
     const order = new Map(designSystem.getClassOrder(union).map(([cls, rank]) => [cls, rank ?? 0n]));
 
     const [sharedCss, unionCss] = await Promise.all([
-        generateCssForClasses(shared),
-        union.length > 0 ? generateCssForClasses(union) : ''
+        generateCssForClasses(shared, theme),
+        union.length > 0 ? generateCssForClasses(union, theme) : ''
     ]);
     const unionTheme = (unionCss.match(THEME_BLOCK_RE) || []).join('').trim();
     const sharedBody = sharedCss.replace(THEME_BLOCK_RE, '').trimEnd();
@@ -953,7 +1081,7 @@ export async function exportSet(pages, { minPages = 2 } = {}) {
         if (own.length > 0) {
             const start = own.reduce((min, cls) => (order.get(cls) < min ? order.get(cls) : min), order.get(own[0]));
             const sheet = classes.filter((cls) => order.get(cls) >= start);
-            css = (await generateThemeUtilitiesForClasses(sheet)).utilitiesCss;
+            css = (await generateThemeUtilitiesForClasses(sheet, theme)).utilitiesCss;
         }
         out.pages[page.id] = css;
         out.classes[page.id] = classes;
@@ -1192,10 +1320,10 @@ const RICH_WIND_RELOAD_JS = `(function () {
 }());
 `;
 
-async function resolveClassesFromInput({ html, validInput }) {
+async function resolveClassesFromInput({ html, validInput, theme }) {
     // scanHtml already validates via candidatesToCss, so only
     // validate the raw class input to avoid a redundant second pass.
-    const scanned = html ? await scanHtml(html) : { classes: [], rejected: [] };
+    const scanned = html ? await scanHtmlWith(html, theme) : { classes: [], rejected: [] };
     const combined = new Set([...scanned.classes, ...validInput]);
     return { classes: Array.from(combined).sort(), htmlRejected: scanned.rejected };
 }
@@ -1208,6 +1336,7 @@ async function compileAndCachePage({
     html,
     classes,
     bundle = 'full',
+    theme = STOCK_THEME,
     pluginRunner,
     cacheStoreRunner,
     queueStoreWrite,
@@ -1218,7 +1347,7 @@ async function compileAndCachePage({
     const normalizedBundle = normalizeBundle(bundle);
     // Rejections come from the class list and from HTML class attributes; other
     // scanner words (prose, attribute values) are never reported.
-    const { valid: validInput, rejected: inputRejected } = await validateExplicitClasses(classes);
+    const { valid: validInput, rejected: inputRejected } = await validateExplicitClasses(classes, theme);
     let rejected = inputRejected;
 
     // Base bundle handling
@@ -1236,12 +1365,14 @@ async function compileAndCachePage({
         await pluginRunner.runHook('onCompileStart', { projectId, pageId, bundle: normalizedBundle, html, classes, source, request });
     }
 
+    await applyProjectTheme(state, projectId, theme);
+
     // Pre-hydrate from cacheStore
     if (!skipHooks) {
-        await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle);
+        await hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle, theme);
     }
 
-    const resolved = await resolveClassesFromInput({ html, validInput });
+    const resolved = await resolveClassesFromInput({ html, validInput, theme });
     let resolvedClasses = resolved.classes;
     if (resolved.htmlRejected.length > 0) {
         rejected = Array.from(new Set([...inputRejected, ...resolved.htmlRejected])).sort();
@@ -1252,7 +1383,7 @@ async function compileAndCachePage({
         const transformed = await pluginRunner.runPipeline('transformClasses', { projectId, pageId, bundle: normalizedBundle, source, request }, resolvedClasses);
         if (Array.isArray(transformed)) {
             const deduped = Array.from(new Set(transformed));
-            const valid = await filterValidClasses(deduped);
+            const valid = await filterValidClasses(deduped, theme);
             resolvedClasses = valid.sort();
         }
     }
@@ -1281,9 +1412,12 @@ async function compileAndCachePage({
     }
 
     const now = Date.now();
-    const project = getProject(state, projectId);
+    const project = getProject(state, projectId, theme);
+    // The theme can change while this compile awaits. CSS built for the old one
+    // is still this caller's answer, but it never enters the caches.
+    const holdsTheme = () => state.projects.get(projectId) === project && project.theme.hash === theme.hash;
     const existing = project.pages.get(pageId);
-    const classHash = hashClasses(resolvedClasses);
+    const classHash = hashClasses(resolvedClasses, theme.hash);
     const bundleKey =
         normalizedBundle === 'utilities'
             ? 'utilitiesCss'
@@ -1291,7 +1425,7 @@ async function compileAndCachePage({
               ? 'themeCss'
               : 'css';
 
-    if (existing && existing.hash === classHash && !isExpired(existing)) {
+    if (existing && holdsTheme() && existing.hash === classHash && !isExpired(existing)) {
         existing.expiresAt = now + config.cacheTtlMs;
         existing.updatedAt = now;
         const pageKey = makePageKey(projectId, pageId);
@@ -1308,10 +1442,10 @@ async function compileAndCachePage({
     let css = '';
     const compileKey = `${classHash}:${normalizedBundle === 'utilities' || normalizedBundle === 'theme' ? 'split' : 'full'}`;
     if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
-        const split = await coalesceCompile(compileKey, () => generateThemeUtilitiesForClasses(resolvedClasses));
+        const split = await coalesceCompile(compileKey, () => generateThemeUtilitiesForClasses(resolvedClasses, theme));
         css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
     } else {
-        css = await coalesceCompile(compileKey, () => generateCssForClasses(resolvedClasses));
+        css = await coalesceCompile(compileKey, () => generateCssForClasses(resolvedClasses, theme));
     }
 
     // transformCss pipeline
@@ -1328,6 +1462,10 @@ async function compileAndCachePage({
                 });
             }
         }
+    }
+
+    if (!holdsTheme()) {
+        return { css, classes: resolvedClasses, rejected, hash: classHash, cached: false, bundle: normalizedBundle };
     }
 
     const newClassSet = new Set(resolvedClasses);
@@ -1391,7 +1529,7 @@ async function compileAndCachePage({
         queueWrite(() =>
             cacheStoreRunner.upsertPageArtifact({
                 projectId, pageId, bundle: normalizedBundle,
-                css, hash: classHash, classes: resolvedClasses,
+                css, hash: classHash, themeHash: theme.hash, classes: resolvedClasses,
                 cached: false, updatedAt: writeNow, expiresAt: writeNow + config.cacheTtlMs
             })
         );
@@ -1416,16 +1554,22 @@ async function getCachedPageCss(state, config, projectId, pageId, bundle = 'full
 
     page.expiresAt = Date.now() + config.cacheTtlMs;
     touchPageKey(state, makePageKey(projectId, pageId));
+    const theme = project.theme;
+    const classes = Array.from(page.classes || []);
+    const holdsTheme = () => project.theme === theme && project.pages.get(pageId) === page;
     if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
         if (page.utilitiesCss === null || page.utilitiesCss === undefined || page.themeCss === null || page.themeCss === undefined) {
-            const split = await generateThemeUtilitiesForClasses(Array.from(page.classes || []));
+            const split = await generateThemeUtilitiesForClasses(classes, theme);
+            if (!holdsTheme()) return { css: normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss };
             page.utilitiesCss = split.utilitiesCss;
             page.themeCss = split.themeCss;
         }
         return { css: normalizedBundle === 'utilities' ? page.utilitiesCss : page.themeCss };
     }
     if (page.css === null || page.css === undefined) {
-        page.css = await generateCssForClasses(Array.from(page.classes || []));
+        const css = await generateCssForClasses(classes, theme);
+        if (!holdsTheme()) return { css };
+        page.css = css;
     }
     return { css: page.css };
 }
@@ -1447,32 +1591,35 @@ async function getProjectCss(state, config, projectId, bundle = 'full') {
               : 'cssCache';
     const cacheEntry = project[cacheKey];
     if (cacheEntry && !isExpired(cacheEntry)) {
-        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
+        return { css: cacheEntry.css, hash: cacheEntry.hash, themeHash: project.theme.hash, cached: true };
     }
 
+    const theme = project.theme;
     const classes = Array.from(project.classCounts.keys()).sort();
-    const hash = hashClasses(classes);
+    const hash = hashClasses(classes, theme.hash);
     if (cacheEntry && cacheEntry.hash === hash) {
         cacheEntry.expiresAt = now + config.projectCacheTtlMs;
-        return { css: cacheEntry.css, hash: cacheEntry.hash, cached: true };
+        return { css: cacheEntry.css, hash: cacheEntry.hash, themeHash: theme.hash, cached: true };
     }
 
     let css = '';
     if (classes.length) {
         if (normalizedBundle === 'utilities' || normalizedBundle === 'theme') {
-            const split = await generateThemeUtilitiesForClasses(classes);
+            const split = await generateThemeUtilitiesForClasses(classes, theme);
             css = normalizedBundle === 'utilities' ? split.utilitiesCss : split.themeCss;
         } else {
-            css = await generateCssForClasses(classes);
+            css = await generateCssForClasses(classes, theme);
         }
     }
-    project[cacheKey] = {
-        css,
-        hash,
-        updatedAt: now,
-        expiresAt: now + config.projectCacheTtlMs
-    };
-    return { css, hash, cached: false };
+    if (project.theme === theme && state.projects.get(projectId) === project) {
+        project[cacheKey] = {
+            css,
+            hash,
+            updatedAt: now,
+            expiresAt: now + config.projectCacheTtlMs
+        };
+    }
+    return { css, hash, themeHash: theme.hash, cached: false };
 }
 
 async function readPageArtifactFromStore(cacheStoreRunner, config, projectId, pageId, bundle) {
@@ -1496,7 +1643,7 @@ async function readProjectArtifactFromStore(cacheStoreRunner, config, projectId,
     return sanitizeProjectArtifact(raw, config, Date.now());
 }
 
-async function hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle) {
+async function hydrateMissingCompilePageFromStore(state, config, cacheStoreRunner, projectId, pageId, bundle, theme = STOCK_THEME) {
     if (!cacheStoreRunner?.enabled) return false;
     const project = state.projects.get(projectId);
     if (project?.pages?.has(pageId)) return true;
@@ -1516,7 +1663,7 @@ async function hydrateMissingCompilePageFromStore(state, config, cacheStoreRunne
             candidateBundle
         );
         if (!artifact || !Array.isArray(artifact.classes)) continue;
-        if (hydratePageFromArtifact(state, config, projectId, pageId, candidateBundle, artifact, { requireClasses: true })) {
+        if (hydratePageFromArtifact(state, config, projectId, pageId, candidateBundle, artifact, { requireClasses: true, theme })) {
             return true;
         }
     }
@@ -1588,7 +1735,7 @@ function createPluginRunner(plugins = [], options = {}) {
         'onRequestStart', 'onResponseSent', 'onCompileStart', 'onCompileResult',
         'onCacheHit', 'onCacheMiss', 'onProjectCss', 'onSuggest', 'onError',
         'transformClasses', 'transformCss', 'transformSuggestions',
-        'resolvePageCss', 'resolveProjectCss'
+        'resolvePageCss', 'resolveProjectCss', 'resolveTheme'
     ];
     const hookSubscribers = new Map();
     for (const hook of ALL_HOOKS) {
@@ -1598,7 +1745,7 @@ function createPluginRunner(plugins = [], options = {}) {
 
     const NEVER_DEFER_HOOKS = new Set([
         'guard', 'onError', 'transformClasses', 'transformCss', 'transformSuggestions',
-        'resolvePageCss', 'resolveProjectCss'
+        'resolvePageCss', 'resolveProjectCss', 'resolveTheme'
     ]);
 
     const shouldDefer = (plugin, hook) => {
@@ -1740,7 +1887,36 @@ function createPluginRunner(plugins = [], options = {}) {
         return null;
     };
 
-    return { runHook, runPipeline, runResolve, runGuard, list };
+    // The first plugin to answer names the project's theme. Unlike the resolve
+    // hooks, nothing here is skipped on failure: falling through to the next
+    // plugin or to the stock theme would build CSS against a theme the project
+    // does not have, and answer it with a success.
+    const runTheme = async (context) => {
+        const subscribers = hookSubscribers.get('resolveTheme');
+        if (!subscribers || subscribers.length === 0) return null;
+        const hookContext = buildHookContext(context);
+        for (const plugin of subscribers) {
+            if (!plugin.active || plugin.failed) {
+                throw new RichWindError(500, 'INTERNAL', `Theme plugin "${plugin.name}" is not running.`);
+            }
+            let result;
+            try {
+                result = await hookStore.run(
+                    { inHook: true, inTheme: true, slot: hookStore.getStore()?.slot },
+                    () => withTimeout(Promise.resolve(plugin.instance.resolveTheme(hookContext)), plugin.timeoutMs)
+                );
+            } catch (error) {
+                const timedOut = error && error.code === 'PLUGIN_TIMEOUT';
+                await runHook('onError', { error, hook: 'resolveTheme', plugin: plugin.name, timedOut, context: hookContext });
+                if (error instanceof RichWindError) throw error;
+                throw new RichWindError(500, 'INTERNAL', `resolveTheme failed in plugin "${plugin.name}".`, { cause: error });
+            }
+            if (result !== null && result !== undefined) return result;
+        }
+        return null;
+    };
+
+    return { runHook, runPipeline, runResolve, runGuard, runTheme, list };
 }
 
 // =============================================================================
@@ -1765,6 +1941,21 @@ function createCoreFunctions({
     isWriteAllowed, reportWriteBlocked, chainDepthLimit
 }) {
     let activeCompiles = 0;
+
+    // Every route that builds or serves a project's CSS asks for the project's
+    // theme first, so what it serves is always the current theme's. No theme
+    // plugin means the stock theme.
+    const projectTheme = async (projectId, meta = {}) => {
+        if (hookStore.getStore()?.inTheme) {
+            throw new RichWindError(500, 'INTERNAL', 'resolveTheme cannot call back into the core.');
+        }
+        const theme = parseTheme(await pluginRunner.runTheme({
+            projectId, source: meta.source ?? 'core', request: meta.request ?? null
+        }));
+        await applyProjectTheme(state, projectId, theme);
+        return theme;
+    };
+
     // Runs one operation; anything that is not a RichWindError reaches onError and
     // becomes 500 INTERNAL, so callers only ever see the public error contract.
     const guarded = async (stage, meta, fn) => {
@@ -1824,7 +2015,7 @@ function createCoreFunctions({
                     project.storedBundles.set(bundle, writtenAt);
                     await cacheStoreRunner.upsertProjectArtifact({
                         projectId, bundle, css: result.css, hash: result.hash ?? null,
-                        cached: result.cached, updatedAt: writtenAt,
+                        themeHash: result.themeHash, cached: result.cached, updatedAt: writtenAt,
                         expiresAt: writtenAt + config.projectCacheTtlMs
                     });
                 }
@@ -1857,6 +2048,8 @@ function createCoreFunctions({
             throw new RichWindError(413, 'PAYLOAD_TOO_LARGE', `classes is too large. Limit is ${config.maxClassChars} chars.`);
         }
 
+        const theme = bundle === 'base' ? STOCK_THEME : await projectTheme(projectId, meta);
+
         // One slot per compile, no wait queue. A compile made from a hook its parent
         // compile awaits runs inside the parent's slot; any other compile (host,
         // HTTP, deferred hook, plugin route) needs a free slot or is shed.
@@ -1873,7 +2066,7 @@ function createCoreFunctions({
         const ownSlot = slot ?? parentSlot;
 
         const compilePage = () => compileAndCachePage({
-            state, config, projectId, pageId, html, classes, bundle,
+            state, config, projectId, pageId, html, classes, bundle, theme,
             pluginRunner, cacheStoreRunner, queueStoreWrite,
             skipHooks: meta.skipHooks, source: meta.source, request: meta.request
         });
@@ -1915,12 +2108,13 @@ function createCoreFunctions({
         if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
         if (!isValidId(pageId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('pageId', config));
 
+        const theme = bundle === 'base' ? STOCK_THEME : await projectTheme(projectId, meta);
         const hit = (source) => pluginRunner.runHook('onCacheHit', { projectId, pageId, bundle, source, request: meta.request });
         const miss = (source) => pluginRunner.runHook('onCacheMiss', { projectId, pageId, bundle, source, request: meta.request });
         const fromStore = async () => {
             const storeArtifact = await readPageArtifactFromStore(cacheStoreRunner, config, projectId, pageId, bundle);
-            if (!storeArtifact) return null;
-            hydratePageFromArtifact(state, config, projectId, pageId, bundle, storeArtifact);
+            if (!storeArtifact || storeArtifact.themeHash !== theme.hash) return null;
+            hydratePageFromArtifact(state, config, projectId, pageId, bundle, storeArtifact, { theme });
             await hit('page-store');
             return { css: storeArtifact.css, etag: storeArtifact.hash ?? null };
         };
@@ -1948,7 +2142,7 @@ function createCoreFunctions({
 
         // Resolve hook: let plugins provide CSS on cache miss
         const resolved = await pluginRunner.runResolve('resolvePageCss', {
-            projectId, pageId, bundle, source: meta.source, request: meta.request
+            projectId, pageId, bundle, themeHash: theme.hash, source: meta.source, request: meta.request
         }, config);
         if (resolved) return { css: resolved.css, etag: null };
 
@@ -1963,9 +2157,10 @@ function createCoreFunctions({
         if (!projectId) throw new RichWindError(400, 'MISSING_INPUT', 'projectId is required.');
         if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
 
+        const theme = bundle === 'base' ? STOCK_THEME : await projectTheme(projectId, meta);
         const fromStore = async () => {
             const storeArtifact = await readProjectArtifactFromStore(cacheStoreRunner, config, projectId, bundle);
-            if (!storeArtifact) return null;
+            if (!storeArtifact || storeArtifact.themeHash !== theme.hash) return null;
             return { css: storeArtifact.css, hash: storeArtifact.hash ?? null, cached: true, source: 'store' };
         };
 
@@ -1984,7 +2179,7 @@ function createCoreFunctions({
         if (!result) {
             // Resolve hook: let plugins provide project CSS on cache miss
             const resolved = await pluginRunner.runResolve('resolveProjectCss', {
-                projectId, bundle, source: meta.source, request: meta.request
+                projectId, bundle, themeHash: theme.hash, source: meta.source, request: meta.request
             }, config);
             if (resolved) return { css: resolved.css, etag: null };
             throw new RichWindError(404, 'NOT_FOUND', 'Project CSS was not found.');
@@ -2004,6 +2199,7 @@ function createCoreFunctions({
                     bundle,
                     css: result.css,
                     hash: result.hash ?? null,
+                    themeHash: result.themeHash,
                     cached: result.cached,
                     updatedAt: now,
                     expiresAt: now + config.projectCacheTtlMs
@@ -2089,11 +2285,13 @@ function createCoreFunctions({
             }
         };
 
+        const theme = projectId ? await projectTheme(projectId, meta) : STOCK_THEME;
         if (includeInput.length) push(includeInput);
         if (projectId) push(getProjectSuggestionList(state, projectId));
         if (config.suggestFallback && prefix) {
-            const staticList = await getStaticClassSuggestions(prefix);
-            push(staticList.length ? staticList : getFallbackSuggestions(prefix));
+            const staticList = await getStaticClassSuggestions(prefix, theme);
+            // The fallback index lists stock classes, which a project theme can switch off.
+            push(staticList.length || theme.hash ? staticList : getFallbackSuggestions(prefix));
         }
 
         // Phase 2: Run transform pipeline
@@ -2125,7 +2323,8 @@ function createCoreFunctions({
         getCss: withMeta('cache', runGetCss),
         getProjectCss: withMeta('project-css', runGetProjectCss),
         invalidate: withMeta('invalidate', runInvalidate),
-        suggest: withMeta('suggest', runSuggest)
+        suggest: withMeta('suggest', runSuggest),
+        projectTheme
     };
 }
 
@@ -2833,6 +3032,8 @@ function buildPluginContext(state, config) {
         getConfig() {
             return Object.freeze({ ...config });
         },
+        // Replaced in createCore once the core functions exist; a project's
+        // classes are validated against that project's theme.
         async validateClasses(classes) {
             const input = normalizeClassList(
                 typeof classes === 'string' ? classes : (Array.isArray(classes) ? classes : [])
@@ -3137,6 +3338,15 @@ export async function createCore({
         skipHooks: hookStore.getStore()?.inHook ?? false
     });
 
+    pluginContext.validateClasses = async (classes, { projectId } = {}) => {
+        const input = normalizeClassList(
+            typeof classes === 'string' ? classes : (Array.isArray(classes) ? classes : [])
+        );
+        if (projectId === undefined || projectId === null) return filterValidClasses(input);
+        if (!isValidId(projectId, config)) throw new RichWindError(400, 'INVALID_ID', invalidIdMessage('projectId', config));
+        return filterValidClasses(input, await fns.projectTheme(projectId, { source: 'plugin' }));
+    };
+
     pluginContext.hydratePageArtifact = (input) => {
         if (!isWriteAllowed()) {
             reportWriteBlockedAsync('plugin-hydrate-page-artifact', {
@@ -3172,6 +3382,7 @@ export async function createCore({
         if (!sanitized) return false;
         const normalizedBundle = normalizeBundle(bundle);
         if (normalizedBundle === 'base') return false;
+        if (sanitized.themeHash !== project.theme.hash) return false;
         const cacheKey = normalizedBundle === 'utilities' ? 'utilitiesCssCache'
             : normalizedBundle === 'theme' ? 'themeCssCache' : 'cssCache';
         project[cacheKey] = {

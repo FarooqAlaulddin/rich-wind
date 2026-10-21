@@ -82,14 +82,17 @@ try {
 Module-level functions with no cache, plugins or project state: the same input always gives byte-identical CSS, so a host can store source and rebuild CSS on demand.
 
 ```js
-import { scanHtml, exportCss, exportSet } from "@thinkly/rich-wind";
+import { scanHtml, exportCss, exportSet, parseTheme } from "@thinkly/rich-wind";
 ```
 
 | Function | Returns |
 | --- | --- |
-| `scanHtml(html)` | `{ classes, rejected }`: valid classes found in the HTML, and class-attribute tokens that compile to nothing |
-| `exportCss({ html?, classes? })` | `{ css, classes, rejected }`: one complete sheet (preflight, theme variables, utilities) |
-| `exportSet(pages, { minPages = 2 }?)` | `{ shared, pages, classes, rejected }` for `pages` = `[{ id, html?, classes? }]`; `pages`, `classes` and `rejected` are keyed by id |
+| `scanHtml(html, { theme }?)` | `{ classes, rejected }`: valid classes found in the HTML, and class-attribute tokens that compile to nothing |
+| `exportCss({ html?, classes?, theme? })` | `{ css, classes, rejected }`: one complete sheet (preflight, theme variables, utilities) |
+| `parseTheme(theme)` | `{ text, hash }`: the theme as core will compile it (both `""` for stock); throws `INVALID_THEME` for one core would refuse |
+| `exportSet(pages, { minPages = 2, theme }?)` | `{ shared, pages, classes, rejected }` for `pages` = `[{ id, html?, classes? }]`; `pages`, `classes` and `rejected` are keyed by id |
+
+`theme` is the declaration string a [`resolveTheme`](plugin-system.html#theme) plugin returns; omitted or `null` is the stock theme, and an invalid one throws `INVALID_THEME`.
 
 `exportSet` puts preflight, every page's theme variables and the utilities used on at least `minPages` pages in `shared`. Load `shared` first, then the page's sheet. A page sheet may repeat a shared class to keep Tailwind's cascade order. It is `""` when the page needs nothing beyond `shared`.
 
@@ -316,7 +319,8 @@ Every error produced by core is `{ "error": string, "code": string }`; plugin ro
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `POST /api/*` without `application/json`, or with a `Content-Encoding` |
 | `RATE_LIMITED` | 429 | a plugin guard blocked the request (core has no limiter), or a guard returned no status; the guard may set `Retry-After` |
 | `REQUEST_BLOCKED` | guard status | a plugin guard blocked the request with a status other than 401, 403 or 429 |
-| `INTERNAL` | 500 | unexpected error (no stack trace is sent), or plugin compile chain depth exceeded |
+| `INVALID_THEME` | 500 | a [`resolveTheme`](plugin-system.html#theme) plugin, or an export's `theme`, gave something other than custom-property declarations, or a theme Tailwind cannot compile |
+| `INTERNAL` | 500 | unexpected error (no stack trace is sent); plugin compile chain depth exceeded; a `resolveTheme` plugin threw, timed out or failed its setup |
 | `SERVER_BUSY` | 503 | every compile slot is in use; sent with `Retry-After: 1` |
 
 What core enforces and what the host must enforce: [Runtime Spec](runtime-spec.html#security-boundary).

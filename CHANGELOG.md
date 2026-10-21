@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-10-20
+
+### Added
+
+- Project themes. A `resolveTheme({ projectId })` plugin hook returns a project's design tokens as CSS custom-property declarations, compiled as an `@theme` block after Tailwind's own, so `--color-*: initial; --color-ink: #111;` makes `bg-ink` a class and `bg-red-500` a rejection for that project alone. Every route that builds or serves a project's CSS resolves the theme first; the hook fails closed, never falls back to stock, and is never deferred. A theme holds declarations only and anything else is `500 INVALID_THEME`. The theme is part of the page hash and the ETag; stock hashes are unchanged. Artifacts carry `themeHash`, and one built for another theme is never served. `scanHtml`, `exportCss` and `exportSet` take a `theme` option, and `ctx.validateClasses(classes, { projectId })` validates against the project's theme. `cache-store-fs` persists `themeHash`.
+
+- `parseTheme(theme)` checks a theme as core will and returns its normalized `{ text, hash }`, or throws `INVALID_THEME`, so a host or plugin can test one before serving it.
+
+- `rich-wind/plugins/design-tokens`: `createDesignTokensPlugin({ tokensFor })` answers `resolveTheme` from a project's Tailwind v4 token file. A namespace the file declares replaces Tailwind's (spacing excepted, whose reset would switch off the numeric scale); a declaration core would refuse is dropped and reported by `readTokens` rather than failing the project. `plainCss` turns the file into CSS a page can load without Tailwind.
+
+- The Lexical demo has a **Themes** view in the Rich Wind strip. It compiles the current page under Tailwind's stock theme and two token files through the design-tokens plugin, previews each, and lists what each rejects. The **Brand card** example is written in tokens to show it.
+
+### Fixed
+
+- The plugin loader returns only plugins. A `plugins/` directory whose factory returns no named plugin (`cache-store-fs`, a store rather than a plugin) is skipped with a warning instead of being registered unnamed, and a test loads every plugin directory with no arguments as the loader does.
+
 ## [1.0.0-rc.3] - 2026-10-19
 
 ### Fixed

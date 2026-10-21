@@ -33,6 +33,8 @@ You can also run the bundled server (`npm start`) as a separate service behind a
 
 ## API
 
+A project can have its own theme: a [`resolveTheme`](https://farooqalaulddin.github.io/rich-wind/plugin-system.html#theme) plugin returns the project's design tokens as CSS custom properties, and that project's classes become the ones the tokens make (`bg-ink`, `rounded-card`). The bundled `design-tokens` plugin reads them from a Tailwind v4 token file (`@theme { --color-ink: #111; }`). Without one, every project gets Tailwind's stock theme.
+
 Endpoints, functions, errors, and configuration are in the [API Reference](https://farooqalaulddin.github.io/rich-wind/api-reference.html). Options are set through `createCore({ config: { ... } })` or `RW_*` environment variables; the full list is in [Configuration](https://farooqalaulddin.github.io/rich-wind/api-reference.html#configuration). `PORT` applies only to the bundled server (`npm start`), not to `createCore`.
 
 ## Docs

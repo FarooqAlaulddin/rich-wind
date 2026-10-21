@@ -5,7 +5,8 @@ The operational contract: what the cache does, what a `cacheStore` must implemen
 ## Caching
 
 - Cache is in process memory, per process. A restart clears it unless a `cacheStore` holds the artifacts.
-- A page is keyed by `projectId` + `pageId`. The `hash` is the identity of the class set (also the ETag), not the key.
+- A page is keyed by `projectId` + `pageId`. The `hash` is the identity of the class set and the project's theme (also the ETag), not the key. With the stock theme it is the hash of the class set alone, as before themes existed.
+- A project's theme comes from a [`resolveTheme`](plugin-system.html#theme) plugin. When it changes, that project's CSS is rebuilt on the next read; a compile whose theme changed while it ran returns its CSS without caching it.
 - Page TTL is sliding (`cacheTtlMs`, reset on access); `cacheMaxPages` is a global LRU cap across projects. Expired entries are evicted when read, there is no background sweep.
 - Project CSS is the union of the classes of the project's pages held in memory. It is recompiled after any page in the project is added, removed, or changes, and has a fixed TTL (`projectCacheTtlMs`) that a hit does not extend.
 - `GET /api/css` and `core.getCss` never compile new classes. After expiry or eviction, with no store holding the entry, they return `404`; only compile rebuilds.
@@ -18,10 +19,10 @@ An object passed to `createCore({ cacheStore })` that persists artifacts and plu
 | Method | Called when | Receives | Returns |
 | --- | --- | --- | --- |
 | `readPageArtifact` | Page not in memory (compile pre-hydration and `GET /api/css`) | `projectId, pageId, bundle, now` | artifact or `null` |
-| `upsertPageArtifact` | After a compile | `projectId, pageId, bundle, css, hash, classes, cached, updatedAt, expiresAt` | ignored |
+| `upsertPageArtifact` | After a compile | `projectId, pageId, bundle, css, hash, themeHash, classes, cached, updatedAt, expiresAt` | ignored |
 | `deletePageArtifact` | `ctx.purgePage` and `POST /api/invalidate` with a `pageId`, once per bundle (`full`, `utilities`, `theme`) | `projectId, pageId, bundle` | ignored |
 | `readProjectArtifact` | Project CSS requested and the project has no pages in memory | `projectId, bundle, now` | artifact or `null` |
-| `upsertProjectArtifact` | Every project CSS read served from memory on a writer or hybrid node | `projectId, bundle, css, hash, cached, updatedAt, expiresAt` | ignored |
+| `upsertProjectArtifact` | Every project CSS read served from memory on a writer or hybrid node | `projectId, bundle, css, hash, themeHash, cached, updatedAt, expiresAt` | ignored |
 | `deleteProjectArtifact` | `ctx.purgeProject` and `POST /api/invalidate` without a `pageId`, once per bundle | `projectId, bundle` | ignored |
 | `deleteProjectPageArtifacts` | `ctx.purgeProject` and `POST /api/invalidate` without a `pageId` | `projectId` | ignored |
 | `readPluginData` | `ctx.storage.get` | `pluginName, key` | value or `null` |
@@ -29,7 +30,9 @@ An object passed to `createCore({ cacheStore })` that persists artifacts and plu
 | `deletePluginData` | `ctx.storage.delete` | `pluginName, key` | ignored |
 | `listPluginData` | `ctx.storage.list` | `pluginName, prefix` | array of keys |
 
-An artifact is `{ css, hash, updatedAt, expiresAt, classes? }`.
+An artifact is `{ css, hash, themeHash?, updatedAt, expiresAt, classes? }`.
+
+- Persist `themeHash` and return it. An artifact is served only to a project whose current theme has that hash; one without it is a stock artifact, which every artifact written before themes existed is. A store that drops the field serves themed projects nothing from the store, never the wrong CSS.
 
 - Every method is optional. A missing method is reported once through `onError` with code `CACHE_STORE_METHOD_MISSING`.
 - Fail-open: a throw or timeout never fails the request. It is reported to [`onError`](plugin-system.html#hooks) with `stage: "cache-store"` and the request continues from memory. Purges return `false`.

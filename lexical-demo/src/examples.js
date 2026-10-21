@@ -67,6 +67,24 @@ export const EXAMPLES = [
     ]),
   },
   {
+    id: 'brand',
+    label: 'Brand card',
+    hint: 'Written in design tokens: open Themes to see it',
+    hasRejected: true,
+    state: editorState([
+      box('rounded-card border border-line bg-paper p-6 shadow-card', [
+        para('font-body text-xs uppercase tracking-widest text-accent', [textNode('Field notes')]),
+        heading('h2', 'mt-2 font-display text-3xl text-ink', [textNode('One page, any design system')]),
+        para('mt-2 font-body text-muted', [
+          textNode('Every color, face, radius and shadow here is a token. Under Tailwind\'s stock theme none of them exist; under Ink or Harbor they all do, and '),
+          spanNode('this indigo', 'text-indigo-600'),
+          textNode(' is the one class each brand rejects.'),
+        ]),
+        para('mt-4 w-fit rounded-card bg-accent px-4 py-2 font-body font-semibold text-on-accent', [textNode('Read the issue')]),
+      ]),
+    ]),
+  },
+  {
     id: 'metrics',
     label: 'Metrics dashboard',
     hint: 'Containers: a grid of cards, number over label',

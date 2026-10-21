@@ -842,6 +842,7 @@
               "FORBIDDEN",
               "REQUEST_BLOCKED",
               "NOT_FOUND",
+              "INVALID_THEME",
               "INTERNAL"
             ]
           }

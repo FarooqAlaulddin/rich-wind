@@ -1,6 +1,6 @@
 {
   "name": "@thinkly/rich-wind",
-  "version": "1.0.0-rc.3",
+  "version": "1.0.0-rc.4",
   "description": "Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step.",
   "type": "module",
   "main": "./services/index.js",
@@ -18,12 +18,17 @@
     "./plugins/cache-store-fs": {
       "import": "./plugins/cache-store-fs/index.js",
       "default": "./plugins/cache-store-fs/index.js"
+    },
+    "./plugins/design-tokens": {
+      "import": "./plugins/design-tokens/index.js",
+      "default": "./plugins/design-tokens/index.js"
     }
   },
   "files": [
     "services/",
     "plugins/auto-promote/",
     "plugins/cache-store-fs/",
+    "plugins/design-tokens/",
     "!**/*.test.js"
   ],
   "workspaces": [
