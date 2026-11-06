@@ -424,6 +424,106 @@ describe('auto-promote with a page store', () => {
     expect(s.trackedClasses).toBe(2); // p-4 from the snapshot, flex from the hydrated page
   });
 
+  async function bootReader(store) {
+    return createCore({
+      plugins: [createAutoPromotePlugin({ threshold: 2 })],
+      cacheStore: store,
+      config: { nodeRole: 'reader' }
+    });
+  }
+
+  it('a reader serves the bundle the writer stored, covering every stored page', async () => {
+    let seed = 4242;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const store = createPageStore();
+    const { plugin } = await boot(store);
+    const reader = await bootReader(store);
+    try {
+      const asked = new Map();
+      for (let round = 0; round < 30; round++) {
+        const pageId = ['a', 'b', 'c', 'd'][Math.floor(random() * 4)];
+        const classes = POOL.filter(() => random() < 0.5);
+        if (classes.length === 0) classes.push('flex');
+        if (random() < 0.1) {
+          await core.invalidate({ projectId: 'r', pageId });
+          asked.delete(pageId);
+        } else {
+          await core.compile({ projectId: 'r', pageId, classes: classes.join(' ') });
+          asked.set(pageId, classes);
+        }
+        await settle(plugin);
+        for (const [id, list] of asked) await expectCovered(reader, 'r', id, list);
+      }
+      expect((await stats(core, 'r')).promoted.length).toBeGreaterThan(0);
+      expect(await bundleCss(reader, 'r')).toBe(await bundleCss(core, 'r'));
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it('strips nothing until the bundle is stored, and retries the write on the next compile', async () => {
+    const store = createPageStore();
+    const write = store.writePluginData;
+    let failBundle = true;
+    store.writePluginData = (input) => {
+      if (failBundle && input.key.startsWith('bundle:')) throw new Error('store down');
+      return write(input);
+    };
+    const { plugin } = await boot(store);
+    for (const pageId of ['a', 'b', 'a']) {
+      await core.compile({ projectId: 'f', pageId, classes: 'p-4 m-2' });
+      await settle(plugin);
+    }
+    expect((await stats(core, 'f')).promoted).toEqual(['m-2', 'p-4']);
+    expect(store.pages.get('f|a|full').classes).toEqual(['m-2', 'p-4']);
+
+    failBundle = false;
+    await core.compile({ projectId: 'f', pageId: 'c', classes: 'flex' }); // bundle unchanged
+    await settle(plugin);
+    expect(store.data.get('auto-promote|bundle:f').served.sort()).toEqual(['m-2', 'p-4']);
+    await core.compile({ projectId: 'f', pageId: 'a', classes: 'p-4 m-2 underline' });
+    await settle(plugin);
+    expect(store.pages.get('f|a|full').classes).toEqual(['underline']);
+  });
+
+  it('after a restart, stripping waits until the bundle is stored again', async () => {
+    const store = createPageStore();
+    let { plugin } = await boot(store);
+    for (const pageId of ['a', 'b']) {
+      await core.compile({ projectId: 'g', pageId, classes: 'p-4 m-2' });
+      await settle(plugin);
+    }
+    await core.close();
+    store.data.delete('auto-promote|bundle:g');
+
+    ({ plugin } = await boot(store));
+    await core.compile({ projectId: 'g', pageId: 'a', classes: 'p-4 m-2 flex' });
+    expect(store.pages.get('g|a|full').classes).toEqual(['flex', 'm-2', 'p-4']);
+    await settle(plugin);
+    expect(store.data.get('auto-promote|bundle:g').served.sort()).toEqual(['m-2', 'p-4']);
+    await core.compile({ projectId: 'g', pageId: 'a', classes: 'p-4 m-2 rounded' });
+    expect(store.pages.get('g|a|full').classes).toEqual(['rounded']);
+  });
+
+  it('a reader answers 404 when the store has no bundle, fails, or the id is invalid', async () => {
+    const store = createPageStore();
+    const reader = await bootReader(store);
+    try {
+      const get = async (id) => (await reader.fetch(new Request(`http://localhost/plugins/auto-promote/css/${id}`))).status;
+      expect(await get('none')).toBe(404);
+      expect(await get('bad%20id')).toBe(404);
+      store.data.set('auto-promote|bundle:x', { served: [], css: '' });
+      expect(await get('x')).toBe(200);
+      store.readPluginData = () => { throw new Error('store down'); };
+      expect(await get('x')).toBe(404);
+    } finally {
+      await reader.close();
+    }
+  });
+
   it('randomized compiles, bundles, evictions, invalidations and restarts never lose a style', async () => {
     let seed = 777;
     const random = () => {

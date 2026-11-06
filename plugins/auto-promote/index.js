@@ -15,6 +15,8 @@ import crypto from 'node:crypto';
 
 const SYNTHETIC_PAGE = '__auto_promote__';
 const STORAGE_KEY = 'state_v2';
+// Same as core's project id rule; keeps bundle:<projectId> a valid storage key.
+const VALID_ID_RE = /^[a-zA-Z0-9._-]+$/;
 const PERSIST_DEBOUNCE_MS = 250;
 // A page whose compile started but whose result has not arrived yet counts as live
 // for this long, so a concurrent reconcile does not drop its votes. Compiles that
@@ -72,6 +74,11 @@ export function createAutoPromotePlugin(options = {}) {
   // be served from its stored artifacts, one per bundle, each possibly built from an
   // older class list. Such a page keeps its votes and the union of every class ever
   // stripped from it, in one entry, until core reports it gone through onInvalidate.
+  //
+  // With a page store the bundle is also written to ctx.storage under bundle:<projectId>,
+  // which reader nodes serve, and `published` holds the classes that write is known to
+  // contain. A class is stripped only once it is published, so a stored page never lacks
+  // a class the stored bundle does not have.
   const projects = new Map();
   // Serialized bundle refreshes, one chain per project.
   const refreshes = new Map();
@@ -83,6 +90,12 @@ export function createAutoPromotePlugin(options = {}) {
   const hasPageStore = () => ctx?.getCacheStats().pageStore === true;
   // The strip entry every compile of a page shares when a page store keeps them all.
   const UNION_KEY = '';
+  // Readers serve the stored bundle, so with a page store stripping waits for it.
+  const publishes = () => Boolean(storage) && hasPageStore();
+  const bundleKey = (projectId) => {
+    const key = `bundle:${projectId}`;
+    return VALID_ID_RE.test(projectId) && key.length <= 128 ? key : null;
+  };
 
   function getProject(projectId) {
     let project = projects.get(projectId);
@@ -94,6 +107,7 @@ export function createAutoPromotePlugin(options = {}) {
         promoted: new Set(),
         served: new Set(),
         css: '',
+        published: new Set(),
         inFlight: new Map()
       };
       projects.set(projectId, project);
@@ -209,32 +223,40 @@ export function createAutoPromotePlugin(options = {}) {
     const before = project.promoted;
     recalcPromoted(project);
     const target = bundleTarget(project);
-    if (sameSet(target, project.served)) {
-      if (!sameSet(before, project.promoted)) schedulePersist();
-      return;
-    }
-    if (target.size === 0) {
+    const rebuild = !sameSet(target, project.served);
+    if (rebuild && target.size === 0) {
       project.served = target;
       project.css = '';
-      schedulePersist();
-      return;
+    } else if (rebuild) {
+      try {
+        // Let the compile that triggered this refresh finish and free its slot first.
+        await new Promise((resolve) => setImmediate(resolve));
+        const result = await ctx.compile({
+          projectId,
+          pageId: SYNTHETIC_PAGE,
+          classes: Array.from(target).sort().join(' '),
+          bundle: 'utilities'
+        });
+        project.served = target;
+        project.css = result.css || '';
+      } catch {
+        // Busy or failed: keep serving the previous bundle. Stripping only uses classes
+        // already in it, and the next compile in this project retries.
+      }
     }
-    try {
-      // Let the compile that triggered this refresh finish and free its slot first.
-      await new Promise((resolve) => setImmediate(resolve));
-      const result = await ctx.compile({
-        projectId,
-        pageId: SYNTHETIC_PAGE,
-        classes: Array.from(target).sort().join(' '),
-        bundle: 'utilities'
-      });
-      project.served = target;
-      project.css = result.css || '';
-    } catch {
-      // Busy or failed: keep serving the previous bundle. Stripping only uses classes
-      // already in it, and the next compile in this project retries.
-    }
-    schedulePersist();
+    // Also retries a publish that failed earlier, and re-publishes after a restart.
+    if (publishes() && !sameSet(project.published, project.served)) await publish(projectId, project);
+    if (rebuild || !sameSet(before, project.promoted)) schedulePersist();
+  }
+
+  // A failed or timed-out write leaves `published` as it was: the store holds the old
+  // bundle or the new one, and stripping only uses classes that are in both.
+  async function publish(projectId, project) {
+    const key = bundleKey(projectId);
+    if (!key) return;
+    const served = project.served;
+    const ok = await storage.set(key, { served: Array.from(served), css: project.css });
+    if (ok === true) project.published = served;
   }
 
   function scheduleRefresh(projectId) {
@@ -350,13 +372,26 @@ export function createAutoPromotePlugin(options = {}) {
 
       // The bundle changes as classes are promoted, so clients must revalidate
       // (a cheap 304 via ETag) rather than reuse a stale copy.
-      context.addRoute('get', '/css/:projectId', (req) => {
-        const css = projects.get(req.params.projectId)?.css || '';
+      // A reader never compiles, so it serves the bundle the writer stored, and like core's
+      // own reader reads answers 404 when the store has none rather than a stale copy.
+      const isReader = ctx.getConfig().nodeRole === 'reader';
+      context.addRoute('get', '/css/:projectId', async (req) => {
         const headers = {
           'Content-Type': 'text/css; charset=utf-8',
           'Cross-Origin-Resource-Policy': 'cross-origin',
           'Cache-Control': 'public, no-cache'
         };
+        let css;
+        if (isReader) {
+          const key = bundleKey(req.params.projectId);
+          const record = key ? await storage.get(key) : null;
+          if (!isObject(record) || typeof record.css !== 'string') {
+            return { status: 404, headers, body: '' };
+          }
+          css = record.css;
+        } else {
+          css = projects.get(req.params.projectId)?.css || '';
+        }
         if (!css) {
           return { status: 200, headers, body: '' };
         }
@@ -399,7 +434,8 @@ export function createAutoPromotePlugin(options = {}) {
       project.inFlight.set(pageId, { count: (entry?.count ?? 0) + 1, at: Date.now() });
       schedulePersist();
 
-      const strip = value.filter((cls) => project.promoted.has(cls) && project.served.has(cls));
+      const ready = publishes() ? project.published : project.served;
+      const strip = value.filter((cls) => project.promoted.has(cls) && project.served.has(cls) && ready.has(cls));
       // Removing every class is only valid for the utilities bundle; other bundles
       // would reject an empty class list, so they keep their classes.
       if (strip.length === 0 || (strip.length === value.length && bundle !== 'utilities')) {

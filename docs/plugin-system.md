@@ -202,13 +202,12 @@ setup({ addRoute, getCacheStats }) {
 
 - Each page votes for its classes. A class is promoted once `threshold` pages (default `5`) use it. A page stops counting once it can no longer be served: without a page store (`ctx.getCacheStats().pageStore`), when it leaves core memory; with one, only on `onInvalidate`, because an evicted page is still served from the store.
 - With a page store, plugin memory holds every page compiled and not yet invalidated, and a page keeps every class ever stripped from it in the bundle. Pages that expire in the store or are deleted outside core keep voting until invalidated; this only over-promotes.
-- The promoted bundle is served from the plugin's own route, from plugin memory.
-- `transformClasses` strips a class from a page only when it is both promoted and already served in the bundle. For bundles other than `utilities`, if stripping would remove every class it returns `undefined` and the page keeps its list.
+- The promoted bundle is served from the plugin's own route: on writer and hybrid nodes from plugin memory, on `reader` nodes from the copy the writer saved, or `404` when the store has none. `/stats` reports the node's own memory, so read it from the writer.
+- `transformClasses` strips a class from a page only when it is both promoted and already served in the bundle. With a page store it also waits until a bundle holding the class is saved, so a stored page never needs a class the stored bundle lacks; a store that cannot save plugin data means nothing is stripped. For bundles other than `utilities`, if stripping would remove every class it returns `undefined` and the page keeps its list.
 - When the set of classes the bundle must serve changes, a deferred `onCompileResult` recompiles the bundle through `ctx.compile()`.
-- State is saved in `ctx.storage` under `state_v2` and restored at `setup()`: with a page store always, with pages already in memory filling any gaps; otherwise only when the core cache holds no pages.
+- Each project's bundle is saved in `ctx.storage` under `bundle:<projectId>` whenever it changes, with a page store. State is saved under `state_v2` and restored at `setup()`: with a page store always, with pages already in memory filling any gaps; otherwise only when the core cache holds no pages.
 - It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult", "onInvalidate"]`.
-- Not supported on `reader` nodes: the bundle route answers from plugin memory, which a writer's promotions never reach. Serve the bundle from the writer.
-- Known gaps, both rare: a page invalidated while its compile is still being stored can reappear in the store after the plugin dropped its classes, and a crash within 250 ms of a compile can lose the record of classes stripped from it. In both cases the page can render without a promoted class until it is recompiled.
+- Known gaps, all rare: a page invalidated while its compile is still being stored can reappear in the store after the plugin dropped its classes; a crash within 250 ms of a compile can lose the record of classes stripped from it; and a bundle save that times out but lands after a newer one leaves readers on the older bundle. In each case a page can render without a promoted class: in the first two until it is recompiled, in the last until the project's bundle next changes.
 
 ```js
 import { createCore } from "@thinkly/rich-wind";
