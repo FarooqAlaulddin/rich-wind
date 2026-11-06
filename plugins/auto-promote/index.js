@@ -67,6 +67,11 @@ export function createAutoPromotePlugin(options = {}) {
   // always covers what the page asked for. Strips are keyed by the class list the
   // compile produced, because concurrent compiles of one page can be stored in any
   // order; once a page is idle only the entry matching its stored classes is kept.
+  //
+  // With a page store (getCacheStats().pageStore) a page evicted from memory can still
+  // be served from its stored artifacts, one per bundle, each possibly built from an
+  // older class list. Such a page keeps its votes and the union of every class ever
+  // stripped from it, in one entry, until core reports it gone through onInvalidate.
   const projects = new Map();
   // Serialized bundle refreshes, one chain per project.
   const refreshes = new Map();
@@ -74,6 +79,10 @@ export function createAutoPromotePlugin(options = {}) {
   let ctx = null;
   let storage = null;
   let persistTimer = null;
+
+  const hasPageStore = () => ctx?.getCacheStats().pageStore === true;
+  // The strip entry every compile of a page shares when a page store keeps them all.
+  const UNION_KEY = '';
 
   function getProject(projectId) {
     let project = projects.get(projectId);
@@ -157,8 +166,14 @@ export function createAutoPromotePlugin(options = {}) {
 
   // Drop votes from pages the core no longer holds (LRU eviction, invalidate, expiry),
   // and whole projects the core no longer holds, so plugin memory follows the core cache.
+  // With a page store nothing is dropped here: onInvalidate removes pages that are gone.
   function reconcile(projectId) {
     const now = Date.now();
+    if (hasPageStore()) {
+      const project = projects.get(projectId);
+      if (project) expireInFlight(project, now);
+      return project || null;
+    }
     const liveProjects = new Set(ctx.getProjectIds());
     for (const [id, project] of projects) {
       if (liveProjects.has(id) || refreshes.has(id) || expireInFlight(project, now)) continue;
@@ -232,11 +247,13 @@ export function createAutoPromotePlugin(options = {}) {
     return next;
   }
 
-  function seedFromCacheState() {
+  // skipTracked keeps the votes a restored snapshot already holds for a page.
+  function seedFromCacheState({ skipTracked = false } = {}) {
     for (const projectId of ctx.getProjectIds()) {
       const project = getProject(projectId);
       for (const pageId of ctx.getPageIds(projectId) || []) {
         if (pageId === SYNTHETIC_PAGE) continue;
+        if (skipTracked && project.pageClasses.has(pageId)) continue;
         const classes = ctx.getPageClasses(projectId, pageId);
         if (classes) trackClasses(project, pageId, classes);
       }
@@ -269,7 +286,7 @@ export function createAutoPromotePlugin(options = {}) {
         trackClasses(project, pageId, classes);
       }
       for (const [pageId, stripped] of objectToSetMap(saved.stripped)) {
-        project.pageStrips.set(pageId, new Map([['', stripped]]));
+        project.pageStrips.set(pageId, new Map([[UNION_KEY, stripped]]));
       }
       recalcPromoted(project);
       // The saved bundle is reused only if it is exactly what this threshold needs.
@@ -298,7 +315,7 @@ export function createAutoPromotePlugin(options = {}) {
 
   return {
     name: 'auto-promote',
-    deferHooks: ['onCompileResult'],
+    deferHooks: ['onCompileResult', 'onInvalidate'],
     timeoutMs: 5000,
 
     // Resolves once every scheduled bundle refresh has finished.
@@ -317,12 +334,18 @@ export function createAutoPromotePlugin(options = {}) {
         return pageIds.some((pageId) => pageId !== SYNTHETIC_PAGE);
       });
 
+      // Without a page store, pages already in memory are the whole truth and a
+      // snapshot is only used on a cold start. With one, the snapshot also covers
+      // pages that live only in the store, so it is restored and memory fills gaps.
+      const pageStore = hasPageStore();
       let restored = false;
-      if (!hasCachePages && storage) {
+      if (storage && (pageStore || !hasCachePages)) {
         restored = restoreState(await storage.get(STORAGE_KEY));
       }
       if (!restored) {
         seedFromCacheState();
+      } else if (pageStore && hasCachePages) {
+        seedFromCacheState({ skipTracked: true });
       }
 
       // The bundle changes as classes are promoted, so clients must revalidate
@@ -384,7 +407,7 @@ export function createAutoPromotePlugin(options = {}) {
       }
       const stripSet = new Set(strip);
       const kept = value.filter((cls) => !stripSet.has(cls));
-      const key = kept.slice().sort().join(' ');
+      const key = hasPageStore() ? UNION_KEY : kept.slice().sort().join(' ');
       let strips = project.pageStrips.get(pageId);
       if (!strips) {
         strips = new Map();
@@ -394,6 +417,31 @@ export function createAutoPromotePlugin(options = {}) {
       if (recorded) for (const cls of strip) recorded.add(cls);
       else strips.set(key, stripSet);
       return kept;
+    },
+
+    // Only needed with a page store; without one, reconcile() follows core memory.
+    // A page with a compile in flight keeps its state: that compile stores it again.
+    onInvalidate({ projectId, pageId }) {
+      if (!ctx || !hasPageStore()) return undefined;
+      const project = projects.get(projectId);
+      if (!project) return undefined;
+      expireInFlight(project, Date.now());
+      const pageIds = pageId === null ? Array.from(project.pageClasses.keys()) : [pageId];
+      if (pageId === null) {
+        for (const id of project.pageStrips.keys()) if (!pageIds.includes(id)) pageIds.push(id);
+      }
+      for (const id of pageIds) {
+        if (!project.inFlight.has(id)) untrackPage(project, id);
+      }
+      schedulePersist();
+      return scheduleRefresh(projectId).then(() => {
+        const current = projects.get(projectId);
+        if (current && current.pageClasses.size === 0 && current.pageStrips.size === 0
+          && current.inFlight.size === 0 && !refreshes.has(projectId) && current.css === '') {
+          projects.delete(projectId);
+          schedulePersist();
+        }
+      });
     },
 
     onCompileResult({ projectId, pageId }) {

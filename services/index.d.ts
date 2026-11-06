@@ -288,6 +288,8 @@ export interface CacheStats {
   totalPages: number;
   maxPages: number;
   projectCount: number;
+  /** The cache store holds page artifacts, so a page evicted from memory can still be served. */
+  pageStore: boolean;
 }
 
 export interface HydratePageArtifactInput {
@@ -451,6 +453,17 @@ export interface OnProjectCssContext extends PluginContext {
   request: PluginRequestMeta | null;
 }
 
+/**
+ * A page, or with `pageId` null a whole project, is gone: removed from memory and,
+ * with a cache store, its page artifacts confirmed deleted. Memory eviction never fires it.
+ */
+export interface OnInvalidateContext extends PluginContext {
+  projectId: string;
+  pageId: string | null;
+  source: PluginSource;
+  request: PluginRequestMeta | null;
+}
+
 export interface OnSuggestContext extends PluginContext {
   projectId: string | null;
   prefix: string;
@@ -534,6 +547,7 @@ export type PluginHookName =
   | 'onCacheMiss'
   | 'onProjectCss'
   | 'onSuggest'
+  | 'onInvalidate'
   | 'onError'
   | 'transformClasses'
   | 'transformCss'
@@ -560,6 +574,7 @@ export interface RichWindPlugin {
   onCacheMiss?(context: OnCacheContext): MaybePromise<void>;
   onProjectCss?(context: OnProjectCssContext): MaybePromise<void>;
   onSuggest?(context: OnSuggestContext): MaybePromise<void>;
+  onInvalidate?(context: OnInvalidateContext): MaybePromise<void>;
   onError?(context: OnErrorContext): MaybePromise<void>;
   transformClasses?(
     context: TransformClassesContext

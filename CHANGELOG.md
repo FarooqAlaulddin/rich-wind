@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `onInvalidate({ projectId, pageId, source, request })` observer hook. It fires when a page, or with `pageId` null a whole project, is gone: `invalidate`, `ctx.purgePage` or `ctx.purgeProject` removed it from memory and, with a cache store, its page artifacts were confirmed deleted. Memory eviction never fires it.
+- `ctx.getCacheStats()` reports `pageStore`: the cache store holds page artifacts, so a page evicted from memory can still be served.
+
+### Fixed
+
+- Auto-promote with a page store keeps a page's votes and stripped classes until the page is invalidated, instead of until it leaves core memory (#62). Before, the first compile after a restart dropped every restored vote, and an evicted page served from the store could lose a class the bundle no longer carried. The snapshot is now restored even when pages are already in memory.
+
 ## [1.0.0-rc.4] - 2026-10-20
 
 ### Added
