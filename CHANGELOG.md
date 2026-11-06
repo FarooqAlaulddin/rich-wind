@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Auto-promote works on `reader` nodes. With a page store the writer saves each project's bundle under `bundle:<projectId>` and readers serve that copy (`404` when the store has none) instead of the snapshot they loaded at startup. A class is stripped from a page only once a bundle holding it is saved, so a stored page no longer reaches the store ahead of its bundle; a failed save is retried on the next compile.
+
 ## [1.0.0-rc.5] - 2026-11-06
 
 ### Added
