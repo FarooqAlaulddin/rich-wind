@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.5] - 2026-11-06
+
 ### Added
 
 - `onInvalidate({ projectId, pageId, source, request })` observer hook. It fires when a page, or with `pageId` null a whole project, is gone: `invalidate`, `ctx.purgePage` or `ctx.purgeProject` removed it from memory and, with a cache store, its page artifacts were confirmed deleted. Memory eviction never fires it.
