@@ -23,6 +23,7 @@ States: `[ ]` open, `[x]` done (add the PR), `[-]` dropped. Detail files carry f
 
 - [ ] **auto-promote-check-coverage** _(MEDIUM, diagnostics)_ - host-run check that every page's classes are in its stored CSS or the shared bundle, flagging pages that would render unstyled · added 2026-11-06 · touched 2026-11-06 · [details](details/auto-promote-check-coverage.md)
 - [ ] **auto-promote-theme-css-docs** _(LOW, docs)_ - say that the promoted bundle is utilities only, so pages must also load the project theme CSS · added 2026-11-06 · touched 2026-11-06 · [details](details/auto-promote-theme-css-docs.md)
+- [ ] **ci-pr-run-phantom-failure** _(LOW, ci)_ - the pull_request run of Test Before Merge on dev->main PRs ends as failure or action_required with no jobs, while the push run passes · added 2026-11-06 · touched 2026-11-06 · [details](details/ci-pr-run-phantom-failure.md)
 
 ## Later
 
