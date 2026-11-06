@@ -245,6 +245,14 @@ function touchPageKey(state, key) {
     state.pageLru.set(key, value);
 }
 
+// A page (or, with pageId null, a whole project) is gone for good: removed from
+// memory and, when there is a cache store, its artifacts confirmed deleted.
+// Memory eviction never calls this; an evicted page can still come back.
+async function notifyInvalidated(pluginRunner, { projectId, pageId, source, request }) {
+    if (!pluginRunner) return;
+    await pluginRunner.runHook('onInvalidate', { projectId, pageId, source, request });
+}
+
 function evictPageByKey(state, key) {
     const meta = state.pageLru.get(key);
     if (!meta) return;
@@ -1733,7 +1741,7 @@ function createPluginRunner(plugins = [], options = {}) {
     const ALL_HOOKS = [
         'guard',
         'onRequestStart', 'onResponseSent', 'onCompileStart', 'onCompileResult',
-        'onCacheHit', 'onCacheMiss', 'onProjectCss', 'onSuggest', 'onError',
+        'onCacheHit', 'onCacheMiss', 'onProjectCss', 'onSuggest', 'onInvalidate', 'onError',
         'transformClasses', 'transformCss', 'transformSuggestions',
         'resolvePageCss', 'resolveProjectCss', 'resolveTheme'
     ];
@@ -2219,7 +2227,7 @@ function createCoreFunctions({
         return { css: result.css ?? '', etag: result.hash ?? null };
     };
 
-    const runInvalidate = async (input) => {
+    const runInvalidate = async (input, meta) => {
         const body = readInput(input);
         const projectId = body.projectId ?? null;
         const pageId = body.pageId ?? null;
@@ -2233,13 +2241,18 @@ function createCoreFunctions({
 
         const bundles = ['full', 'utilities', 'theme'];
 
+        const notify = (id) => notifyInvalidated(pluginRunner, { projectId, pageId: id, source: meta.source, request: meta.request });
+
         if (pageId !== null) {
             evictPageByKey(state, makePageKey(projectId, pageId));
+            let deleted = true;
             if (cacheStoreRunner?.enabled) {
-                await Promise.all(
+                const results = await Promise.all(
                     bundles.map(b => cacheStoreRunner.deletePageArtifact({ projectId, pageId, bundle: b }))
                 );
+                deleted = results.every(Boolean);
             }
+            if (deleted) await notify(pageId);
             return { invalidated: true, projectId, pageId };
         }
 
@@ -2252,14 +2265,17 @@ function createCoreFunctions({
             state.projects.delete(projectId);
         }
         // Purge from store
+        let pagesDeleted = true;
         if (cacheStoreRunner?.enabled) {
-            if (cacheStoreRunner.hasMethod?.('deleteProjectPageArtifacts')) {
-                await cacheStoreRunner.deleteProjectPageArtifacts({ projectId });
-            }
+            // Without the bulk delete, page artifacts stay in the store and can still be served.
+            pagesDeleted = cacheStoreRunner.hasMethod?.('deleteProjectPageArtifacts')
+                ? await cacheStoreRunner.deleteProjectPageArtifacts({ projectId })
+                : false;
             await Promise.all(
                 bundles.map(b => cacheStoreRunner.deleteProjectArtifact({ projectId, bundle: b }))
             );
         }
+        if (pagesDeleted) await notify(null);
         return { invalidated: true, projectId };
     };
 
@@ -3022,13 +3038,6 @@ function buildPluginContext(state, config) {
             const entry = project[key];
             return entry?.css || null;
         },
-        getCacheStats() {
-            return Object.freeze({
-                totalPages: state.pageLru.size,
-                maxPages: config.cacheMaxPages,
-                projectCount: state.projects.size
-            });
-        },
         getConfig() {
             return Object.freeze({ ...config });
         },
@@ -3302,7 +3311,9 @@ export async function createCore({
         }
         if (!isValidId(projectId, config) || !isValidId(pageId, config)) return false;
         evictPageByKey(state, makePageKey(projectId, pageId));
-        return purgePageArtifactsFromStore(projectId, pageId);
+        const deleted = await purgePageArtifactsFromStore(projectId, pageId);
+        if (deleted) await notifyInvalidated(pluginRunner, { projectId, pageId, source: 'plugin', request: null });
+        return deleted;
     };
 
     pluginContext.purgeProject = async (projectId) => {
@@ -3312,23 +3323,45 @@ export async function createCore({
         }
         if (!isValidId(projectId, config)) return false;
         const pageIds = evictProjectLocal(projectId);
-        let pageResult = true;
+        let pageResults = [];
         if (pageIds.length > 0) {
-            const pageResults = await Promise.all(
+            pageResults = await Promise.all(
                 pageIds.map((pageId) => purgePageArtifactsFromStore(projectId, pageId))
             );
-            pageResult = pageResults.every(Boolean);
         }
+        let pageResult = pageResults.every(Boolean);
 
         const hasBulkProjectPageDelete = cacheStoreRunner?.hasMethod?.('deleteProjectPageArtifacts');
+        // Without a store, or with a confirmed bulk delete, no page of the project is left.
+        let allPagesDeleted = !cacheStoreRunner?.enabled;
         if (cacheStoreRunner?.enabled && (hasBulkProjectPageDelete || pageIds.length === 0)) {
             const bulkResult = await purgeProjectPagesFromStore(projectId);
             pageResult = pageResult && bulkResult;
+            allPagesDeleted = Boolean(hasBulkProjectPageDelete && bulkResult);
         }
 
         const projectResult = await purgeProjectArtifactsFromStore(projectId);
+        const notify = (pageId) => notifyInvalidated(pluginRunner, { projectId, pageId, source: 'plugin', request: null });
+        if (allPagesDeleted && pageResult) {
+            await notify(null);
+        } else {
+            // Only the pages whose artifacts were confirmed deleted are gone.
+            for (let i = 0; i < pageIds.length; i++) {
+                if (pageResults[i]) await notify(pageIds[i]);
+            }
+        }
         return pageResult && projectResult;
     };
+
+    // Defined here, not in buildPluginContext, because it needs the cache store.
+    // pageStore: page artifacts outlive memory, so an evicted page can still be served.
+    const pageStore = Boolean(cacheStoreRunner?.enabled && cacheStoreRunner.hasMethod?.('readPageArtifact'));
+    pluginContext.getCacheStats = () => Object.freeze({
+        totalPages: state.pageLru.size,
+        maxPages: config.cacheMaxPages,
+        projectCount: state.projects.size,
+        pageStore
+    });
 
     // Same input, return value and RichWindError as core.compile; inside a hook the
     // compile skips hooks, and plugin compile chains are bounded by chainDepthLimit.

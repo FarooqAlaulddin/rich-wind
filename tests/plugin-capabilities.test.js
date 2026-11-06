@@ -278,7 +278,7 @@ describe('Plugin context query functions', () => {
     });
 
     expect(results.projectIds).toEqual([]);
-    expect(results.cacheStats).toEqual({ totalPages: 0, maxPages: 100, projectCount: 0 });
+    expect(results.cacheStats).toEqual({ totalPages: 0, maxPages: 100, projectCount: 0, pageStore: false });
     expect(results.config.cacheMaxPages).toBe(100);
     expect(Object.isFrozen(results.cacheStats)).toBe(true);
     expect(Object.isFrozen(results.config)).toBe(true);

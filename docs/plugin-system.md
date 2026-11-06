@@ -100,6 +100,7 @@ Return values are ignored. Fields on each context: the matching `On*Context` typ
 | `onCacheHit` / `onCacheMiss` | Cache lookup during a compile or `GET /api/css` | During a compile `source` is the caller; on `GET /api/css` it is `"page"` or `"page-store"`, the cache layer that answered. |
 | `onProjectCss` | Project CSS compiled or served | |
 | `onSuggest` | Suggestions returned | |
+| `onInvalidate` | A page, or with `pageId` `null` a whole project, is gone | Fired by `invalidate`, `ctx.purgePage` and `ctx.purgeProject` once the page is out of memory and, with a cache store, its artifacts are confirmed deleted. A project invalidate needs the store's `deleteProjectPageArtifacts` for that; without it no event fires. Memory eviction never fires it. |
 | `onError` | Anything fails | Fields vary by `stage` (table below). |
 
 `source` is `"http"`, `"core"` (a direct core call) or `"plugin"` (`ctx.compile`) where the hook has a caller, and `request` is `{ ip, method, path }` for HTTP and `null` otherwise. Do not assume either is present on every hook.
@@ -199,12 +200,13 @@ setup({ addRoute, getCacheStats }) {
 
 `createAutoPromotePlugin` is exported as `rich-wind/plugins/auto-promote`. It is a reference plugin and may change before 1.0. It moves classes used on many pages into one shared bundle.
 
-- Each page votes for its classes. A class is promoted once `threshold` pages (default `5`) use it; votes follow the live cache, so evicted or invalidated pages stop counting.
+- Each page votes for its classes. A class is promoted once `threshold` pages (default `5`) use it. A page stops counting once it can no longer be served: without a page store (`ctx.getCacheStats().pageStore`), when it leaves core memory; with one, only on `onInvalidate`, because an evicted page is still served from the store.
+- With a page store, plugin memory holds every page compiled and not yet invalidated, and a page keeps every class ever stripped from it in the bundle. Pages that expire in the store or are deleted outside core keep voting until invalidated; this only over-promotes.
 - The promoted bundle is served from the plugin's own route, from plugin memory.
 - `transformClasses` strips a class from a page only when it is both promoted and already served in the bundle. For bundles other than `utilities`, if stripping would remove every class it returns `undefined` and the page keeps its list.
 - When the set of classes the bundle must serve changes, a deferred `onCompileResult` recompiles the bundle through `ctx.compile()`.
-- State is saved in `ctx.storage` under `state_v2` and restored at `setup()` when the core cache holds no pages.
-- It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult"]`.
+- State is saved in `ctx.storage` under `state_v2` and restored at `setup()`: with a page store always, with pages already in memory filling any gaps; otherwise only when the core cache holds no pages.
+- It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult", "onInvalidate"]`.
 
 ```js
 import { createCore } from "@thinkly/rich-wind";

@@ -21,20 +21,20 @@ async function bundleCss(core, projectId) {
   return res.text();
 }
 
-async function pageCss(core, projectId, pageId) {
+async function pageCss(core, projectId, pageId, bundle = 'full') {
   try {
-    return (await core.getCss({ projectId, pageId })).css;
+    return (await core.getCss({ projectId, pageId, bundle })).css;
   } catch {
     return null; // evicted or invalidated
   }
 }
 
 // Every class a live page asked for must be in its page CSS or in the bundle.
-async function expectCovered(core, projectId, pageId, classes) {
-  const css = await pageCss(core, projectId, pageId);
+async function expectCovered(core, projectId, pageId, classes, bundle = 'full') {
+  const css = await pageCss(core, projectId, pageId, bundle);
   if (css === null) return;
-  const bundle = await bundleCss(core, projectId);
-  const missing = classes.filter((cls) => !hasRule(css, cls) && !hasRule(bundle, cls));
+  const shared = await bundleCss(core, projectId);
+  const missing = classes.filter((cls) => !hasRule(css, cls) && !hasRule(shared, cls));
   expect(missing, `${projectId}/${pageId} lost styles`).toEqual([]);
 }
 
@@ -242,3 +242,229 @@ describe('auto-promote robustness', () => {
   });
 });
 
+
+// A cache store holding page artifacts and plugin data, shared across core restarts.
+function createPageStore({ bulk = true } = {}) {
+  const pages = new Map();
+  const data = new Map();
+  const key = ({ projectId, pageId, bundle }) => `${projectId}|${pageId}|${bundle || 'full'}`;
+  const store = {
+    pages,
+    data,
+    readPageArtifact: (input) => structuredClone(pages.get(key(input)) ?? null),
+    upsertPageArtifact: (input) => { pages.set(key(input), structuredClone(input)); },
+    deletePageArtifact: (input) => { pages.delete(key(input)); },
+    readProjectArtifact: () => null,
+    upsertProjectArtifact: () => {},
+    deleteProjectArtifact: () => {},
+    readPluginData: ({ pluginName, key: k }) => structuredClone(data.get(`${pluginName}|${k}`) ?? null),
+    writePluginData: ({ pluginName, key: k, value }) => { data.set(`${pluginName}|${k}`, structuredClone(value)); },
+    deletePluginData: ({ pluginName, key: k }) => { data.delete(`${pluginName}|${k}`); }
+  };
+  if (bulk) {
+    store.deleteProjectPageArtifacts = ({ projectId }) => {
+      for (const k of pages.keys()) if (k.startsWith(`${projectId}|`)) pages.delete(k);
+    };
+  }
+  return store;
+}
+
+function ctxCapture() {
+  let ctx = null;
+  return { plugin: { name: 'ctx-capture', setup(context) { ctx = context; } }, ctx: () => ctx };
+}
+
+async function stats(core, projectId) {
+  const all = await (await core.fetch(new Request('http://localhost/plugins/auto-promote/stats'))).json();
+  return projectId ? all[projectId] : all;
+}
+
+describe('auto-promote with a page store', () => {
+  let core;
+
+  afterEach(async () => {
+    await core?.close();
+    core = null;
+  });
+
+  async function boot(store, extra = {}) {
+    const plugin = createAutoPromotePlugin({ threshold: 2 });
+    const capture = ctxCapture();
+    core = await createCore({
+      plugins: [...(extra.before || []), plugin, capture.plugin],
+      cacheStore: store,
+      config: extra.config
+    });
+    return { plugin, ctx: capture.ctx };
+  }
+
+  it('keeps restored votes through the first compile after a restart (#62)', async () => {
+    const store = createPageStore();
+    let { plugin } = await boot(store);
+    await core.compile({ projectId: 'site', pageId: 'a', classes: 'text-red-500 p-4' });
+    await core.compile({ projectId: 'site', pageId: 'b', classes: 'text-red-500 p-4' });
+    await core.compile({ projectId: 'site', pageId: 'c', classes: 'text-red-500 m-2' });
+    await settle(plugin);
+    await core.compile({ projectId: 'site', pageId: 'a', classes: 'text-red-500 p-4' }); // stored stripped
+    await settle(plugin);
+    await core.close();
+
+    ({ plugin } = await boot(store));
+    await core.compile({ projectId: 'site', pageId: 'd', classes: 'underline' });
+    await settle(plugin);
+
+    expect((await stats(core, 'site')).promoted).toEqual(['p-4', 'text-red-500']);
+    await expectCovered(core, 'site', 'a', ['text-red-500', 'p-4']);
+    await expectCovered(core, 'site', 'c', ['text-red-500', 'm-2']);
+    await core.close();
+    core = null;
+    const saved = store.data.get('auto-promote|state_v2').projects.site;
+    expect(Object.keys(saved.pages).sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(saved.served.sort()).toEqual(['p-4', 'text-red-500']);
+  });
+
+  it('an evicted page served from the store keeps a class the bundle carried for it', async () => {
+    const store = createPageStore();
+    const { plugin } = await boot(store, { config: { cacheMaxPages: 2 } });
+    await core.compile({ projectId: 'ev', pageId: 'a', classes: 'p-4 m-2' });
+    await core.compile({ projectId: 'ev', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+    await core.compile({ projectId: 'ev', pageId: 'a', classes: 'p-4 m-2' }); // p-4 stripped from a
+    await settle(plugin);
+    expect(hasRule(await pageCss(core, 'ev', 'a'), 'p-4')).toBe(false);
+
+    await core.compile({ projectId: 'ev', pageId: 'c', classes: 'flex' }); // evicts a
+    await core.compile({ projectId: 'ev', pageId: 'b', classes: 'flex' }); // b drops p-4
+    await settle(plugin);
+
+    // a comes back from the store, still without p-4, so the bundle must keep it.
+    await expectCovered(core, 'ev', 'a', ['p-4', 'm-2']);
+    expect((await stats(core, 'ev')).promoted).toContain('flex');
+  });
+
+  it('eviction keeps votes: LRU, ctx.evictPage and ctx.evictProject', async () => {
+    const store = createPageStore();
+    const { plugin, ctx } = await boot(store, { config: { cacheMaxPages: 3 } });
+    await core.compile({ projectId: 'e', pageId: 'a', classes: 'p-4' });
+    await core.compile({ projectId: 'e', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+
+    ctx().evictPage('e', 'a');
+    await core.compile({ projectId: 'e', pageId: 'c', classes: 'flex' });
+    await settle(plugin);
+    expect((await stats(core, 'e')).promoted).toEqual(['p-4']);
+
+    ctx().evictProject('e');
+    await core.compile({ projectId: 'e', pageId: 'd', classes: 'flex' });
+    await settle(plugin);
+    expect((await stats(core, 'e')).promoted).toEqual(['flex', 'p-4']);
+
+    for (const id of ['x1', 'x2', 'x3', 'x4']) {
+      await core.compile({ projectId: 'other', pageId: id, classes: 'underline' }); // LRU evicts project e
+    }
+    await core.compile({ projectId: 'e', pageId: 'f', classes: 'rounded' });
+    await settle(plugin);
+    expect((await stats(core, 'e')).promoted).toEqual(['flex', 'p-4']);
+  });
+
+  it('invalidating a page drops its votes; ctx.purgePage does too', async () => {
+    const store = createPageStore();
+    const { plugin, ctx } = await boot(store);
+    for (const id of ['a', 'b', 'c']) await core.compile({ projectId: 'i', pageId: id, classes: 'p-4 m-2' });
+    await settle(plugin);
+    expect((await stats(core, 'i')).promoted).toEqual(['m-2', 'p-4']);
+
+    await core.invalidate({ projectId: 'i', pageId: 'a' });
+    await settle(plugin);
+    expect((await stats(core, 'i')).promoted).toEqual(['m-2', 'p-4']);
+    await ctx().purgePage('i', 'b');
+    await settle(plugin);
+    expect((await stats(core, 'i')).promoted).toEqual([]);
+    await expectCovered(core, 'i', 'c', ['p-4', 'm-2']);
+  });
+
+  it('invalidating a project drops the project; without a bulk page delete its votes stay', async () => {
+    const store = createPageStore();
+    let { plugin } = await boot(store);
+    await core.compile({ projectId: 'gone', pageId: 'a', classes: 'p-4' });
+    await core.compile({ projectId: 'gone', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+    await core.invalidate({ projectId: 'gone' });
+    await settle(plugin);
+    expect(await stats(core, 'gone')).toBeUndefined();
+    await core.close();
+
+    const partial = createPageStore({ bulk: false });
+    ({ plugin } = await boot(partial));
+    await core.compile({ projectId: 'kept', pageId: 'a', classes: 'p-4' });
+    await core.compile({ projectId: 'kept', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+    await core.invalidate({ projectId: 'kept' });
+    await settle(plugin);
+    expect((await stats(core, 'kept')).promoted).toEqual(['p-4']);
+  });
+
+  it('restores the snapshot when another plugin hydrated a page before setup', async () => {
+    const store = createPageStore();
+    let { plugin } = await boot(store);
+    await core.compile({ projectId: 'w', pageId: 'a', classes: 'p-4' });
+    await core.compile({ projectId: 'w', pageId: 'b', classes: 'p-4' });
+    await settle(plugin);
+    await core.close();
+
+    const warmer = {
+      name: 'warmer',
+      setup(ctx) {
+        ctx.hydratePageArtifact({ projectId: 'w', pageId: 'z', bundle: 'full', css: '.flex{display:flex}', classes: ['flex'], hash: 'h' });
+      }
+    };
+    ({ plugin } = await boot(store, { before: [warmer] }));
+    const s = await stats(core, 'w');
+    expect(s.promoted).toEqual(['p-4']);
+    expect(s.trackedClasses).toBe(2); // p-4 from the snapshot, flex from the hydrated page
+  });
+
+  it('randomized compiles, bundles, evictions, invalidations and restarts never lose a style', async () => {
+    let seed = 777;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const pick = (list) => list[Math.floor(random() * list.length)];
+    const store = createPageStore();
+    const config = { cacheMaxPages: 4 };
+    let { plugin } = await boot(store, { config });
+
+    const projects = ['s1', 's2'];
+    const pages = ['a', 'b', 'c', 'd', 'e'];
+    const asked = new Map(); // "project/page" -> { classes, bundle } of its last compile
+
+    for (let round = 0; round < 40; round++) {
+      if (round > 0 && round % 10 === 0) {
+        await core.close();
+        ({ plugin } = await boot(store, { config }));
+      }
+      const projectId = pick(projects);
+      const pageId = pick(pages);
+      const roll = random();
+      if (roll < 0.08) {
+        await core.invalidate({ projectId, pageId });
+        asked.delete(`${projectId}/${pageId}`);
+      } else if (roll < 0.1) {
+        await core.invalidate({ projectId });
+        for (const k of Array.from(asked.keys())) if (k.startsWith(`${projectId}/`)) asked.delete(k);
+      } else {
+        const classes = POOL.filter(() => random() < 0.4);
+        if (classes.length === 0) classes.push(pick(POOL));
+        const bundle = random() < 0.3 ? 'utilities' : 'full';
+        await core.compile({ projectId, pageId, classes: classes.join(' '), bundle });
+        asked.set(`${projectId}/${pageId}`, { classes, bundle });
+      }
+      await settle(plugin);
+      for (const [k, { classes, bundle }] of asked) {
+        const [p, id] = k.split('/');
+        await expectCovered(core, p, id, classes, bundle);
+      }
+    }
+  });
+});
