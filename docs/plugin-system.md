@@ -207,6 +207,8 @@ setup({ addRoute, getCacheStats }) {
 - When the set of classes the bundle must serve changes, a deferred `onCompileResult` recompiles the bundle through `ctx.compile()`.
 - State is saved in `ctx.storage` under `state_v2` and restored at `setup()`: with a page store always, with pages already in memory filling any gaps; otherwise only when the core cache holds no pages.
 - It sets `timeoutMs: 5000` and `deferHooks: ["onCompileResult", "onInvalidate"]`.
+- Not supported on `reader` nodes: the bundle route answers from plugin memory, which a writer's promotions never reach. Serve the bundle from the writer.
+- Known gaps, both rare: a page invalidated while its compile is still being stored can reappear in the store after the plugin dropped its classes, and a crash within 250 ms of a compile can lose the record of classes stripped from it. In both cases the page can render without a promoted class until it is recompiled.
 
 ```js
 import { createCore } from "@thinkly/rich-wind";
