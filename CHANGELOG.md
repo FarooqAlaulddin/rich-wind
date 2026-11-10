@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.7] - 2026-11-10
+
 ### Fixed
 
 - `group` and `peer`, plain or named (`group/item`), are valid classes: `rejected` no longer lists them, they stay in a page's classes, and a theme change keeps them. They emit no CSS of their own; the `group-*` and `peer-*` variants of other classes select them.
