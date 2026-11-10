@@ -845,6 +845,17 @@ function getProjectSuggestionList(state, projectId) {
 
 let cachedBaseCss = null;
 
+// `group` and `peer`, plain or named (`group/item`), mark an element for the
+// group-* and peer-* variants of other classes. They are classes Tailwind
+// knows that emit no CSS of their own, so a null from candidatesToCss does
+// not make them invalid.
+const VARIANT_MARKER_RE = /^(?:group|peer)(?:\/[A-Za-z0-9_-]+)?$/;
+
+// Whether `token`, whose CSS from candidatesToCss is `css`, is a valid class.
+function isValidClass(token, css) {
+    return css !== null || VARIANT_MARKER_RE.test(token);
+}
+
 // A project's CSS is always built against the theme it has now. When the theme
 // changes, every CSS cache built from the old one is dropped and the classes
 // stay, less any the new theme cannot build. Everything after the await is
@@ -858,7 +869,7 @@ async function applyProjectTheme(state, projectId, theme) {
     for (const page of project.pages.values()) {
         const before = Array.from(page.classes || []);
         const results = before.length ? designSystem.candidatesToCss(before) : [];
-        const kept = before.filter((_, i) => results[i] !== null).sort();
+        const kept = before.filter((token, i) => isValidClass(token, results[i])).sort();
         updateClassCounts(project, page.classes || new Set(), new Set(kept));
         page.classes = new Set(kept);
         page.hash = hashClasses(kept, theme.hash);
@@ -879,6 +890,8 @@ async function extractClasses(html, theme = STOCK_THEME) {
         extension: 'html'
     }]);
     
+    // Only candidates that emit CSS: the scanner also reads prose, where
+    // "group" is a word. Marker classes come in through the class attributes.
     const cssResults = designSystem.candidatesToCss(allCandidates);
     const validClasses = allCandidates.filter((_, i) => cssResults[i] !== null);
     
@@ -889,7 +902,7 @@ async function filterValidClasses(classes, theme = STOCK_THEME) {
     if (!classes.length) return [];
     const designSystem = await getDesignSystem(theme);
     const cssResults = designSystem.candidatesToCss(classes);
-    return classes.filter((_, i) => cssResults[i] !== null);
+    return classes.filter((token, i) => isValidClass(token, cssResults[i]));
 }
 
 async function validateExplicitClasses(classes, theme = STOCK_THEME) {
@@ -902,8 +915,8 @@ async function validateExplicitClasses(classes, theme = STOCK_THEME) {
     const rejected = [];
     for (let index = 0; index < tokens.length; index += 1) {
         const token = tokens[index];
-        if (cssResults[index] === null) rejected.push(token);
-        else valid.push(token);
+        if (isValidClass(token, cssResults[index])) valid.push(token);
+        else rejected.push(token);
     }
     return {
         valid: Array.from(new Set(valid)),
