@@ -1,6 +1,6 @@
 {
   "name": "@thinkly/rich-wind",
-  "version": "1.0.0-rc.7",
+  "version": "1.0.0-rc.8",
   "description": "Runtime Tailwind CSS compiler library: compile class names or HTML to CSS at runtime, no build step.",
   "type": "module",
   "main": "./services/index.js",
@@ -68,8 +68,8 @@
     "url": "git+https://github.com/FarooqAlaulddin/rich-wind.git"
   },
   "dependencies": {
-    "@tailwindcss/node": "^4.3.3",
-    "@tailwindcss/oxide": "^4.3.3",
+    "@tailwindcss/node": "^4.3.5",
+    "@tailwindcss/oxide": "^4.3.5",
     "proxy-addr": "^2.0.8"
   },
   "devDependencies": {
