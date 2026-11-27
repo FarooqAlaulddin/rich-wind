@@ -21,6 +21,21 @@ describe('scanHtml', () => {
     expect(rejected).not.toContain('words');
   });
 
+  it('keeps group and peer markers, which emit no CSS, and rejects look-alikes', async () => {
+    const html = '<li class="group peer/row p-4 groupx group/"><a class="group-hover:p-2">a group</a></li>';
+    const { classes, rejected } = await scanHtml(html);
+    expect(classes).toEqual(expect.arrayContaining(['group', 'peer/row', 'group-hover:p-2', 'p-4']));
+    expect(rejected).toEqual(['group/', 'groupx']);
+    const core = await createCore();
+    try {
+      const result = await core.compile({ projectId: 'markers', pageId: 'p', classes: ['group', 'peer', 'p-4'] });
+      expect(result.rejected).toEqual([]);
+      expect(result.classes).toEqual(['group', 'p-4', 'peer']);
+    } finally {
+      await core.close();
+    }
+  });
+
   it('decodes entities in class attributes and compiles those classes', async () => {
     const html = '<p class="[.theme-dark_&amp;]:text-slate-100 p-4 a&lt;b &#x70;-2">x</p>';
     const { classes, rejected } = await scanHtml(html);
