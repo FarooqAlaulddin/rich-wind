@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0-rc.8] - 2026-11-27
+
+### Changed
+
+- Requires Tailwind 4.3.5 or newer (`@tailwindcss/node` and `@tailwindcss/oxide` `^4.3.5`, was `^4.3.3`), so an upgrade also moves projects whose lockfile holds an older Tailwind. 4.3.4 and 4.3.5 drop invalid UTF-8 class candidates, no longer crash on a `color-mix(…)` without an interpolation method, and ignore `<!--` and `-->` between CSS rules instead of throwing or swallowing the next rule.
+- Published from the release workflow with npm provenance (1.0.0-rc.7 was published without it).
+
 ## [1.0.0-rc.7] - 2026-11-10
 
 ### Fixed
